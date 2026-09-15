@@ -1,0 +1,9 @@
+# The client loads these byte-for-byte. Never let git touch line endings in
+# them: a converted TGA is a corrupt texture, and it fails silently in 1.12.
+*.tga binary
+*.png binary
+
+# Lua and the .toc are text; normalise in the repo, checkout native.
+*.lua text
+*.toc text
+*.md  text

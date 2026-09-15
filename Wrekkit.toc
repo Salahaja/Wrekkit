@@ -1,0 +1,28 @@
+## Interface: 11200
+## Title: Wrekkit
+## Notes: In-game raid analysis. Damage, healing, deaths and timelines, recorded and reviewed without leaving the client.
+## Version: 0.1.0
+## DefaultState: enabled
+## SavedVariables: WrekkitDB
+
+core.lua
+capture.lua
+encounter.lua
+metrics.lua
+report.lua
+diagnostics.lua
+store.lua
+sync.lua
+announce.lua
+
+ui\widgets.lua
+ui\chart.lua
+ui\meter.lua
+ui\report.lua
+ui\confirm.lua
+ui\settings.lua
+ui\peers.lua
+
+minimap.lua
+commands.lua
+init.lua

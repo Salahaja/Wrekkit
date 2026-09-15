@@ -1,0 +1,7 @@
+# Generated previews: tools/make_textures.lua rebuilds these from source.
+# The .tga files the client actually loads ARE committed.
+tools/preview/
+
+# Captures and local scratch
+*.log
+CustomData/
