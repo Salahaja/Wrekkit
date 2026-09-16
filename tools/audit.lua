@@ -60,6 +60,7 @@ declare(WOW, [[
   GetRaidRosterInfo UnitName UnitClass UnitLevel UnitHealth UnitHealthMax
   UnitExists UnitIsPlayer UnitIsUnit UnitCanCooperate UnitAffectingCombat
   SetCVar GetCVar SendChatMessage SendAddonMessage GetAddOnMetadata
+  GetNumSavedInstances GetSavedInstanceInfo UnitIsGhost
   GetItemInfo IsInGuild GetCursorPosition Minimap
   this event arg1 arg2 arg3 arg4 arg5 arg6 arg7 arg8 arg9
 ]])
@@ -374,6 +375,15 @@ end
 STUB.GetRealZoneText = function() return "Onyxia's Lair" end
 STUB.GetRealmName = function() return "Testrealm" end
 STUB.IsInInstance = function() return 1, "raid" end
+
+-- The lockout the session logic keys on. Stubbed so GetSavedInstanceInfo is
+-- actually READ: an unexercised call reads no global and would let an
+-- undeclared one through, which is how GetNumSavedInstances slipped in.
+STUB.GetNumSavedInstances = function() return 1 end
+STUB.GetSavedInstanceInfo = function(i)
+  if i == 1 then return "Onyxia's Lair", 4471 end
+  return nil
+end
 STUB.IsInGuild = function() return 1 end
 STUB.GetNumRaidMembers = function() return 0 end
 STUB.GetNumPartyMembers = function() return 0 end

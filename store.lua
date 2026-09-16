@@ -59,6 +59,10 @@ function St:SerializeEncounter(enc, withSessionHeader)
   if withSessionHeader then
     table.insert(out, table.concat({
       "S", esc(enc.sessionId), esc(enc.zone), int(enc.startTime - (enc.offset or 0)),
+      -- Appended, not inserted: a reader that predates this field takes the
+      -- first three and ignores the rest, so older files stay readable and
+      -- older builds can still read new ones.
+      int(enc.instanceId or 0),
     }, REC))
   end
 
@@ -309,6 +313,8 @@ function St:Deserialize(text)
         id = tonumber(f[1]) or f[1],
         zone = f[2],
         startTime = tonumber(f[3]) or 0,
+        -- Absent in files written before lockout ids existed.
+        instanceId = tonumber(f[4]) or 0,
       }
     elseif kind == "E" then
       local f = fields(rest, REC)
@@ -318,6 +324,7 @@ function St:Deserialize(text)
         sessionId = session and session.id or "import",
         name = f[2],
         zone = session and session.zone or "Unknown",
+        instanceId = (session and session.instanceId) or 0,
         -- Reconstruct the encounter's own wall-clock start from the session
         -- start plus its offset, rather than inheriting the session's.
         startTime = (session and session.startTime or 0) + offset,

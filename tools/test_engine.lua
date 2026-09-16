@@ -109,6 +109,15 @@ GetRaidRosterInfo = function() return nil end
 SetCVar = function() end
 GetCVar = function() return "1" end
 IsInInstance = function() return true, "raid" end
+
+-- Saved-instance lockout. SAVED_ID is what the server hands out per reset;
+-- two raids sharing it are the same raid however many days apart.
+SAVED_ID = 4471
+GetNumSavedInstances = function() return 1 end
+GetSavedInstanceInfo = function(i)
+  if i == 1 then return "Onyxia's Lair", SAVED_ID end
+  return nil
+end
 IsInGuild = function() return 1 end
 GetAddOnMetadata = function() return "test" end
 GetLocale = function() return "enUS" end
@@ -774,6 +783,11 @@ local rRows = Wrekkit.report:Rank(rView, "damage")
 local rByName = {}
 for _, r in ipairs(rRows) do rByName[r.name] = r end
 
+-- The lockout id rides in the S~ session header, appended rather than
+-- inserted so a file written before it existed still parses.
+check("the lockout id survived the round trip",
+  (reloaded[1] or {}).instanceId, SAVED_ID)
+
 check("damage survived the round trip",
   rByName["Fuff"] and rByName["Fuff"].damage, 5500)
 check("pet still merges after reload",
@@ -908,8 +922,14 @@ local sessions = Wrekkit.report:Sessions()
 check("report shows ONE session", table.getn(sessions), 1)
 check("with both encounters", table.getn(sessions[1].encounters), 2)
 
--- A gap longer than the window is a new raid, not a continuation.
+--[[ A new raid, not a continuation.
+
+     This used to be expressed as a gap longer than resumeWindow, which no
+     longer says it: inside a lockout a gap means a wipe and a corpse run,
+     and the session is meant to survive one. What makes a raid NEW is the
+     instance resetting, and the server says so by issuing a new id. ]]
 simulateReload()
+SAVED_ID = SAVED_ID + 1
 advance(Wrekkit.db.resumeWindow + 120)
 pull(20)
 check("a long gap starts a new session",
@@ -1177,5 +1197,99 @@ for i = 1, 50 do Wrekkit.capture:Unit("0xGhosty") end
 UnitName = realUnitName
 check("retries are throttled, not once per event", calls <= 4, true)
 
+
+----------------------------------------------------------------------
+print("\n-- instance sessions --")
+----------------------------------------------------------------------
+
+--[[ Reported: dying and zoning out for a corpse run split one night into
+     several reports, and a raid continued on another night in the same
+     lockout could not be appended to.
+
+     The zone name alone cannot tell last week's Molten Core from this
+     week's, and it CHANGES the moment someone releases, because most
+     instance graveyards sit in a different zone. The lockout id is the real
+     identity. ]]
+
+local function freshSession()
+  Wrekkit.db.session = nil
+  Wrekkit.db.sessionBarrier = 0
+  Wrekkit.encounter.session = nil
+end
+
+freshSession()
+local s1 = Wrekkit.encounter:ResumeOrNew("Onyxia's Lair", NOW, "raid", SAVED_ID)
+check("a raid session records its lockout", s1.instanceId, SAVED_ID)
+
+-- Persist it the way CombatEnd does, then come back much later.
+Wrekkit.db.session = {
+  id = s1.id, zone = s1.zone, instanceType = "raid", instanceId = SAVED_ID,
+  startTime = s1.startTime, nextId = 4,
+  lastActivity = time() - 2 * 86400,      -- two days ago
+}
+Wrekkit.encounter.session = nil
+local s2 = Wrekkit.encounter:ResumeOrNew("Onyxia's Lair", NOW, "raid", SAVED_ID)
+check("same lockout resumes two days later", s2.resumed, true)
+check("and keeps counting encounter ids", s2.nextId, 4)
+
+-- A reset issues a new id, which must NOT join the old run.
+Wrekkit.encounter.session = nil
+local s3 = Wrekkit.encounter:ResumeOrNew("Onyxia's Lair", NOW, "raid", SAVED_ID + 1)
+check("a new lockout starts a new session", s3.resumed, nil)
+
+-- The corpse run: released to a graveyard in another zone, back 25 minutes
+-- later. That is one attempt, not two nights.
+freshSession()
+local d1 = Wrekkit.encounter:ResumeOrNew("Blackrock Depths", NOW, "party", 0)
+Wrekkit.db.session = {
+  id = d1.id, zone = "Blackrock Depths", instanceType = "party", instanceId = 0,
+  startTime = d1.startTime, nextId = 2,
+  lastActivity = time() - 1500,           -- 25 min: past the 20 min default
+}
+Wrekkit.encounter.session = nil
+local d2 = Wrekkit.encounter:ResumeOrNew("Blackrock Depths", NOW, "party", 0)
+check("a long corpse run does not split a dungeon", d2.id, d1.id)
+
+-- But a visit the next day is a different run.
+Wrekkit.db.session = {
+  id = d1.id, zone = "Blackrock Depths", instanceType = "party", instanceId = 0,
+  startTime = d1.startTime, nextId = 2,
+  lastActivity = time() - 86400,
+}
+Wrekkit.encounter.session = nil
+local d3 = Wrekkit.encounter:ResumeOrNew("Blackrock Depths", NOW, "party", 0)
+check("a separate visit is a separate session", d3.resumed, nil)
+
+-- Outside an instance the original window still applies.
+freshSession()
+local w1 = Wrekkit.encounter:ResumeOrNew("Gilneas", NOW, nil, 0)
+Wrekkit.db.session = {
+  id = w1.id, zone = "Gilneas", instanceId = 0,
+  startTime = w1.startTime, nextId = 2,
+  lastActivity = time() - 1500,
+}
+Wrekkit.encounter.session = nil
+local w2 = Wrekkit.encounter:ResumeOrNew("Gilneas", NOW, nil, 0)
+check("open world keeps the short window", w2.resumed, nil)
+
+-- A manual reset still wins over a matching lockout.
+freshSession()
+Wrekkit.db.session = {
+  id = s1.id, zone = "Onyxia's Lair", instanceType = "raid",
+  instanceId = SAVED_ID, startTime = s1.startTime, nextId = 2,
+  lastActivity = time() - 600,
+}
+Wrekkit.db.sessionBarrier = time()
+Wrekkit.encounter.session = nil
+local b1 = Wrekkit.encounter:ResumeOrNew("Onyxia's Lair", NOW, "raid", SAVED_ID)
+check("a manual reset still draws the line", b1.resumed, nil)
+Wrekkit.db.sessionBarrier = 0
+
+-- Where() should read the lockout out of the saved-instance list.
+local z, kind, id = Wrekkit.encounter:Where()
+check("Where finds the lockout id", id, SAVED_ID)
+check("Where reports the instance type", kind, "raid")
+
+freshSession()
 print(string.format("\n%d passed, %d failed\n", pass, fail))
 if fail > 0 then os.exit(1) end

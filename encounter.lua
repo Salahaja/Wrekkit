@@ -69,6 +69,7 @@ local function newEncounter(session, now)
     id = session.nextId,
     sessionId = session.id,
     zone = session.zone,
+    instanceId = session.instanceId or 0,
     name = "Trash",
     startTime = time(),
     startT = now,
@@ -90,10 +91,50 @@ local function newEncounter(session, now)
   }
 end
 
-local function newSession(now, zone)
+--[[ Identify where we are, precisely enough to recognise the same raid.
+
+     The zone name alone is too weak. It cannot tell last week's Molten Core
+     from this week's, and it changes the moment someone releases, because
+     most instance graveyards sit in a different zone -- which is how a wipe
+     with a long corpse run used to shard one night into several reports.
+
+     A saved instance id is the real identity: the server issues one per
+     lockout and keeps it for the whole reset. Two raids sharing an id ARE
+     the same raid, however many days apart, so a raid picked up on Thursday
+     appends to Tuesday's log instead of starting over.
+
+     Dungeons have no lockout and so no id; they fall back to the zone with
+     a longer grace period, which is what a corpse run needs. ]]
+function E:Where()
+  local zone = (GetRealZoneText and GetRealZoneText()) or "Unknown"
+
+  local instanceType
+  if IsInInstance then
+    local inInstance, kind = IsInInstance()
+    if inInstance then instanceType = kind end
+  end
+
+  local id = 0
+  if GetNumSavedInstances and GetSavedInstanceInfo then
+    local want = string.lower(zone)
+    for i = 1, (GetNumSavedInstances() or 0) do
+      local name, savedId = GetSavedInstanceInfo(i)
+      if name and string.lower(name) == want then
+        id = tonumber(savedId) or 0
+        break
+      end
+    end
+  end
+
+  return zone, instanceType, id
+end
+
+local function newSession(now, zone, instanceType, instanceId)
   return {
     id = time(),
     zone = zone or GetRealZoneText() or "Unknown",
+    instanceType = instanceType,
+    instanceId = instanceId or 0,
     startTime = time(),
     startT = now,
     nextId = 1,
@@ -120,6 +161,7 @@ function E:SessionFromHistory()
         best = {
           id = e.sessionId,
           zone = e.zone,
+          instanceId = e.instanceId or 0,
           startTime = (e.startTime or 0) - (e.offset or 0),
           nextId = (e.id or 0) + 1,
           lastActivity = endsAt,
@@ -154,9 +196,22 @@ end
 
      Resolved at combat start rather than at load, because the zone is not
      reliably known yet while the client is still coming up. ]]
-function E:ResumeOrNew(zone, now)
+function E:ResumeOrNew(zone, now, instanceType, instanceId)
   local window = (W.db and W.db.resumeWindow) or 1200
   local saved = W.db and W.db.session
+
+  instanceId = instanceId or 0
+
+  --[[ Inside an instance the clock runs differently. A wipe, a release, the
+       run back and re-forming can eat half an hour without anyone leaving,
+       and that is one attempt, not two nights. Dungeons get an hour before
+       we call it a separate visit; a saved raid does not need a clock at
+       all, because the lockout id already says whether it is the same raid. ]]
+  if instanceType then
+    local instanceWindow = 3600
+    if window > instanceWindow then instanceWindow = window end
+    window = instanceWindow
+  end
 
   if not (saved and saved.id and saved.startTime) then
     saved = self:SessionFromHistory()
@@ -168,15 +223,44 @@ function E:ResumeOrNew(zone, now)
        the two features would cancel each other out. ]]
   local barrier = (W.db and W.db.sessionBarrier) or 0
 
-  if saved and saved.zone == zone and saved.id and saved.startTime
+  if saved and saved.id and saved.startTime
       and (saved.lastActivity or 0) > barrier then
     local idle = time() - (saved.lastActivity or 0)
-    if idle >= 0 and idle <= window then
-      W.Print(string.format("continuing the session from %s ago.",
-        W.Duration(idle)))
+
+    --[[ Same lockout is the same raid, full stop. No time test: that is the
+         whole point of the id, and it is what lets a raid paused on Tuesday
+         be finished on Thursday and land in one report. The id changes when
+         the instance resets, which ends the session on its own. ]]
+    local sameLockout = instanceId > 0
+        and (saved.instanceId or 0) == instanceId
+        and saved.zone == zone
+
+    --[[ When both sides carry a lockout id, the id decides and the clock
+         does not get a vote. Two different ids are two different raids even
+         ten minutes apart -- which is exactly what a reset looks like from
+         in here, and resuming across one would merge this week's kill into
+         last week's report. ]]
+    local differentLockout = instanceId > 0
+        and (saved.instanceId or 0) > 0
+        and (saved.instanceId or 0) ~= instanceId
+
+    local sameZoneRecently = not differentLockout
+        and saved.zone == zone and idle >= 0 and idle <= window
+
+    if sameLockout or sameZoneRecently then
+      if sameLockout and idle > window then
+        W.Print(string.format(
+          "continuing this lockout's log from %s ago.", W.Duration(idle)))
+      else
+        W.Print(string.format("continuing the session from %s ago.",
+          W.Duration(idle)))
+      end
       return {
         id = saved.id,
         zone = zone,
+        instanceType = instanceType,
+        -- Keep the id we matched on, so the next resume can match it too.
+        instanceId = (instanceId > 0) and instanceId or (saved.instanceId or 0),
         startTime = saved.startTime,
         startT = now,
         nextId = saved.nextId or 1,
@@ -186,7 +270,7 @@ function E:ResumeOrNew(zone, now)
     end
   end
 
-  return newSession(now, zone)
+  return newSession(now, zone, instanceType, instanceId)
 end
 
 --[[ Close the current session and start logging fresh.
@@ -220,6 +304,10 @@ function E:RememberSession(session, enc)
   W.db.session = {
     id = session.id,
     zone = session.zone,
+    -- Without these a reload forgets which lockout this was, and the next
+    -- pull opens a fresh session instead of rejoining the raid.
+    instanceType = session.instanceType,
+    instanceId = session.instanceId or 0,
     startTime = session.startTime,
     nextId = session.nextId,
     -- End of the encounter, not "now": Finish can run well after combat
@@ -568,10 +656,16 @@ function E:CombatStart()
   end
 
   local now = GetTime()
-  local zone = GetRealZoneText() or "Unknown"
+  local zone, instanceType, instanceId = self:Where()
 
-  if not self.session or self.session.zone ~= zone then
-    self.session = self:ResumeOrNew(zone, now)
+  --[[ Re-resolve when the zone changes, but NOT when we are merely back in
+       the same lockout -- stepping out to the graveyard and back is one
+       raid, and re-resolving on the way in is what used to split it. ]]
+  local sameLockout = instanceId > 0 and self.session
+      and (self.session.instanceId or 0) == instanceId
+
+  if not self.session or (self.session.zone ~= zone and not sameLockout) then
+    self.session = self:ResumeOrNew(zone, now, instanceType, instanceId)
   end
 
   -- Resume the previous encounter if we only briefly dropped combat.
@@ -695,6 +789,9 @@ function E:Persist(enc)
     sessionId = enc.sessionId,
     name = enc.name,
     zone = enc.zone,
+    -- Kept per encounter so a session can be rebuilt from history alone,
+    -- which is the only path left after a crash eats SavedVariables.
+    instanceId = enc.instanceId or 0,
     startTime = enc.startTime,
     offset = enc.offset,
     duration = enc.duration,
