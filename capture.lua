@@ -552,16 +552,19 @@ function C:CheckEnvironment()
   local hasNampower = (NAMPOWER_VERSION ~= nil)
       or (WriteCustomFile ~= nil and ReadCustomFile ~= nil)
   if not hasNampower then
-    table.insert(missing, "Nampower - NOTHING will be recorded without it")
+    table.insert(missing, "Nampower - NOTHING will be recorded without it. " ..
+      "OctoLauncher installs it: Mods -> Nampower (it is not on by default)")
   elseif not (WriteCustomFile and ReadCustomFile) then
     table.insert(missing, "Nampower file API - no crash journal")
   end
 
   if not SpellInfo then
-    table.insert(missing, "SuperWoW (SpellInfo) - abilities show as spell ids")
+    table.insert(missing, "SuperWoW (SpellInfo) - abilities show as spell ids. " ..
+      "OctoLauncher: Mods -> SuperWoW")
   end
   if not GetUnitGUID then
-    table.insert(missing, "SuperWoW (GetUnitGUID) - no names, classes or pet owners")
+    table.insert(missing, "SuperWoW (GetUnitGUID) - no names, classes or pet owners. " ..
+      "OctoLauncher: Mods -> SuperWoW")
   end
   if not SetCVar then
     table.insert(missing, "SetCVar - cannot enable the extended events")
@@ -579,7 +582,8 @@ function C:WarnIfSilent()
   self.warnedSilent = true
   W.Print("|cffd44f53you just fought and no combat events arrived.|r " ..
     "Nothing is being recorded.")
-  W.Print("This needs Nampower. Run |cffe0a22c/wrek status|r for details.")
+  W.Print("This needs Nampower. In OctoLauncher it is |cffe0a22cMods -> Nampower|r, " ..
+    "which is not enabled by default. Run |cffe0a22c/wrek status|r for details.")
 end
 
 function C:EnableCVars()

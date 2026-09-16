@@ -43,9 +43,18 @@ following two client mods:
 | **SuperWoW** (`SuperWoWhook.dll`) | `SpellInfo`, `GetUnitGUID`, `GetUnitData` — unit lookup by GUID, pet owners, spell names | every call is guarded; units fall back to the raid roster and spells show as `Spell <id>` |
 | **Nampower** (`nampower.dll`) | the combat events themselves, plus `WriteCustomFile` / `ReadCustomFile` for the crash journal | every call is guarded; without the events nothing records at all, and without the file API the journal is skipped and SavedVariables alone carry history |
 
-Both are already installed on this client. Wrekkit checks for them on load
-and says what is missing rather than silently recording nothing — `/wrek
-status` reports the same thing at any time.
+**On OctoWoW, both are one click.** Open OctoLauncher, go to the mod list
+and enable them:
+
+| mod | launcher version | needed |
+| --- | --- | --- |
+| **Nampower** | v4.6.2 | **required** — nothing records without it |
+| **SuperWoW** | v2.2 | strongly recommended — without it rows have no names |
+
+Neither is enabled by default, which is the usual reason Wrekkit records
+nothing on a fresh install. Wrekkit checks for both on load and names the
+launcher toggle rather than silently recording nothing; `/wrek status`
+reports the same thing at any time.
 
 Every one of those calls is guarded, so a missing mod degrades the addon
 rather than erroring. `tools/test_degraded.lua` runs the addon with each mod
@@ -432,7 +441,7 @@ right; that still needs the client.
 
 All textures are generated, not drawn: `tools/make_textures.lua` emits
 uncompressed 32-bit BGRA top-down TGAs at power-of-two sizes, which is what
-1.12 loads from an addon folder. Shapes are supersampled 4×4 for
+1.12 loads from an addon folder. Shapes are supersampled 4�—4 for
 anti-aliasing, and most are authored white so the addon can tint them at
 runtime — one bar texture serves every class colour.
 
