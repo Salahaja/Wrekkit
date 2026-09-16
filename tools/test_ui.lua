@@ -1043,5 +1043,50 @@ step("the per-second column scales with text size", function()
   assert_(after > before, "before=" .. before .. " after=" .. after)
 end)
 
+--[[ Resizing must not relayout from inside the client's own layout callback.
+
+     OnSizeChanged IS that callback. Doing the relayout inline means calling
+     SetPoint and SetWidth on child regions while the layout pass that
+     invoked us is still unwinding, and a drag fires it every frame. These
+     pin the deferral down so it cannot quietly regress to a direct call. ]]
+
+step("OnSizeChanged does not relayout synchronously", function()
+  local win = UI.meter.frame
+  local calls = 0
+  local realOnResize = win.OnResize
+  win.OnResize = function() calls = calls + 1 end
+
+  local handler = win:GetScript("OnSizeChanged")
+  if not handler then error("the meter window has no OnSizeChanged") end
+  handler()
+
+  local inline = calls
+  win.OnResize = realOnResize
+  if inline ~= 0 then
+    error("OnResize ran inline during OnSizeChanged (" .. inline .. " time(s))")
+  end
+end)
+
+step("a burst of resizes collapses into a single relayout", function()
+  local win = UI.meter.frame
+  local calls = 0
+  local realOnResize = win.OnResize
+  win.OnResize = function() calls = calls + 1 end
+
+  local handler = win:GetScript("OnSizeChanged")
+  for _ = 1, 25 do handler() end
+
+  -- Let the deferred work run.
+  local ticker = _G["WrekkitTicker"]
+  if ticker and ticker:GetScript("OnUpdate") then
+    ticker:GetScript("OnUpdate")()
+  end
+
+  win.OnResize = realOnResize
+  if calls > 1 then
+    error("25 size changes produced " .. calls .. " relayouts, expected 1")
+  end
+end)
+
 print(string.format("\n%d passed, %d failed  (%d frames created)\n", pass, fail, calls))
 if fail > 0 then os.exit(1) end

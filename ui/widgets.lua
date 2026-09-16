@@ -551,7 +551,16 @@ function UI.ScrollList(parent, rowHeight, makeRow)
   function list:VisibleCount()
     local h = self:GetHeight()
     if not h or h <= 0 then return 0 end
-    return math.floor(h / self.rowHeight)
+    --[[ A zero row height would make this h/0, and EnsureRows would then
+         loop creating frames until the client died -- 1.12 cannot destroy a
+         frame, so there is no recovering from it either. The settings
+         stepper clamps to 10-32 so this is not reachable today, but the
+         constructor takes the value raw and `0 or 18` is 0 in Lua, so the
+         one thing standing between a bad saved value and a hang is this
+         line. ]]
+    local rh = self.rowHeight
+    if not rh or rh < 1 then rh = 18 end
+    return math.floor(h / rh)
   end
 
   function list:MaxOffset()
@@ -742,8 +751,26 @@ function UI.Window(name, width, height, title, opts)
   f.body = body
   f.bar = bar
 
+  --[[ Relayout AFTER the size change, never inside it.
+
+       OnSizeChanged is the client's own layout callback. Running the full
+       relayout from inside it means calling SetPoint and SetWidth on child
+       regions while the layout pass that triggered us is still unwinding --
+       re-entering the very machinery that called us. In 1.12 that is a
+       documented way to take the process down rather than raise a Lua
+       error, and a drag-resize fires this every single frame, so a long
+       drag is thousands of chances to land on it.
+
+       Deferring by a tick also collapses a whole drag into one relayout
+       instead of one per frame, which matters because Refresh re-sorts and
+       repaints every row. The key makes W.After replace any pending
+       relayout for this window rather than queue another. ]]
+  f._resizeKey = "resize:" .. tostring(name or f)
   f:SetScript("OnSizeChanged", function()
-    if f.OnResize then f:OnResize() end
+    if not f.OnResize then return end
+    W.After(0, function()
+      if f.OnResize then f:OnResize() end
+    end, f._resizeKey)
   end)
 
   return f
