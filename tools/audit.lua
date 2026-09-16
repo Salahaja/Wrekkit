@@ -67,6 +67,7 @@ declare(WOW, [[
 declare(FRAMEXML, [[
   DEFAULT_CHAT_FRAME GameTooltip SlashCmdList StaticPopupDialogs
   StaticPopup_Show UISpecialFrames
+  UNKNOWN
 ]])
 
 declare(SUPER, [[

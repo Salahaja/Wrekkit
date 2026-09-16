@@ -151,24 +151,71 @@ function C:InGroup(name)
   return self.groupMembers[name] == true
 end
 
+--[[ Is this an actual name, or the client's placeholder?
+
+     Vanilla returns the localised "Unknown" for a unit it has not loaded
+     yet. That is normal for a few seconds after a zone change, a relog or
+     a crash, while the rest of the group is still out of range.
+
+     It is a placeholder, not a name, and caching it is how an entire group
+     disappears from the report. The entry keeps "Unknown" for the rest of
+     the session; "Unknown" is not in the roster, so InGroup is false and
+     the ignore-outsiders filter drops every one of them. Worse, several
+     players collapse into one row, because they now share a name. ]]
+function C:IsRealName(name)
+  if not name or name == "" then return false end
+  if name == "Unknown" then return false end
+  -- UNKNOWN is FrameXML's localised copy of the same placeholder.
+  if UNKNOWN and name == UNKNOWN then return false end
+  return true
+end
+
+--- Everything we need, or is a lookup still outstanding?
+local function fullyResolved(u)
+  if u.class == "UNKNOWN" then return false end
+  if not u.name then return false end
+  -- A pet with no owner yet still has a lookup pending.
+  if u.class == "PET" and not u.ownerName then return false end
+  return true
+end
+
+-- How long to wait before retrying a unit that would not resolve, so a
+-- genuinely unresolvable one cannot cost a lookup on every single event.
+local RESOLVE_RETRY = 0.5
+
 --- Resolve (and cache) everything we know about a GUID. Safe to call on
 --- every event: the hot path is a single table lookup once a unit is known.
 function C:Unit(guid)
   if not guid or guid == "" or guid == NULL_GUID then return nil end
 
   local u = self.units[guid]
-  if u and u.class ~= "UNKNOWN" then return u end
+  --[[ Keep retrying until the NAME resolves too, not just the class.
+
+       This guard used to test the class alone. A unit whose class resolved
+       but whose name came back as the placeholder was then considered done
+       and never looked at again -- so one bad moment, typically the seconds
+       right after a crash or a zone, froze it as "Unknown" for the whole
+       session. ]]
+  if u and fullyResolved(u) then return u end
 
   if not u then
     u = { guid = guid, name = nil, class = "UNKNOWN", isPlayer = false }
     self.units[guid] = u
   end
 
+  -- Do not re-probe an unresolvable unit on every event.
+  local now = (GetTime and GetTime()) or 0
+  if u.nextTry and now < u.nextTry then return u end
+  u.nextTry = now + RESOLVE_RETRY
+
   -- GetUnitData is nampower's existence probe; without it UnitName on an
   -- out-of-range GUID can return a stale or empty string.
   local ok = GetUnitData and GetUnitData(guid)
   local name = UnitName(guid)
-  if not name or name == "" or name == "Unknown" then
+  if not self:IsRealName(name) then
+    -- Never commit the placeholder: leave the name unset so the next pass
+    -- tries again once the unit is actually loaded.
+    name = nil
     if not ok then return u end
   end
   u.name = name or u.name
@@ -194,8 +241,13 @@ function C:Unit(guid)
     if owner and owner ~= "" and owner ~= NULL_GUID then
       u.owner = owner
       u.class = "PET"
+      -- The owner may not have resolved yet either. Leaving ownerName unset
+      -- keeps the pet in the retry path, rather than pinning it to a pet
+      -- belonging to "Unknown" for the rest of the night.
       local ow = self.units[owner]
-      u.ownerName = (ow and ow.name) or UnitName(owner)
+      local ownerName = (ow and ow.name) or UnitName(owner)
+      if not self:IsRealName(ownerName) then ownerName = nil end
+      u.ownerName = ownerName or u.ownerName
     elseif ok then
       u.class = "ENEMY"
     else

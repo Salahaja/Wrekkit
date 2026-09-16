@@ -240,8 +240,14 @@ function E:Actor(guid)
 
   local a = enc.actors[guid]
   if a then
-    -- Late-resolving names: a mob seen before it was in range starts as "?"
-    if a.name == "?" or a.class == "UNKNOWN" then
+    --[[ Late-resolving names: a unit seen before it was in range starts as
+         "?", and the client may hand back its "Unknown" placeholder for a
+         while after that. Both mean "ask again", so neither can be allowed
+         to settle. A pet whose owner has not resolved is also still
+         pending. ]]
+    if a.name == "?" or a.class == "UNKNOWN"
+       or not W.capture:IsRealName(a.name)
+       or (a.class == "PET" and not W.capture:IsRealName(a.ownerName)) then
       local u = W.capture:Unit(guid)
       if u and u.name then
         a.name = u.name

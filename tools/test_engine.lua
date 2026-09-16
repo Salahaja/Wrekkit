@@ -1107,5 +1107,75 @@ end
 check("resumed into the recovered session, not a new one",
   Wrekkit.Count(ids), 1)
 
+
+----------------------------------------------------------------------
+print("\n-- late-resolving names (the crash-in-a-group bug) --")
+----------------------------------------------------------------------
+
+--[[ Reported from a live group: after a crash the report showed the player
+     plus a single "Unknown", and two warlocks vanished entirely.
+
+     The client returns its "Unknown" placeholder for a unit it has not
+     loaded yet. That was being cached as the name, and because the CLASS
+     resolved the entry counted as finished and was never retried. Two
+     consequences, both observed: players collapse into one row since they
+     now share a name, and each is dropped by the ignore-outsiders filter
+     because "Unknown" is not in the roster. ]]
+
+Wrekkit.capture.units = {}
+Wrekkit.encounter.live = nil
+
+WORLD["0xLock1"] = { name = "Unknown", class = "WARLOCK", isPlayer = true,
+                     maxHealth = 2000, health = 2000 }
+WORLD["0xLock2"] = { name = "Unknown", class = "WARLOCK", isPlayer = true,
+                     maxHealth = 2000, health = 2000 }
+
+local u1 = Wrekkit.capture:Unit("0xLock1")
+check("placeholder is not accepted as a name", u1.name, nil)
+
+WORLD["0xLock1"].name = "Gah"
+WORLD["0xLock2"].name = "Bobthekiller"
+NOW = NOW + 5
+
+u1 = Wrekkit.capture:Unit("0xLock1")
+local u2 = Wrekkit.capture:Unit("0xLock2")
+check("re-resolves once the client knows them", u1.name, "Gah")
+check("and the second one too", u2.name, "Bobthekiller")
+check("they stay distinct, not merged", u1.name ~= u2.name, true)
+
+Wrekkit.capture.units = {}
+WORLD["0xOwner"] = { name = "Unknown", class = "WARLOCK", isPlayer = true,
+                     maxHealth = 2000, health = 2000 }
+WORLD["0xImp"] = { name = "Brylia", isPlayer = false, owner = "0xOwner",
+                   maxHealth = 500, health = 500 }
+local p = Wrekkit.capture:Unit("0xImp")
+check("pet owner placeholder refused", p.ownerName, nil)
+
+WORLD["0xOwner"].name = "Bobthekiller"
+NOW = NOW + 5
+p = Wrekkit.capture:Unit("0xImp")
+check("pet owner resolves later", p.ownerName, "Bobthekiller")
+
+Wrekkit.capture.units = {}
+WORLD["0xLate"] = { name = "Unknown", class = "MAGE", isPlayer = true,
+                    maxHealth = 2000, health = 2000 }
+Wrekkit.encounter:CombatStart()
+local row = Wrekkit.encounter:Actor("0xLate")
+check("row starts unnamed", row.name, "?")
+WORLD["0xLate"].name = "Elfpriest"
+NOW = NOW + 5
+row = Wrekkit.encounter:Actor("0xLate")
+check("row adopts the real name", row.name, "Elfpriest")
+
+Wrekkit.capture.units = {}
+WORLD["0xGhosty"] = { name = "Unknown", class = "ROGUE", isPlayer = true,
+                      maxHealth = 1, health = 1 }
+local calls = 0
+local realUnitName = UnitName
+UnitName = function(x) calls = calls + 1 return realUnitName(x) end
+for i = 1, 50 do Wrekkit.capture:Unit("0xGhosty") end
+UnitName = realUnitName
+check("retries are throttled, not once per event", calls <= 4, true)
+
 print(string.format("\n%d passed, %d failed\n", pass, fail))
 if fail > 0 then os.exit(1) end
