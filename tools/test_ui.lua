@@ -124,7 +124,8 @@ CreateFrame = function(kind, name, parent)
     SetMovable = function() end,
     SetResizable = function() end,
     SetClampedToScreen = function() end,
-    SetMinResize = function() end,
+    -- recorded, so a test can check the minimum actually leaves room
+    SetMinResize = function(self, w, h) self._minW, self._minH = w, h end,
     SetMaxResize = function() end,
     StartMoving = function() end,
     StartSizing = function() end,
@@ -1086,6 +1087,40 @@ step("a burst of resizes collapses into a single relayout", function()
   if calls > 1 then
     error("25 size changes produced " .. calls .. " relayouts, expected 1")
   end
+end)
+
+--[[ The window's minimum size must leave the list a positive height at every
+     text size. It used to be a fixed 260x110 while the title bar, toolbar,
+     footer and rows all scale with the text, so at a large setting the
+     chrome alone exceeded the minimum and the list frame was handed a
+     negative height on every frame of a drag-resize. ]]
+
+step("the minimum height leaves room for the list at any text size", function()
+  local win = UI.meter.frame
+  for _, scale in ipairs({ 1.0, 1.2, 1.5, 1.8, 2.0 }) do
+    for _, compact in ipairs({ false, true }) do
+      Wrekkit.db.fontScale = scale
+      UI.meter:Settings().compact = compact
+      UI.meter:ApplyLayout()
+
+      local minW, minH = win._minW, win._minH
+      if not minH then error("SetMinResize was never called") end
+
+      local function px(n) return math.floor(n * scale + 0.5) end
+      local chrome = px(compact and 18 or 22)
+                   + ((not compact) and px(22) or 0)
+                   + (compact and 0 or px(15))
+                   + 8
+      local listH = minH - chrome
+      if listH < 1 then
+        error(string.format("scale %.1f compact=%s: list would be %dpx",
+          scale, tostring(compact), listH))
+      end
+    end
+  end
+  Wrekkit.db.fontScale = 1
+  UI.meter:Settings().compact = false
+  UI.meter:ApplyLayout()
 end)
 
 print(string.format("\n%d passed, %d failed  (%d frames created)\n", pass, fail, calls))

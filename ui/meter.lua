@@ -391,6 +391,24 @@ function M:ApplyLayout()
   self.list:SetPoint("BOTTOMRIGHT", f.body, "BOTTOMRIGHT", -2, footerH + 1)
 
   self.list:SetRowHeight(px(s.rowHeight or 18))
+
+  --[[ Move the minimum size with the chrome.
+
+       It was fixed at 260x110, but the title bar, toolbar, footer and rows
+       all scale with the text size. At a large setting the chrome alone
+       exceeds 110, so dragging the window to its minimum left the list a
+       NEGATIVE height -- a frame whose size is impossible, handed to the
+       layout resolver on every frame of the drag. Keep room for the chrome
+       plus two rows, so the window can always show something. ]]
+  if f.SetMinResize then
+    local rowH = px(s.rowHeight or 18)
+    local chrome = px(compact and 18 or 22)            -- title bar
+                 + (showToolbar and px(22) or 0)
+                 + footerH
+                 + 8                                   -- borders and insets
+    f:SetMinResize(px(260), chrome + rowH * 2)
+  end
+
   self:Refresh()
 end
 
