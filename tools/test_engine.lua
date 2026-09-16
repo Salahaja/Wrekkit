@@ -1291,5 +1291,145 @@ check("Where finds the lockout id", id, SAVED_ID)
 check("Where reports the instance type", kind, "raid")
 
 freshSession()
+
+----------------------------------------------------------------------
+print("\n-- timeline detail --")
+----------------------------------------------------------------------
+
+--[[ The four bucket totals say a spike happened but never say what it was.
+     These check the contributions behind them: who, with what, against whom.
+
+     Bounded on purpose, so verify the bound holds as well as the content --
+     this runs for every second of every encounter kept. ]]
+
+Wrekkit.ResetData("all")
+Wrekkit.db.timelineDetail = nil
+Wrekkit.encounter.session = nil
+Wrekkit.db.session = nil
+
+IN_COMBAT = true
+fire("PLAYER_REGEN_DISABLED")
+Wrekkit.encounter:Damage("0xP1", "0xBoss", 11605, 500, {})
+Wrekkit.encounter:Damage("0xP1", "0xBoss", 11605, 300, {})
+Wrekkit.encounter:Damage("0xP2", "0xBoss", 25289, 700, {})
+Wrekkit.encounter:Damage("0xBoss", "0xP1", 99001, 250, {})
+Wrekkit.encounter:Heal("0xP2", "0xP1", 2050, 400, 0, {})
+
+local live = Wrekkit.encounter.live
+local b = live.bucket[0]
+check("the second has a detail table", b.top ~= nil, true)
+
+local byKey = {}
+for _, r in pairs(b.top or {}) do
+  byKey[(r.k or "") .. (r.s or "") .. tostring(r.id) .. (r.t or "")] = r
+end
+
+local dmg = byKey["d0xP1" .. tostring(11605) .. "0xBoss"]
+check("same source, spell and target merge", dmg and dmg.n, 2)
+check("and their amounts add up", dmg and dmg.a, 800)
+
+local taken = byKey["t0xBoss" .. tostring(99001) .. "0xP1"]
+check("damage taken records who hit whom", taken and taken.a, 250)
+
+local heal = byKey["h0xP2" .. tostring(2050) .. "0xP1"]
+check("healing records the target", heal and heal.a, 400)
+
+-- A second cannot grow without limit, however busy it gets.
+for i = 1, 200 do
+  Wrekkit.encounter:Damage("0xP1", "0xBoss", 50000 + i, 10, {})
+end
+check("a busy second is capped", b.topKeys <= 24, true)
+local existing = byKey["d0xP1" .. tostring(11605) .. "0xBoss"]
+check("but existing entries keep accumulating", existing.a, 800)
+
+Wrekkit.encounter:Damage("0xP1", "0xBoss", 11605, 200, {})
+check("a known contributor still grows past the cap", existing.a, 1000)
+
+--[[ Persisting resolves guids to names and keeps only the largest few.
+
+     The fight has to last longer than minTrashDuration or Finish discards
+     it, and stopT only moves when something lands -- so advance the clock
+     and land one more hit rather than just waiting. ]]
+advance(8)
+Wrekkit.encounter:Damage("0xP1", "0xBoss", 11605, 100, {})
+IN_COMBAT = false
+fire("PLAYER_REGEN_ENABLED")
+Wrekkit.encounter:Finish()
+
+local stored = Wrekkit.db.encounters[table.getn(Wrekkit.db.encounters)] or {}
+check("the encounter was stored at all",
+  table.getn(Wrekkit.db.encounters) > 0, true)
+check("stored encounter carries timeline detail", stored.top ~= nil, true)
+local kept = stored.top and stored.top[0]
+check("kept the top few, not all of them", kept and table.getn(kept) <= 4, true)
+
+local named = false
+for _, r in ipairs(kept or {}) do
+  if r.src == "Fuff" then named = true end
+end
+check("guids were resolved to names", named, true)
+
+local hasTarget = false
+for _, r in ipairs(kept or {}) do
+  if r.dst and r.dst ~= "" then hasTarget = true end
+end
+check("the target survived to storage", hasTarget, true)
+
+-- Off means off: no table, no per-event work.
+Wrekkit.ResetData("all")
+Wrekkit.db.timelineDetail = false
+IN_COMBAT = true
+fire("PLAYER_REGEN_DISABLED")
+Wrekkit.encounter:Damage("0xP1", "0xBoss", 11605, 500, {})
+check("the setting can turn it off",
+  (Wrekkit.encounter.live.bucket[0] or {}).top, nil)
+Wrekkit.db.timelineDetail = nil
+
+IN_COMBAT = false
+fire("PLAYER_REGEN_ENABLED")
+Wrekkit.encounter:Finish()
+Wrekkit.ResetData("all")
+--[[ A long fight must not blow up SavedVariables. Four rows a second over a
+     five-minute boss is 1200 rows, around 100KB for one pull, rewritten
+     whole at logout and parsed whole at login. The budget keeps the busiest
+     seconds and drops the quiet ones, because a quiet second is not what
+     anyone clicks. ]]
+
+Wrekkit.ResetData("all")
+Wrekkit.db.timelineDetail = nil
+Wrekkit.db.timelineDetailSeconds = 10
+
+IN_COMBAT = true
+fire("PLAYER_REGEN_DISABLED")
+for sec = 1, 40 do
+  -- Rising damage, so the busiest seconds are the last ones.
+  Wrekkit.encounter:Damage("0xP1", "0xBoss", 11605, sec * 100, {})
+  advance(1)
+end
+Wrekkit.encounter:Damage("0xP1", "0xBoss", 11605, 50, {})
+IN_COMBAT = false
+fire("PLAYER_REGEN_ENABLED")
+Wrekkit.encounter:Finish()
+
+local long = Wrekkit.db.encounters[table.getn(Wrekkit.db.encounters)] or {}
+local secondsKept, rowsKept = 0, 0
+for _, rows in pairs(long.top or {}) do
+  secondsKept = secondsKept + 1
+  rowsKept = rowsKept + table.getn(rows)
+end
+
+check("detail is budgeted per encounter", secondsKept <= 12, true)
+check("and some detail was kept", secondsKept > 0, true)
+check("every bucket still has its totals",
+  table.getn(long.bucket or {}) >= secondsKept, true)
+
+-- The busiest seconds are the ones that survive.
+local keptLast = false
+for i = 35, 40 do if long.top[i] then keptLast = true end end
+check("the busiest seconds are the ones kept", keptLast, true)
+
+Wrekkit.db.timelineDetailSeconds = nil
+Wrekkit.ResetData("all")
+
 print(string.format("\n%d passed, %d failed\n", pass, fail))
 if fail > 0 then os.exit(1) end

@@ -109,7 +109,7 @@ function UI.Chart(parent)
 
   --- series: { dd = {}, dt = {}, eh = {}, hl = {} } indexed from 1
   --- n: sample count; peak: max value across series; deaths: { {t=...} }
-  function c:SetSeries(series, n, peak, deaths)
+  function c:SetSeries(series, n, peak, deaths, detail)
     local w = plot:GetWidth() or 0
     local h = plot:GetHeight() or 0
 
@@ -119,6 +119,7 @@ function UI.Chart(parent)
     self.samples = series
     self.sampleCount = n
     self.deaths = deaths
+    self.detail = detail
 
     if w <= 0 or h <= 0 then return end
 
@@ -374,6 +375,40 @@ function UI.Chart(parent)
         GameTooltip:AddLine((d.name or "?") .. " died",
           W.color.death[1], W.color.death[2], W.color.death[3])
       end
+    end
+
+    --[[ What actually happened, which is the question a spike raises. Only
+         the largest few contributions are kept per second -- see the cap in
+         encounter.lua -- so this is the shape of the second, not a
+         transcript of it. ]]
+    local rows = self.detail and self.detail[sec]
+    if rows and table.getn(rows) > 0 then
+      local ordered = {}
+      for _, r in ipairs(rows) do table.insert(ordered, r) end
+      table.sort(ordered, function(x, y) return (x.a or 0) > (y.a or 0) end)
+
+      GameTooltip:AddLine(" ")
+      for i = 1, 6 do
+        local r = ordered[i]
+        if not r then break end
+        local col = (r.k == "h") and W.color.healing
+                 or (r.k == "t") and W.color.taken
+                 or W.color.damage
+
+        -- "Shieldbarbie  Heroic Strike -> Greymane Cleric"
+        local what = r.src or "?"
+        if r.spell and r.spell ~= "" then what = what .. "  " .. r.spell end
+        if r.dst and r.dst ~= "" then what = what .. " -> " .. r.dst end
+
+        local amount = W.Short(r.a or 0)
+        if (r.n or 1) > 1 then amount = amount .. "  x" .. r.n end
+
+        GameTooltip:AddDoubleLine(what, amount,
+          col[1], col[2], col[3], 0.85, 0.85, 0.85)
+      end
+    elseif self.detail then
+      GameTooltip:AddLine(" ")
+      GameTooltip:AddLine("no detail kept for this second", 0.5, 0.5, 0.5)
     end
 
     GameTooltip:Show()

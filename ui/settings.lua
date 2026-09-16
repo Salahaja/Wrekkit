@@ -133,6 +133,13 @@ function S:Create()
   ------------------------------------------------------------------
   heading(self, "Recording")
 
+  check(self, "Timeline detail",
+    function() return W.db.timelineDetail ~= false end,
+    function(v) W.db.timelineDetail = v and nil or false end,
+    { "Hovering the timeline says who did what,",
+      "with which spell, to whom. Costs storage:",
+      "the busiest 60 seconds of each fight." })
+
   check(self, "Record open-world combat",
     function() return W.db.trackOpenWorld == true end,
     function(v)

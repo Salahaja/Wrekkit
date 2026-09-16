@@ -473,6 +473,7 @@ end
 function R:Series(encounters, windowSec)
   windowSec = windowSec or 3
   local axis = {}
+  local detail = {}
   local maxT = 0
 
   for _, enc in ipairs(encounters) do
@@ -492,6 +493,33 @@ function R:Series(encounters, windowSec)
           slot[1] = slot[1] + (b[1] or 0); slot[2] = slot[2] + (b[2] or 0)
           slot[3] = slot[3] + (b[3] or 0); slot[4] = slot[4] + (b[4] or 0)
         end
+        --[[ Carry the contributions onto the same axis as the totals.
+
+             A live encounter still holds them keyed by guid, because it is
+             mid-fight and Persist has not resolved anything yet; a stored
+             one already has names. Resolve the live case here so the
+             readout does not have to know the difference. ]]
+        local contribs = (enc.top and enc.top[i]) or nil
+        if not contribs and b.top then
+          contribs = {}
+          for _, r in pairs(b.top) do
+            local su = W.capture.units[r.s]
+            local tu = r.t and W.capture.units[r.t]
+            table.insert(contribs, {
+              k = r.k,
+              src = (su and su.name) or "?",
+              dst = tu and tu.name or nil,
+              spell = W.capture:Spell(r.id),
+              a = r.a, n = r.n,
+            })
+          end
+        end
+        if contribs then
+          local into = detail[t]
+          if not into then into = {} detail[t] = into end
+          for _, r in ipairs(contribs) do table.insert(into, r) end
+        end
+
         if t > maxT then maxT = t end
       end
     end
@@ -526,5 +554,5 @@ function R:Series(encounters, windowSec)
     if series.hl[i] > peak then peak = series.hl[i] end
   end
 
-  return series, maxT + 1, peak
+  return series, maxT + 1, peak, detail
 end

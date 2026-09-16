@@ -375,6 +375,58 @@ local function bucketFor(enc, now)
   return b
 end
 
+--[[ Who did what to whom, in this second.
+
+     The four bucket totals say a spike happened but never say what it was.
+     This keeps the contributions behind them, merged by source, spell AND
+     target -- the target matters, because "who was attacking whom" is half
+     of reading a pull.
+
+     Bounded twice on purpose. Distinct triples in one second of a 40-man
+     could run into the hundreds, and this is per second of every encounter
+     we keep:
+
+       BUCKET_KEYS  stops a single second growing without limit. Once it is
+                    reached, existing entries still accumulate -- so the big
+                    contributors, which are the ones already present, stay
+                    accurate. Only a new small one is turned away.
+       TOP_KEPT     is how many survive into storage, chosen at persist time
+                    by size, so what is kept is what the click is asking
+                    about.
+
+     No sorting happens per event; that would be per-event work for a
+     once-per-encounter need. ]]
+
+local BUCKET_KEYS = 24
+local TOP_KEPT = 4
+
+local function contribute(enc, b, kind, srcGuid, tgtGuid, spellId, amount)
+  if not amount or amount <= 0 then return end
+  if W.db and W.db.timelineDetail == false then return end
+  if not srcGuid then return end
+
+  local top = b.top
+  if not top then
+    top = {}
+    b.top = top
+    b.topKeys = 0
+  end
+
+  local key = kind .. (srcGuid or "") .. "\1" .. tostring(spellId or 0)
+      .. "\1" .. (tgtGuid or "")
+  local row = top[key]
+  if row then
+    row.a = row.a + amount
+    row.n = row.n + 1
+    return
+  end
+
+  if (b.topKeys or 0) >= BUCKET_KEYS then return end
+  b.topKeys = (b.topKeys or 0) + 1
+  top[key] = { k = kind, s = srcGuid, t = tgtGuid, id = spellId,
+               a = amount, n = 1 }
+end
+
 ----------------------------------------------------------------------
 -- ingest
 ----------------------------------------------------------------------
@@ -432,6 +484,7 @@ function E:Damage(sourceGuid, targetGuid, spellId, amount, info)
     if src.isPlayer or src.class == "PET" then
       enc.totals.damage = enc.totals.damage + amount
       b.dd = b.dd + amount
+      contribute(enc, b, "d", sourceGuid, targetGuid, spellId, amount)
     else
       enc.totals.enemy = enc.totals.enemy + amount
     end
@@ -451,6 +504,9 @@ function E:Damage(sourceGuid, targetGuid, spellId, amount, info)
     if dst.isPlayer or dst.class == "PET" then
       enc.totals.taken = enc.totals.taken + amount
       b.dt = b.dt + amount
+      -- Recorded from the victim's side: the source is whatever hit them,
+      -- which is how the readout can say who was attacking whom.
+      contribute(enc, b, "t", sourceGuid, targetGuid, spellId, amount)
     end
 
     -- Track the biggest thing we fought so the encounter can be named.
@@ -502,6 +558,7 @@ function E:Heal(casterGuid, targetGuid, spellId, effective, over, info)
     local b = bucketFor(enc, now)
     b.hl = b.hl + effective + over
     b.eh = b.eh + effective
+    contribute(enc, b, "h", casterGuid, targetGuid, spellId, effective)
   end
 end
 
@@ -804,9 +861,78 @@ function E:Persist(enc)
     maxBucket = enc.maxBucket,
   }
 
+  --[[ Persist the four totals, plus the largest few contributions behind
+       them. Sorting happens HERE, once per encounter, rather than on every
+       event -- the ordering is only needed at the point of storage.
+
+       Names are resolved now rather than stored as guids. A guid is
+       meaningless after a relog, and the actor it pointed at may not be in
+       the encounter at all (the mob that hit you is not in the damage-done
+       table), so keeping the guid would leave the readout unable to say who
+       anything was. ]]
+  --[[ Detail is capped per ENCOUNTER as well as per second.
+
+       Four rows every second sounds small until it is a five-minute boss:
+       1200 rows, about 100KB of SavedVariables, for one pull. SavedVariables
+       are rewritten whole at logout and parsed whole at login, so that is
+       paid twice a session.
+
+       So keep the busiest seconds and drop the quiet ones. A quiet second is
+       not what anyone clicks -- the question is always about a spike, or
+       about the moment somebody died. ]]
+  local detailSeconds = {}
+  do
+    local ranked = {}
+    for i = 0, enc.maxBucket do
+      local b = enc.bucket[i]
+      if b and b.top then
+        table.insert(ranked, { i = i, v = (b.dd or 0) + (b.dt or 0) + (b.hl or 0) })
+      end
+    end
+    table.sort(ranked, function(x, y) return x.v > y.v end)
+
+    -- Deaths are always worth explaining, however quiet the second was.
+    for _, d in ipairs(enc.deaths or {}) do
+      detailSeconds[math.floor(d.t or 0)] = true
+    end
+
+    local budget = (W.db and W.db.timelineDetailSeconds) or 60
+    for k = 1, budget do
+      local r = ranked[k]
+      if not r then break end
+      detailSeconds[r.i] = true
+    end
+  end
+
+  rec.top = {}
   for i = 0, enc.maxBucket do
     local b = enc.bucket[i]
-    if b then rec.bucket[i] = { b.dd, b.dt, b.hl, b.eh } end
+    if b then
+      rec.bucket[i] = { b.dd, b.dt, b.hl, b.eh }
+
+      if b.top and detailSeconds[i] then
+        local rows = {}
+        for _, r in pairs(b.top) do table.insert(rows, r) end
+        table.sort(rows, function(x, y) return (x.a or 0) > (y.a or 0) end)
+
+        local kept = {}
+        for k = 1, TOP_KEPT do
+          local r = rows[k]
+          if not r then break end
+          local su = W.capture.units[r.s]
+          local tu = r.t and W.capture.units[r.t]
+          table.insert(kept, {
+            k = r.k,
+            src = (su and su.name) or "?",
+            dst = (tu and tu.name) or nil,
+            spell = W.capture:Spell(r.id),
+            a = r.a,
+            n = r.n,
+          })
+        end
+        if table.getn(kept) > 0 then rec.top[i] = kept end
+      end
+    end
   end
 
   for guid, a in pairs(enc.actors) do

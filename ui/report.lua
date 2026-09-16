@@ -523,9 +523,9 @@ end
 
 function R:RefreshChart()
   local encounters = self:SelectedEncounters()
-  local series, n, peak = W.report:Series(encounters, 3)
+  local series, n, peak, detail = W.report:Series(encounters, 3)
   local view = W.report:View(encounters, { petMode = self.state.petMode })
-  self.chart:SetSeries(series, n, peak, view.deaths)
+  self.chart:SetSeries(series, n, peak, view.deaths, detail)
 end
 
 ----------------------------------------------------------------------
