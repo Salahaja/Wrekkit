@@ -72,7 +72,13 @@ local function region(kind)
     SetMaxLetters = function() end,
     ClearFocus = function() end,
     SetFocus = function() end,
-    GetStringWidth = function() return 40 end,
+    --[[ A constant here made every layout test vacuous: column widths
+         are computed from measured text, so a stub that reports the same
+         width for "Gah" and "Shieldbarbie" cannot tell a working layout
+         from a broken one. Roughly 6px a character at the default size. ]]
+    GetStringWidth = function(self)
+      return string.len(self._text or "") * 6
+    end,
   }
 
   return setmetatable(r, {
@@ -977,6 +983,64 @@ step("reset clears cleanly", function()
   Wrekkit.ResetData("all")
   UI.meter:Refresh()
   UI.report:Refresh()
+end)
+
+
+--[[ Reported with a screenshot: names truncated to "Sh..." and "Bo..." while
+     the damage and per-second columns sat in obvious empty space.
+
+     The name was charged a flat 74px for the value column, but the value is
+     right-anchored with no width and auto-sizes to its text, so a short
+     figure left the difference as dead space that the name had paid for.
+     These measure what the name actually receives. ]]
+
+local function measureRow(width, value, sub, subWidth)
+  local parent = CreateFrame("Frame")
+  local row = UI.Row(parent, 18)
+  row:SetWidth(width)
+  row:SetData(1, "Shieldbarbie", value, sub, 0.5, { 1, 1, 1 }, subWidth)
+  return row
+end
+
+local function assert_(cond, msg)
+  if not cond then error(msg, 2) end
+end
+
+step("a short value leaves the name more room than a long one", function()
+  local short = measureRow(300, "862", "1 dps", 58)
+  local long  = measureRow(300, "110.5k", "179 dps", 58)
+  assert_(short.name:GetWidth() > long.name:GetWidth(),
+    "short=" .. short.name:GetWidth() .. " long=" .. long.name:GetWidth())
+end)
+
+step("name gets the bulk of a 300px row", function()
+  local r = measureRow(300, "110k", "179 dps", 58)
+  assert_(r.name:GetWidth() >= 140, "name got " .. r.name:GetWidth() .. "px")
+end)
+
+step("a full name fits at the minimum window width", function()
+  -- "Shieldbarbie" is 12 chars, ~72px at the default size in this stub.
+  local r = measureRow(260, "110k", "179 dps", 58)
+  assert_(r.name:GetWidth() >= 72, "name got " .. r.name:GetWidth() .. "px")
+end)
+
+step("name never collapses below its floor", function()
+  local r = measureRow(120, "110k", "179 dps", 58)
+  assert_(r.name:GetWidth() >= 60, "name got " .. r.name:GetWidth() .. "px")
+end)
+
+step("columns fit inside the row without overlapping", function()
+  local r = measureRow(300, "110k", "179 dps", 58)
+  local used = 26 + r.name:GetWidth() + r.sub:GetWidth()
+  assert_(used <= 300, "used " .. used .. "px of 300")
+end)
+
+step("the per-second column scales with text size", function()
+  local before = measureRow(300, "110k", "179 dps", 58).sub:GetWidth()
+  Wrekkit.db.fontScale = 1.5
+  local after = measureRow(300, "110k", "179 dps", 58).sub:GetWidth()
+  Wrekkit.db.fontScale = 1
+  assert_(after > before, "before=" .. before .. " after=" .. after)
 end)
 
 print(string.format("\n%d passed, %d failed  (%d frames created)\n", pass, fail, calls))

@@ -113,7 +113,12 @@ function M:Create()
   local s = self:Settings()
 
   local f = UI.Window("WrekkitMeter", s.window.w, s.window.h, "Damage", {
-    minW = 200, minH = 110, barHeight = 22,
+    --[[ 200 was too narrow to be useful: after the rank gutter, the value
+         and the per-second column, the name was left about 40px, which is
+         two characters and an ellipsis. 260 leaves room for a full name
+         like "Shieldbarbie" at the default text size, and for the filter
+         box and tabs on the header. ]]
+    minW = 260, minH = 110, barHeight = 22,
   })
   self.frame = f
   UI.BindGeometry(f, s.window)

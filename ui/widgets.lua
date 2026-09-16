@@ -437,6 +437,10 @@ end
      stretched texture -- no segment stacking -- so a full list redraws in
      one pass per row. ]]
 
+-- Below this a name is not a name, it is an initial. The window's minimum
+-- width is set so this is never actually reached.
+local MIN_NAME_W = 60
+
 function UI.Row(parent, height)
   local r = CreateFrame("Button", nil, parent)
   r:SetHeight(height or 18)
@@ -472,7 +476,13 @@ function UI.Row(parent, height)
     self.name:SetText(name or "")
     self.value:SetText(value or "")
     self.sub:SetText(sub or "")
-    self.sub:SetWidth(subWidth or 64)
+    --[[ Callers give the secondary column its width at a text scale of 1.
+         Scale it here so raising the text size widens the column with the
+         digits instead of clipping them, and lowering it hands the space
+         back to the name. ]]
+    local scale = (W.db and W.db.fontScale) or 1
+    local subW = math.ceil((subWidth or 64) * scale)
+    self.sub:SetWidth(subW)
 
     local w = self:GetWidth()
     if not w or w <= 0 then w = 200 end
@@ -481,8 +491,27 @@ function UI.Row(parent, height)
     self.bar:SetWidth(barW)
     self.bar:SetVertexColor(color[1], color[2], color[3], 0.55)
 
-    -- Keep the name from running under the numbers.
-    self.name:SetWidth(w - 26 - (subWidth or 64) - 74)
+    --[[ Give the name every pixel the numbers do not need.
+
+         This used to subtract a flat 74 for the value column while the
+         value itself is right-anchored with no width, so it auto-sizes to
+         its text. A short number like "862" left roughly forty pixels of
+         dead space between the name and the figure -- space the name had
+         already been charged for. At a larger text size the constant was
+         wrong the other way, and names lost characters to a gap.
+
+         The value is unconstrained, so GetStringWidth is its true width.
+         Rounding up to a step keeps the name from reflowing every refresh
+         as a live number ticks between widths. ]]
+    local STEP = 12
+    local valueW = self.value:GetStringWidth() or 0
+    valueW = math.ceil(valueW / STEP) * STEP
+    if valueW < STEP then valueW = STEP end
+
+    -- 26 is the rank gutter; 14 covers the gaps either side of the value.
+    local nameW = w - 26 - subW - valueW - 14
+    if nameW < MIN_NAME_W then nameW = MIN_NAME_W end
+    self.name:SetWidth(nameW)
     self:Show()
   end
 
