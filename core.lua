@@ -39,7 +39,13 @@ W.color = {
   taken     = { 0.851, 0.310, 0.325 },
   healing   = { 0.400, 0.780, 0.463 },
   overheal  = { 0.400, 0.780, 0.463 },
-  death     = { 0.902, 0.294, 0.353 },
+  --[[ Deliberately NOT red. Death markers are drawn as full-height
+       vertical lines over the chart, and this used to be {0.902,0.294,0.353}
+       against a "Damage Taken" series of {0.851,0.310,0.325} -- the same red
+       to any eye. The legend showed red as damage taken and said nothing
+       about deaths, so the tallest, loudest marks on the chart read as a
+       damage spike. Violet belongs to no series. ]]
+  death     = { 0.82, 0.52, 0.98 },
 }
 
 -- 1.12 has no RAID_CLASS_COLORS on every client build, so carry our own.

@@ -67,7 +67,7 @@ declare(WOW, [[
 declare(FRAMEXML, [[
   DEFAULT_CHAT_FRAME GameTooltip SlashCmdList StaticPopupDialogs
   StaticPopup_Show UISpecialFrames
-  UNKNOWN
+  UNKNOWN MouseIsOver
 ]])
 
 declare(SUPER, [[
@@ -804,6 +804,37 @@ step("widget interactions", function()
   W.ui.report.chart:Toggle("dd")
   W.ui.report:RefreshChart()
   W.ui.report.chart:Toggle("dd")
+
+  -- Reading the chart. Driven here because the readout is where the chart
+  -- touches globals the rest of the addon never uses: it calls MouseIsOver,
+  -- which was undeclared, and coverage alone would not have caught it since
+  -- an unexercised handler reads no globals at all.
+  local chart = W.ui.report.chart
+  chart:SecondAt()
+  chart:ShowReadout()
+  local hit = chart.hit
+  if hit and hit._scripts then
+    if hit._scripts.OnEnter then hit._scripts.OnEnter() end
+    if hit._scripts.OnUpdate then hit._scripts.OnUpdate() end
+    if hit._scripts.OnLeave then hit._scripts.OnLeave() end
+  end
+
+  -- Announcing a drilldown: the lines for a player's abilities, and for one
+  -- ability's spread, which is what the windows show when drilled in.
+  do
+    local ctx = W.ui.report:AnnounceContext()
+    local view = W.report:View(ctx.encounters or {}, { petMode = "merge" })
+    local rows = W.report:Rank(view, ctx.metric or "damage", ctx.filter)
+    if rows and rows[1] then
+      ctx.drill = rows[1].key
+      W.announce:Lines(ctx, 5)
+      local abilities = W.report:Abilities(rows[1], ctx.metric or "damage")
+      if abilities and abilities[1] then
+        ctx.drillAbility = abilities[1].id
+        W.announce:Lines(ctx, 5)
+      end
+    end
+  end
 
   -- announce channel picker
   W.ui.AnnounceMenu(W.ui.report.frame, W.ui.report.announceBtn,

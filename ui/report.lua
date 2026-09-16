@@ -104,10 +104,14 @@ function R:AnnounceContext()
 
   return {
     metrics = metrics,
+    -- The drill is rendered from a single metric, so name the one in use.
+    metric = metrics[1],
     encounters = encounters,
     label = label,
     filter = { search = self.state.search, groupOnly = self.state.groupOnly },
     petMode = self.state.petMode,
+    drill = self.state.drill,
+    drillAbility = self.state.drillAbility,
   }
 end
 

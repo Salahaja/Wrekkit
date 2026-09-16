@@ -87,6 +87,69 @@ local function filterNote(ctx)
 end
 
 --- Build the lines exactly as they will be sent.
+--[[ The two drilled-in views, rendered exactly as the window shows them.
+
+     Level one is which abilities made up one player's number; level two is
+     the spread for a single ability -- hits, crits, misses, averages and
+     range. Returns nil when the drill target no longer exists, so the
+     caller falls back to the ranking rather than announcing nothing. ]]
+function A:DrillLines(ctx, view, count)
+  local metricKey = ctx.metric or (ctx.metrics and ctx.metrics[1]) or "damage"
+  local rows, metric = W.report:Rank(view, metricKey, ctx.filter)
+
+  local target
+  for _, r in ipairs(rows) do
+    if r.key == ctx.drill then target = r end
+  end
+  if not target then return nil end
+
+  local abilities = W.report:Abilities(target, metricKey)
+
+  -- Level two: one ability's spread.
+  if ctx.drillAbility then
+    local ability
+    for _, a in ipairs(abilities) do
+      if a.id == ctx.drillAbility then ability = a end
+    end
+    if ability then
+      local out = {
+        string.format("Wrekkit  %s - %s, %s (%s)%s",
+          target.name or "?", ability.name or "?", metric.label,
+          W.Duration(view.rateBase), filterNote(ctx)),
+      }
+      for _, st in ipairs(W.report:AbilityStats(ability, metricKey)) do
+        local note = st.note
+        if note and note ~= "" then note = "  (" .. note .. ")" else note = "" end
+        table.insert(out, string.format("  %s  %s%s", st.label, st.value, note))
+      end
+      return out
+    end
+  end
+
+  -- Level one: the abilities behind that player's number.
+  local out = {
+    string.format("Wrekkit  %s - %s (%s)%s",
+      target.name or "?", metric.label, W.Duration(view.rateBase),
+      filterNote(ctx)),
+  }
+  if table.getn(abilities) == 0 then
+    table.insert(out, "  " .. W.report:EmptyDetailNote(view))
+    return out
+  end
+
+  for i = 1, count do
+    local a = abilities[i]
+    if not a then break end
+    table.insert(out, string.format("%d. %s  %s", i, a.name,
+      W.Short(a.amount or 0)))
+  end
+  local extra = table.getn(abilities) - count
+  if extra > 0 then
+    table.insert(out, string.format("  ...and %d more", extra))
+  end
+  return out
+end
+
 function A:Lines(ctx, count)
   count = count or (W.db and W.db.announceCount) or 5
   if count > MAX_LINES then count = MAX_LINES end
@@ -96,6 +159,18 @@ function A:Lines(ctx, count)
   local view = W.report:View(encounters, { petMode = ctx.petMode or "merge" })
   local metrics = ctx.metrics
   if not metrics then metrics = { ctx.metric or "damage" } end
+
+  --[[ Rule 1 of this module is that it reports what is ON SCREEN, and a
+       drilldown is on screen. Announcing the ranking behind it while the
+       user is looking at one player's abilities would post something they
+       are not reading, which is the exact failure the rule exists to stop.
+
+       A drill is a single view by definition, so the metric selection does
+       not apply to it. ]]
+  if ctx.drill then
+    local drilled = self:DrillLines(ctx, view, count)
+    if drilled then return drilled end
+  end
 
   local out = {}
 
@@ -205,9 +280,12 @@ function A:Request(ctx, channel, target, count)
     return
   end
 
-  W.ui.ConfirmAnnounce(lines, channel, target, function(finalTarget)
-    local n = A:Send(lines, channel, finalTarget)
+  -- The dialog can change what is posted, so it hands back the final
+  -- lines rather than us closing over the ones we built.
+  ctx.count = count
+  W.ui.ConfirmAnnounce(lines, channel, target, function(finalTarget, finalLines)
+    local n = A:Send(finalLines or lines, channel, finalTarget)
     W.Print("sent " .. n .. " line" .. (n == 1 and "" or "s") .. " to " ..
       A:Destination(channel, finalTarget) .. ".")
-  end)
+  end, ctx)
 end

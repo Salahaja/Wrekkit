@@ -34,7 +34,11 @@ function P:Create()
   end
 
   local f = UI.Window("WrekkitPeers", W.db.peerWindow.w, W.db.peerWindow.h,
-    "Shared Logs", { minW = 440, minH = 260, strata = "HIGH" })
+    --[==[ The report is also HIGH. Two frames on the same strata fall back
+           to frame level for draw order, which is creation order here, so
+           the browser opened from the report was drawn UNDER it. DIALOG
+           puts it above, the way settings already sits above both. ]==]
+    "Shared Logs", { minW = 440, minH = 260, strata = "DIALOG" })
   self.frame = f
   UI.BindGeometry(f, W.db.peerWindow)
   UI.CloseOnEscape("WrekkitPeers")
@@ -377,6 +381,7 @@ function P:Toggle()
     f:Hide()
   else
     f:Show()
+    if f.Raise then f:Raise() end
     -- Look as soon as it opens: an empty browser you have to prompt is a
     -- browser people assume is broken.
     self:Discover()
@@ -386,5 +391,7 @@ end
 function P:Show()
   local f = self:Create()
   f:Show()
+  -- Strata decides which window wins; Raise decides it among equals.
+  if f.Raise then f:Raise() end
   self:Refresh()
 end

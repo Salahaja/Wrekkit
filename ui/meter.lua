@@ -101,6 +101,9 @@ function M:AnnounceContext()
     label = segLabel,
     filter = { search = s.search, groupOnly = s.groupOnly },
     petMode = s.petMode,
+    -- A drilldown IS what is on screen, so announcing has to know about it.
+    drill = self.drill,
+    drillAbility = self.drillAbility,
   }
 end
 

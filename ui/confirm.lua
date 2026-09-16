@@ -21,6 +21,22 @@ local DIALOG_W = 420
 local ROW_H = 14
 local MAX_ROWS = 14
 
+-- The ceiling on "Top N" in the picker. A:Lines clamps to its own MAX_LINES
+-- as well, so this only decides how far the stepper will travel.
+local MAX_LINES_PICK = 15
+
+--[[ What can be posted. Deliberately a short, curated list rather than every
+     metric the report knows: a dialog with fifteen checkboxes is not a
+     choice, it is a form. These are the ones people actually link. ]]
+local ANNOUNCE_METRICS = {
+  { key = "damage",   label = "Damage" },
+  { key = "healing",  label = "Healing" },
+  { key = "taken",    label = "Taken" },
+  { key = "deaths",   label = "Deaths" },
+  { key = "consumes", label = "Consumables" },
+  { key = "dispels",  label = "Dispels" },
+}
+
 local dialog
 
 ----------------------------------------------------------------------
@@ -103,6 +119,47 @@ local function build()
   f.targetLabel:SetText("who to whisper")
   f.targetLabel:Hide()
 
+  --[[ What to post, decided here rather than before the dialog opened.
+
+       The window's current view sets the defaults, so the common case is
+       still "announce what I am looking at" with no fiddling. But the view
+       and the post are not the same thing: someone reading Damage may well
+       want to post deaths too, and the alternative was closing the dialog,
+       changing tab, and starting again.
+
+       Live state is deliberately not stored anywhere: these reset from the
+       view every time the dialog opens, so yesterday's choice cannot
+       silently decide today's post. ]]
+  f.picked = {}
+  f.metricChecks = {}
+  local COLS, COL_W = 3, 128
+  for i, m in ipairs(ANNOUNCE_METRICS) do
+    local col = math.mod(i - 1, COLS)
+    local row = math.floor((i - 1) / COLS)
+    local chk = UI.Check(f, m.label,
+      function() return f.picked[m.key] == true end,
+      function(v)
+        f.picked[m.key] = v or nil
+        if f.Rebuild then f:Rebuild() end
+      end)
+    chk:SetWidth(COL_W)
+    chk._metricKey = m.key
+    chk._col, chk._row = col, row
+    f.metricChecks[i] = chk
+  end
+
+  f.countStepper = UI.Stepper(f, "Top",
+    function() return f.count or 5 end,
+    function(v)
+      f.count = v
+      if f.Rebuild then f:Rebuild() end
+    end,
+    1, MAX_LINES_PICK, 1,
+    function(v) return tostring(v) end)
+
+  -- Says what the checkboxes do not: which view this came from.
+  f.viewNote = UI.Text(f, 10, W.color.textFaint)
+
   -- preview
   f.previewLabel = UI.Text(f, 10, W.color.textFaint)
   f.previewLabel:SetText("This will be posted, one line at a time:")
@@ -143,7 +200,7 @@ end
 ----------------------------------------------------------------------
 
 --- Show the gate. onAccept(target) fires only on an explicit Send.
-function UI.ConfirmAnnounce(lines, channel, target, onAccept)
+function UI.ConfirmAnnounce(lines, channel, target, onAccept, ctx)
   local f = build()
   local A = W.announce
 
@@ -156,6 +213,17 @@ function UI.ConfirmAnnounce(lines, channel, target, onAccept)
                       isPublic(channel) and 0.42 or 0.64,
                       isPublic(channel) and 0.30 or 0.17)
   f.who:SetText(audience(channel, target) .. " will see this.")
+
+  --[==[ Seed the picker from what is on screen. Reset every open on
+         purpose: a sticky selection would let a choice made for one pull
+         quietly decide the next post. ]==]
+  f.picked = {}
+  if ctx then
+    for _, k in ipairs(ctx.metrics or { ctx.metric or "damage" }) do
+      f.picked[k] = true
+    end
+  end
+  f.count = (ctx and ctx.count) or (W.db and W.db.announceCount) or 5
 
   -- whisper needs a name before Send means anything
   local needsTarget = (channel == "WHISPER")
@@ -170,26 +238,113 @@ function UI.ConfirmAnnounce(lines, channel, target, onAccept)
     f.previewLabel:SetPoint("TOPLEFT", f.headFill, "BOTTOMLEFT", 12, -8)
   end
 
-  for i = 1, MAX_ROWS do
-    local t = f.rows[i]
-    if i <= shown then
-      t:SetText(lines[i])
-      t:Show()
+  --[[ Paint the preview from whatever the controls currently say. Kept as
+       a closure so a checkbox or the Top stepper can re-run it without
+       rebuilding the dialog -- 1.12 cannot destroy frames, so rebuilding
+       per keystroke would leak one modal per click. ]]
+  local anchorTop = needsTarget and f.targetBox or f.headFill
+
+  local function layoutControls()
+    local drilled = ctx and ctx.drill
+    local controlH = 0
+
+    if ctx and not drilled then
+      local top = anchorTop
+      for _, chk in ipairs(f.metricChecks) do
+        chk:ClearAllPoints()
+        chk:SetPoint("TOPLEFT", top, needsTarget and "BOTTOMLEFT" or "BOTTOMLEFT",
+          (needsTarget and -12 or 12) + chk._col * 128, -8 - chk._row * 20)
+        chk:Show()
+      end
+      local rows = math.ceil(table.getn(f.metricChecks) / 3)
+      controlH = rows * 20 + 8
+
+      f.countStepper:ClearAllPoints()
+      f.countStepper:SetPoint("TOPLEFT", top, "BOTTOMLEFT",
+        (needsTarget and -12 or 12), -8 - rows * 20 - 4)
+      f.countStepper:Show()
+      controlH = controlH + 24
+
+      f.viewNote:ClearAllPoints()
+      f.viewNote:SetPoint("LEFT", f.countStepper, "RIGHT", 12, 0)
+      f.viewNote:SetText("defaults from what is on screen")
+      f.viewNote:Show()
+
+      f.previewLabel:ClearAllPoints()
+      f.previewLabel:SetPoint("TOPLEFT", f.countStepper, "BOTTOMLEFT", 0, -10)
     else
-      t:Hide()
+      for _, chk in ipairs(f.metricChecks) do chk:Hide() end
+      f.countStepper:Hide()
+      if drilled then
+        f.viewNote:ClearAllPoints()
+        f.viewNote:SetPoint("TOPLEFT", anchorTop, "BOTTOMLEFT",
+          (needsTarget and -12 or 12), -8)
+        f.viewNote:SetText("announcing the detail you have open")
+        f.viewNote:Show()
+        controlH = 18
+        f.previewLabel:ClearAllPoints()
+        f.previewLabel:SetPoint("TOPLEFT", f.viewNote, "BOTTOMLEFT", 0, -8)
+      else
+        f.viewNote:Hide()
+        f.previewLabel:ClearAllPoints()
+        f.previewLabel:SetPoint("TOPLEFT", anchorTop, "BOTTOMLEFT",
+          (needsTarget and -12 or 12), -8)
+      end
     end
+    return controlH
   end
 
-  f.box:SetHeight(shown * ROW_H + 8)
-  f.box:SetPoint("TOPLEFT", f.previewLabel, "BOTTOMLEFT", 0, -4)
-  f.box:SetPoint("RIGHT", f, "RIGHT", -12, 0)
+  local function paint(newLines)
+    lines = newLines
+    local n = table.getn(lines)
+    local vis = n
+    local cut = false
+    if vis > MAX_ROWS then vis = MAX_ROWS cut = true end
 
-  local total = table.getn(lines)
-  f.note:SetText(total .. " line" .. (total == 1 and "" or "s") ..
-    (truncated and ("  (" .. (total - MAX_ROWS) .. " more not previewed)") or ""))
+    for i = 1, MAX_ROWS do
+      local t = f.rows[i]
+      if i <= vis then
+        t:SetText(lines[i])
+        t:Show()
+      else
+        t:Hide()
+      end
+    end
 
-  -- Height: header + optional target row + label + preview + buttons.
-  f:SetHeight(46 + (needsTarget and 30 or 0) + 18 + (shown * ROW_H + 8) + 48)
+    local controlH = layoutControls()
+
+    f.box:SetHeight(vis * ROW_H + 8)
+    f.box:SetPoint("TOPLEFT", f.previewLabel, "BOTTOMLEFT", 0, -4)
+    f.box:SetPoint("RIGHT", f, "RIGHT", -12, 0)
+
+    if n == 0 then
+      f.note:SetText("|cffd44f53nothing selected to post|r")
+    else
+      f.note:SetText(n .. " line" .. (n == 1 and "" or "s") ..
+        (cut and ("  (" .. (n - MAX_ROWS) .. " more not previewed)") or ""))
+    end
+    f.sendBtn:SetActive(n > 0)
+
+    f:SetHeight(46 + (needsTarget and 30 or 0) + controlH + 18
+                + (vis * ROW_H + 8) + 48)
+  end
+
+  --[[ Rebuild from the controls. The checkbox order is the dialog's, not the
+       context's, so two people reading the same post see the same order. ]]
+  f.Rebuild = function()
+    if not ctx then return end
+    local chosen = {}
+    for _, m in ipairs(ANNOUNCE_METRICS) do
+      if f.picked[m.key] then table.insert(chosen, m.key) end
+    end
+    local probe = {}
+    for k, v in pairs(ctx) do probe[k] = v end
+    probe.metrics = chosen
+    probe.metric = chosen[1] or ctx.metric
+    paint(W.announce:Lines(probe, f.count))
+  end
+
+  paint(lines)
 
   f.sendBtn:SetScript("OnClick", function()
     local finalTarget = target
@@ -201,7 +356,8 @@ function UI.ConfirmAnnounce(lines, channel, target, onAccept)
       end
     end
     UI.CloseConfirm()
-    W.Guard("announce confirm", function() onAccept(finalTarget) end)
+    -- `lines` is reassigned by paint(), so this sends what is on screen.
+    W.Guard("announce confirm", function() onAccept(finalTarget, lines) end)
   end)
 
   f.shade:Show()

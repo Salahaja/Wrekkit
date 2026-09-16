@@ -112,6 +112,14 @@ function UI.Chart(parent)
   function c:SetSeries(series, n, peak, deaths)
     local w = plot:GetWidth() or 0
     local h = plot:GetHeight() or 0
+
+    --[[ Keep what was drawn. The columns are downsampled to 150 for display,
+         so they cannot answer "what happened at 4:12" -- the readout needs
+         the per-second samples, not the pixels. ]]
+    self.samples = series
+    self.sampleCount = n
+    self.deaths = deaths
+
     if w <= 0 or h <= 0 then return end
 
     if not series or n < 2 or peak <= 0 then
@@ -265,10 +273,122 @@ function UI.Chart(parent)
     c.legendButtons[si] = b
   end
 
+  --[[ Deaths get a legend entry of their own.
+
+       They are the tallest marks on the chart, and without a key the only
+       explanation on offer was the "Damage Taken" swatch, which was the
+       same red. Not a toggle: a death is an event, not a series you would
+       want to hide. ]]
+  local deathKey = CreateFrame("Frame", nil, legend)
+  deathKey:SetHeight(12)
+  deathKey:SetWidth(string.len("Death") * 5 + 16)
+  deathKey:SetPoint("RIGHT", legend, "RIGHT", -xoff, 0)
+
+  local deathSwatch = deathKey:CreateTexture(nil, "ARTWORK")
+  deathSwatch:SetTexture(UI.media.white)
+  deathSwatch:SetVertexColor(W.color.death[1], W.color.death[2],
+                             W.color.death[3], 1)
+  deathSwatch:SetWidth(2) deathSwatch:SetHeight(9)
+  deathSwatch:SetPoint("LEFT", deathKey, "LEFT", 2, 0)
+
+  local deathTxt = UI.Text(deathKey, 9, W.color.textDim)
+  deathTxt:SetPoint("LEFT", deathSwatch, "RIGHT", 5, 0)
+  deathTxt:SetText("Death")
+  c.deathKey = deathKey
+
   c.empty = UI.Text(c, 11, W.color.textFaint, "CENTER")
   c.empty:SetPoint("CENTER", plot, "CENTER", 0, 0)
   c.empty:SetText("No timeline for this selection")
   c.empty:Hide()
+
+  ------------------------------------------------------------------
+  -- reading the chart
+  ------------------------------------------------------------------
+
+  --[[ A chart you cannot interrogate is decoration. Hovering reads out the
+       second under the cursor: the clock time, what each series was doing,
+       and who died there. The hit area is one frame over the plot rather
+       than per-column, because 150 mouse-enabled columns would be 150
+       frames that 1.12 could never reclaim. ]]
+  local hit = CreateFrame("Button", nil, plot)
+  hit:SetAllPoints(plot)
+  hit:EnableMouse(true)
+  c.hit = hit
+
+  local cursor = plot:CreateTexture(nil, "OVERLAY")
+  cursor:SetTexture(UI.media.white)
+  cursor:SetWidth(1)
+  cursor:SetVertexColor(W.color.text[1], W.color.text[2], W.color.text[3], 0.35)
+  cursor:Hide()
+  c.cursor = cursor
+
+  --- Which second is under the cursor, or nil if the pointer is off the plot.
+  function c:SecondAt()
+    if not self.sampleCount or self.sampleCount < 2 then return nil end
+    local w = plot:GetWidth() or 0
+    if w <= 0 then return nil end
+    local x = GetCursorPosition()
+    local scale = plot:GetEffectiveScale()
+    if not scale or scale == 0 then scale = 1 end
+    x = x / scale - plot:GetLeft()
+    if x < 0 or x > w then return nil end
+    local sec = math.floor(x / w * self.sampleCount)
+    if sec < 0 then sec = 0 end
+    if sec > self.sampleCount - 1 then sec = self.sampleCount - 1 end
+    return sec, x
+  end
+
+  function c:ShowReadout()
+    local sec, x = self:SecondAt()
+    if not sec then
+      cursor:Hide()
+      GameTooltip:Hide()
+      return
+    end
+
+    cursor:ClearAllPoints()
+    cursor:SetPoint("BOTTOM", plot, "BOTTOMLEFT", x, 0)
+    cursor:SetHeight(plot:GetHeight() or 0)
+    cursor:Show()
+
+    GameTooltip:SetOwner(hit, "ANCHOR_CURSOR")
+    GameTooltip:AddLine(W.Clock(sec))
+
+    local any = false
+    for _, def in ipairs(SERIES) do
+      local data = self.samples and self.samples[def.key]
+      local v = data and data[sec + 1]
+      if v and v > 0 then
+        any = true
+        GameTooltip:AddDoubleLine(def.label, W.Short(v),
+          def.color[1], def.color[2], def.color[3], 1, 1, 1)
+      end
+    end
+    if not any then
+      GameTooltip:AddLine("nothing happening", 0.6, 0.6, 0.6)
+    end
+
+    -- Who died in this second, since that is the question a marker raises.
+    for _, d in ipairs(self.deaths or {}) do
+      if math.floor(d.t or 0) == sec then
+        GameTooltip:AddLine((d.name or "?") .. " died",
+          W.color.death[1], W.color.death[2], W.color.death[3])
+      end
+    end
+
+    GameTooltip:Show()
+  end
+
+  hit:SetScript("OnEnter", function() c:ShowReadout() end)
+  hit:SetScript("OnUpdate", function()
+    if hit:IsShown() and MouseIsOver and MouseIsOver(hit) then
+      c:ShowReadout()
+    end
+  end)
+  hit:SetScript("OnLeave", function()
+    cursor:Hide()
+    GameTooltip:Hide()
+  end)
 
   return c
 end
