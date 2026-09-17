@@ -1431,5 +1431,78 @@ check("the busiest seconds are the ones kept", keptLast, true)
 Wrekkit.db.timelineDetailSeconds = nil
 Wrekkit.ResetData("all")
 
+
+----------------------------------------------------------------------
+print("\n-- resists --")
+----------------------------------------------------------------------
+
+--[[ Full and partial resists are different events and different problems.
+
+     A FULL resist arrives as a miss with reason 2 and did no damage at all.
+     A PARTIAL resist LANDED -- it is in hits and in the total, with part of
+     its damage eaten by the target's resistance. Reporting them together
+     hides both: full resists are a hit-table problem, partials are a gear
+     problem. ]]
+
+Wrekkit.ResetData("all")
+IN_COMBAT = true
+fire("PLAYER_REGEN_DISABLED")
+
+-- Landed for 750 with 250 eaten: a 25% partial off a 1000 potential.
+Wrekkit.encounter:Damage("0xP1", "0xBoss", 11661, 750, { resisted = 250 })
+-- Landed for 500 with 500 eaten: 50%.
+Wrekkit.encounter:Damage("0xP1", "0xBoss", 11661, 500, { resisted = 500 })
+-- Landed clean.
+Wrekkit.encounter:Damage("0xP1", "0xBoss", 11661, 1000, {})
+-- Fully resisted, which is a MISS with reason 2.
+Wrekkit.encounter:Miss("0xP1", "0xBoss", 11661, 2)
+-- And an ordinary miss, reason 1.
+Wrekkit.encounter:Miss("0xP1", "0xBoss", 11661, 1)
+
+local act = Wrekkit.encounter.live.actors["0xP1"]
+local row = act.dmgAbility[11661]
+
+check("partial resists counted", row.resistHits, 2)
+check("full resist is NOT a partial", row.resistHits ~= 3, true)
+check("damage lost to partials", row.resisted, 750)
+check("25% tier", row.r25, 1)
+check("50% tier", row.r50, 1)
+check("75% tier stayed empty", row.r75, 0)
+check("partials still count as hits", row.hits, 3)
+check("both misses counted", row.misses, 2)
+check("the full resist is recorded by reason", row.missBy[2], 1)
+check("and the plain miss separately", row.missBy[1], 1)
+
+-- The readout must present them as two different things.
+local stats = Wrekkit.report:AbilityStats(row, "damage")
+local byLabel = {}
+for _, r in ipairs(stats) do byLabel[r.label] = r end
+
+check("full resists get their own line", byLabel["Fully resisted"] ~= nil, true)
+check("partials get their own line", byLabel["Partially resisted"] ~= nil, true)
+check("and they do not share a number",
+  byLabel["Fully resisted"].value ~= byLabel["Partially resisted"].value, true)
+check("the damage lost is reported", byLabel["Lost to resists"] ~= nil, true)
+check("the tiers are broken out", byLabel["Resist tiers"] ~= nil, true)
+check("an ordinary miss is named, not lumped in", byLabel["Missed"] ~= nil, true)
+
+-- Survives storage.
+advance(8)
+Wrekkit.encounter:Damage("0xP1", "0xBoss", 11661, 100, {})
+IN_COMBAT = false
+fire("PLAYER_REGEN_ENABLED")
+Wrekkit.encounter:Finish()
+
+local stored = Wrekkit.db.encounters[table.getn(Wrekkit.db.encounters)] or {}
+local savedRow
+for _, a in pairs(stored.actors or {}) do
+  for _, r in ipairs(a.dmgAbility or {}) do
+    if r.id == 11661 then savedRow = r end
+  end
+end
+check("resist stats survived persisting", savedRow and savedRow.resistHits, 2)
+check("and the miss reasons did too", savedRow and savedRow.missBy and savedRow.missBy[2], 1)
+
+Wrekkit.ResetData("all")
 print(string.format("\n%d passed, %d failed\n", pass, fail))
 if fail > 0 then os.exit(1) end

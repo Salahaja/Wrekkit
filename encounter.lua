@@ -442,10 +442,41 @@ local function abilityRow(tbl, spellId, name)
   if not row then
     row = { id = spellId, name = name, amount = 0, over = 0,
             hits = 0, crits = 0, misses = 0,
-            max = 0, min = nil, critAmount = 0 }
+            max = 0, min = nil, critAmount = 0,
+            -- Partial resists. `resisted` is the damage the school ate, so
+            -- amount + resisted is what the spell would have hit for.
+            resisted = 0, resistHits = 0,
+            r25 = 0, r50 = 0, r75 = 0,
+            -- Why the ones that did not land failed, keyed by the client's
+            -- miss code. A resist and a dodge are both "a miss" to the
+            -- counter above, and they mean completely different things.
+            missBy = nil }
     tbl[spellId] = row
   end
   return row
+end
+
+--[[ Vanilla resists a spell in quarters. The event gives an absolute amount,
+     so the tier has to come back out of the ratio -- and it is worth having
+     as a tier, because "half my Shadow Bolts are landing at 75% resist" is a
+     gear problem and "a few at 25%" is just variance.
+
+     Rounded to the nearest quarter rather than floored: the server's number
+     is the damage actually removed, which does not divide perfectly once
+     the spell's own rounding has happened. ]]
+local function noteResist(row, landed, resisted)
+  if not resisted or resisted <= 0 then return end
+
+  row.resisted = (row.resisted or 0) + resisted
+  row.resistHits = (row.resistHits or 0) + 1
+
+  local potential = landed + resisted
+  if potential <= 0 then return end
+
+  local quarter = math.floor((resisted / potential) * 4 + 0.5)
+  if quarter <= 1 then row.r25 = (row.r25 or 0) + 1
+  elseif quarter == 2 then row.r50 = (row.r50 or 0) + 1
+  else row.r75 = (row.r75 or 0) + 1 end
 end
 
 --- Fold one landed amount into an ability's spread.
@@ -480,6 +511,9 @@ function E:Damage(sourceGuid, targetGuid, spellId, amount, info)
     row.hits = row.hits + 1
     if info.crit then row.crits = row.crits + 1 end
     noteAmount(row, amount, info.crit)
+    -- A PARTIAL resist: the spell landed, the school ate part of it. A FULL
+    -- resist never reaches this function at all -- it arrives as a miss.
+    noteResist(row, amount, info.resisted)
 
     if src.isPlayer or src.class == "PET" then
       enc.totals.damage = enc.totals.damage + amount
@@ -562,6 +596,16 @@ function E:Heal(casterGuid, targetGuid, spellId, effective, over, info)
   end
 end
 
+--[[ missInfo is the client's numeric reason, not a string:
+
+       0 none   1 miss    2 RESIST   3 dodge   4 parry   5 block
+       6 evade  7 immune  8 immune   9 deflect 10 absorb 11 reflect
+
+     Code 2 is a FULL resist -- the spell was resisted outright and did no
+     damage. It is a completely different thing from a partial resist, which
+     lands and is recorded on the damage path, and lumping them together as
+     "misses" hides both: a caster cannot tell bad luck on hit chance from
+     being under-geared against a school. ]]
 function E:Miss(casterGuid, targetGuid, spellId, missInfo)
   if not self.live then return end
   local src = self:Actor(casterGuid)
@@ -569,6 +613,10 @@ function E:Miss(casterGuid, targetGuid, spellId, missInfo)
   src.misses = src.misses + 1
   local row = abilityRow(src.dmgAbility, spellId, W.capture:Spell(spellId))
   row.misses = row.misses + 1
+
+  local code = tonumber(missInfo) or 0
+  if not row.missBy then row.missBy = {} end
+  row.missBy[code] = (row.missBy[code] or 0) + 1
 end
 
 function E:Dispel(casterGuid, targetGuid, spellId)
@@ -830,7 +878,10 @@ local function topAbilities(tbl, limit)
   for id, r in pairs(tbl) do
     table.insert(rows, { id = id, name = r.name, amount = r.amount, over = r.over,
                          hits = r.hits, crits = r.crits, misses = r.misses,
-                         max = r.max, min = r.min, critAmount = r.critAmount })
+                         max = r.max, min = r.min, critAmount = r.critAmount,
+                         resisted = r.resisted, resistHits = r.resistHits,
+                         r25 = r.r25, r50 = r.r50, r75 = r.r75,
+                         missBy = r.missBy })
   end
   table.sort(rows, W.ByField("amount"))
   while table.getn(rows) > limit do table.remove(rows) end

@@ -146,6 +146,19 @@ local function addAbilities(dst, src)
     d.crits = d.crits + (row.crits or 0)
     d.misses = d.misses + (row.misses or 0)
     d.critAmount = d.critAmount + (row.critAmount or 0)
+
+    -- Partial resists, and the reasons the rest never landed.
+    d.resisted = (d.resisted or 0) + (row.resisted or 0)
+    d.resistHits = (d.resistHits or 0) + (row.resistHits or 0)
+    d.r25 = (d.r25 or 0) + (row.r25 or 0)
+    d.r50 = (d.r50 or 0) + (row.r50 or 0)
+    d.r75 = (d.r75 or 0) + (row.r75 or 0)
+    if row.missBy then
+      if not d.missBy then d.missBy = {} end
+      for code, n in pairs(row.missBy) do
+        d.missBy[code] = (d.missBy[code] or 0) + n
+      end
+    end
     if (row.max or 0) > d.max then d.max = row.max end
     -- min is nil until something lands, so merge it as "smallest seen"
     -- rather than letting an absent value win as zero.
@@ -436,6 +449,77 @@ function R:AbilityStats(a, metricKey)
     end
     add("Largest", W.Comma(a.max or 0))
     if a.min then add("Smallest", W.Comma(a.min)) end
+  end
+
+  --[[ Resists, kept as the two separate things they are.
+
+       A FULL resist is a cast that did nothing; it arrives as a miss with
+       reason 2 and is counted in `misses` above. A PARTIAL resist LANDED --
+       it is in `hits` and in the total, with some of its damage eaten by
+       the target's resistance to that school.
+
+       Reporting them together would hide both. Full resists are a hit-table
+       problem, partials are a gear problem, and the fix for each is
+       different. ]]
+
+  local fullResists = a.missBy and a.missBy[2] or 0
+  local partials = a.resistHits or 0
+
+  if fullResists > 0 or partials > 0 then
+    if fullResists > 0 then
+      add("Fully resisted", W.Comma(fullResists),
+        attempts > 0
+          and string.format("%.1f%% of %d casts", fullResists / attempts * 100, attempts)
+          or nil)
+    end
+
+    if partials > 0 then
+      add("Partially resisted", W.Comma(partials),
+        hits > 0 and string.format("%.1f%% of what landed", partials / hits * 100) or nil)
+
+      local lost = a.resisted or 0
+      if lost > 0 then
+        local potential = total + lost
+        add("Lost to resists", W.Comma(lost),
+          potential > 0
+            and string.format("%.1f%% of %s potential", lost / potential * 100,
+                              W.Short(potential))
+            or nil)
+        add("Average bite", W.Comma(lost / partials))
+      end
+
+      -- Vanilla resists in quarters, and which quarter is the useful part:
+      -- a run of 75%s is a different story from a scattering of 25%s.
+      local tiers = {}
+      if (a.r25 or 0) > 0 then table.insert(tiers, a.r25 .. " at 25%") end
+      if (a.r50 or 0) > 0 then table.insert(tiers, a.r50 .. " at 50%") end
+      if (a.r75 or 0) > 0 then table.insert(tiers, a.r75 .. " at 75%") end
+      if table.getn(tiers) > 0 then
+        add("Resist tiers", table.concat(tiers, ", "))
+      end
+    end
+  end
+
+  --[[ Why the rest did not land. "Missed" alone cannot tell a caster whose
+       spells are being resisted from one whose are being dodged. ]]
+  if a.missBy then
+    local MISS_NAME = {
+      [1] = "Missed", [2] = "Resisted", [3] = "Dodged", [4] = "Parried",
+      [5] = "Blocked", [6] = "Evaded", [7] = "Immune", [8] = "Immune",
+      [9] = "Deflected", [10] = "Absorbed", [11] = "Reflected",
+    }
+    local seen = {}
+    for code, n in pairs(a.missBy) do
+      -- Full resists already have a line of their own above.
+      if code ~= 2 and n > 0 then
+        local name = MISS_NAME[code] or ("Reason " .. tostring(code))
+        seen[name] = (seen[name] or 0) + n
+      end
+    end
+    for name, n in pairs(seen) do
+      add(name, W.Comma(n),
+        attempts > 0 and string.format("%.1f%%", n / attempts * 100) or nil)
+    end
   end
 
   return rows
