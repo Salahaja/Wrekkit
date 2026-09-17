@@ -400,7 +400,7 @@ end
 local BUCKET_KEYS = 24
 local TOP_KEPT = 4
 
-local function contribute(enc, b, kind, srcGuid, tgtGuid, spellId, amount)
+local function contribute(b, kind, srcGuid, tgtGuid, spellId, amount)
   if not amount or amount <= 0 then return end
   if W.db and W.db.timelineDetail == false then return end
   if not srcGuid then return end
@@ -447,10 +447,13 @@ local function abilityRow(tbl, spellId, name)
             -- amount + resisted is what the spell would have hit for.
             resisted = 0, resistHits = 0,
             r25 = 0, r50 = 0, r75 = 0,
+            -- missBy is created on demand in E:Miss -- assigning nil in a
+            -- constructor stores nothing, so declaring it here would only
+            -- look like it did something.
             -- Why the ones that did not land failed, keyed by the client's
             -- miss code. A resist and a dodge are both "a miss" to the
             -- counter above, and they mean completely different things.
-            missBy = nil }
+          }
     tbl[spellId] = row
   end
   return row
@@ -518,7 +521,7 @@ function E:Damage(sourceGuid, targetGuid, spellId, amount, info)
     if src.isPlayer or src.class == "PET" then
       enc.totals.damage = enc.totals.damage + amount
       b.dd = b.dd + amount
-      contribute(enc, b, "d", sourceGuid, targetGuid, spellId, amount)
+      contribute(b, "d", sourceGuid, targetGuid, spellId, amount)
     else
       enc.totals.enemy = enc.totals.enemy + amount
     end
@@ -540,7 +543,7 @@ function E:Damage(sourceGuid, targetGuid, spellId, amount, info)
       b.dt = b.dt + amount
       -- Recorded from the victim's side: the source is whatever hit them,
       -- which is how the readout can say who was attacking whom.
-      contribute(enc, b, "t", sourceGuid, targetGuid, spellId, amount)
+      contribute(b, "t", sourceGuid, targetGuid, spellId, amount)
     end
 
     -- Track the biggest thing we fought so the encounter can be named.
@@ -592,7 +595,7 @@ function E:Heal(casterGuid, targetGuid, spellId, effective, over, info)
     local b = bucketFor(enc, now)
     b.hl = b.hl + effective + over
     b.eh = b.eh + effective
-    contribute(enc, b, "h", casterGuid, targetGuid, spellId, effective)
+    contribute(b, "h", casterGuid, targetGuid, spellId, effective)
   end
 end
 

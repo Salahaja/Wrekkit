@@ -373,6 +373,14 @@ function R:Abilities(row, metricKey, ctx)
       hits = a.hits or 0, crits = a.crits or 0,
       misses = a.misses or 0, max = a.max or 0,
       min = a.min, critAmount = a.critAmount or 0,
+      --[[ Carried through explicitly, and easy to forget: this rebuilds the
+           row rather than passing it on, so anything not named here is
+           invisible to AbilityStats and therefore to the drilldown. That is
+           how the resist statistics existed, persisted and tested correctly
+           while never once appearing on screen. ]]
+      resisted = a.resisted or 0, resistHits = a.resistHits or 0,
+      r25 = a.r25 or 0, r50 = a.r50 or 0, r75 = a.r75 or 0,
+      missBy = a.missBy,
     })
   end)
   table.sort(out, W.ByField("amount"))

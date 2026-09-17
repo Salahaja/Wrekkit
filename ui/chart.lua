@@ -328,10 +328,17 @@ function UI.Chart(parent)
     if not self.sampleCount or self.sampleCount < 2 then return nil end
     local w = plot:GetWidth() or 0
     if w <= 0 then return nil end
+    --[[ GetLeft is nil until the frame has a resolved rect -- before the
+         first layout pass, and any time the parent chain is hidden. This
+         runs from OnUpdate, so an unguarded nil here is not one error, it
+         is one per frame for as long as the cursor stays put. ]]
+    local left = plot:GetLeft()
     local x = GetCursorPosition()
+    if not left or not x then return nil end
+
     local scale = plot:GetEffectiveScale()
     if not scale or scale == 0 then scale = 1 end
-    x = x / scale - plot:GetLeft()
+    x = x / scale - left
     if x < 0 or x > w then return nil end
     local sec = math.floor(x / w * self.sampleCount)
     if sec < 0 then sec = 0 end
@@ -416,7 +423,10 @@ function UI.Chart(parent)
 
   hit:SetScript("OnEnter", function() c:ShowReadout() end)
   hit:SetScript("OnUpdate", function()
-    if hit:IsShown() and MouseIsOver and MouseIsOver(hit) then
+    -- IsVisible, not IsShown: IsShown reports this frame's own flag only, so
+    -- a child of a hidden window still answers true and this would keep
+    -- polling -- and reading out -- for a chart nobody can see.
+    if hit:IsVisible() and MouseIsOver and MouseIsOver(hit) then
       c:ShowReadout()
     end
   end)

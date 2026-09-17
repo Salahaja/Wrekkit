@@ -1478,8 +1478,19 @@ check("both misses counted", row.misses, 2)
 check("the full resist is recorded by reason", row.missBy[2], 1)
 check("and the plain miss separately", row.missBy[1], 1)
 
--- The readout must present them as two different things.
-local stats = Wrekkit.report:AbilityStats(row, "damage")
+--[==[ Go through the REAL drilldown path, not straight to AbilityStats.
+       R:Abilities rebuilds every row from an explicit field list, so a stat
+       that is not named there is invisible on screen no matter how
+       correctly it was recorded. Testing AbilityStats directly misses that
+       entirely -- and did. ]==]
+local drillRows = Wrekkit.report:Abilities(act, "damage")
+local drilled
+for _, r in ipairs(drillRows) do if r.id == 11661 then drilled = r end end
+check("the drilldown row survives with its resist data",
+  drilled and drilled.resistHits, 2)
+check("and its miss reasons", drilled and drilled.missBy and drilled.missBy[2], 1)
+
+local stats = Wrekkit.report:AbilityStats(drilled, "damage")
 local byLabel = {}
 for _, r in ipairs(stats) do byLabel[r.label] = r end
 

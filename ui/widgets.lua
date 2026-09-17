@@ -834,6 +834,11 @@ function UI.Check(parent, label, get, set, tip)
   text:SetPoint("LEFT", box, "RIGHT", 7, 0)
   text:SetText(label or "")
 
+  -- Exposed so a test can assert on what is DRAWN rather than on the state
+  -- behind it: the two disagreeing is the whole failure mode here, the same
+  -- reason Stepper exposes its minus and plus.
+  b.tick = tick
+
   b.Refresh = function(self)
     if get() then tick:Show() else tick:Hide() end
   end

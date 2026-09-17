@@ -1123,5 +1123,48 @@ step("the minimum height leaves room for the list at any text size", function()
   UI.meter:ApplyLayout()
 end)
 
+--[[ The confirmation dialog is one reused frame, so its controls outlive the
+     request that configured them. If reseeding the selection does not reach
+     the widgets, the dialog shows the PREVIOUS post's ticks while Send does
+     something else -- the worst failure available to a confirmation step. ]]
+
+step("the announce dialog reseeds its controls on every open", function()
+  local ctxA = { metrics = { "damage" }, encounters = {}, label = "A",
+                 filter = {}, petMode = "merge" }
+  local ctxB = { metrics = { "healing" }, encounters = {}, label = "B",
+                 filter = {}, petMode = "merge" }
+
+  UI.ConfirmAnnounce({ "line" }, "GUILD", nil, function() end, ctxA)
+  local dlg
+  for _, fr in ipairs(allFrames) do
+    if fr._name == "WrekkitConfirm" then dlg = fr end
+  end
+  if not dlg then error("the dialog was never built") end
+  if not dlg.picked.damage then error("damage was not seeded from the view") end
+
+  -- Reopen against a different view.
+  UI.CloseConfirm()
+  UI.ConfirmAnnounce({ "line" }, "GUILD", nil, function() end, ctxB)
+
+  if dlg.picked.damage then
+    error("the previous selection survived into a new request")
+  end
+  if not dlg.picked.healing then error("healing was not seeded") end
+
+  --[==[ Assert on what is DRAWN. Checking dlg.picked alone passes even
+         with the fix reverted, because the state was always reset -- it is
+         the widgets that lagged it. ]==]
+  for _, chk in ipairs(dlg.metricChecks) do
+    local lit = chk.tick and chk.tick:IsShown()
+    if chk._metricKey == "damage" and lit then
+      error("the damage tick is still lit from the previous request")
+    end
+    if chk._metricKey == "healing" and not lit then
+      error("the healing tick was never lit for this request")
+    end
+  end
+  UI.CloseConfirm()
+end)
+
 print(string.format("\n%d passed, %d failed  (%d frames created)\n", pass, fail, calls))
 if fail > 0 then os.exit(1) end

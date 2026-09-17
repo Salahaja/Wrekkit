@@ -225,6 +225,19 @@ function UI.ConfirmAnnounce(lines, channel, target, onAccept, ctx)
   end
   f.count = (ctx and ctx.count) or (W.db and W.db.announceCount) or 5
 
+  --[[ Push the reseeded values into the widgets.
+
+       The dialog is a single reused frame, so these controls outlive the
+       request that configured them. Resetting f.picked and f.count alone
+       changes what Send would do without changing what the dialog SHOWS --
+       the ticks and the number would still be last time's, which is the
+       worst possible failure for a confirmation step: it would be lying
+       about what it is going to post. ]]
+  for _, chk in ipairs(f.metricChecks) do
+    if chk.Refresh then chk:Refresh() end
+  end
+  if f.countStepper and f.countStepper.Refresh then f.countStepper:Refresh() end
+
   -- whisper needs a name before Send means anything
   local needsTarget = (channel == "WHISPER")
   if needsTarget then
