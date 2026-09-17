@@ -93,6 +93,11 @@ SpellInfo = function(id)
     [25213] = "Healing Wave", [20647] = "Execute", [10444] = "Flametongue",
     [1766] = "Kick",
   }
+  -- SpellInfo returns name, RANK, texture -- confirmed against BigWigs and
+  -- ShaguPlates, which both destructure it that way. Two ids for the same
+  -- spell is the case that used to make every rank read identically.
+  local ranks = { [11661] = "Rank 10", [11660] = "Rank 9" }
+  if ranks[id] then return "Shadow Bolt", ranks[id], "Interface\\Icons\\Temp" end
   return names[id] or ("Spell " .. tostring(id)), nil, "Interface\\Icons\\Temp"
 end
 
@@ -1503,6 +1508,53 @@ end
 check("resist stats survived persisting", savedRow and savedRow.resistHits, 2)
 check("and the miss reasons did too", savedRow and savedRow.missBy and savedRow.missBy[2], 1)
 
+Wrekkit.ResetData("all")
+
+----------------------------------------------------------------------
+print("\n-- spell names and ranks --")
+----------------------------------------------------------------------
+
+--[[ Ranks are tracked as separate rows on purpose: different ranks are
+     different spells with different coefficients and costs. But SpellInfo
+     returns name, RANK, texture and the rank was being discarded, so every
+     row read "Shadow Bolt" and the separation was useless to look at. ]]
+
+local n10 = Wrekkit.capture:Spell(11661)
+local n9  = Wrekkit.capture:Spell(11660)
+check("rank 10 names its rank", n10, "Shadow Bolt (Rank 10)")
+check("rank 9 names its rank", n9, "Shadow Bolt (Rank 9)")
+check("the two ranks are distinguishable", n10 ~= n9, true)
+check("a rankless spell is unchanged",
+  Wrekkit.capture:Spell(11267), "Sinister Strike")
+
+--[[ Without SuperWoW there is no SpellInfo at all and every spell reads as
+     its raw id. SPELLCAST_START is stock 1.12 and its arg1 IS the name, so
+     pairing it with the id from SPELL_GO_SELF teaches one spell per cast. ]]
+
+local realSpellInfo = SpellInfo
+SpellInfo = nil
+Wrekkit.db.spellNames = {}
+
+local freshId = 25309
+fire("SPELLCAST_START", "Immolate")
+fire("SPELL_GO_SELF", 0, freshId, "0xP1", "0xBoss")
+check("the name was learned from the cast",
+  Wrekkit.db.spellNames[freshId], "Immolate")
+
+-- A stale cast start must not label an unrelated spell seconds later.
+fire("SPELLCAST_START", "Corruption")
+advance(5)
+fire("SPELL_GO_SELF", 0, 25310, "0xP1", "0xBoss")
+check("a stale cast name is not bound", Wrekkit.db.spellNames[25310], nil)
+
+-- And with SuperWoW present, learning is skipped entirely.
+SpellInfo = realSpellInfo
+fire("SPELLCAST_START", "Shadow Bolt")
+fire("SPELL_GO_SELF", 0, 25311, "0xP1", "0xBoss")
+check("SuperWoW makes learning unnecessary",
+  Wrekkit.db.spellNames[25311], nil)
+
+Wrekkit.db.spellNames = nil
 Wrekkit.ResetData("all")
 print(string.format("\n%d passed, %d failed\n", pass, fail))
 if fail > 0 then os.exit(1) end

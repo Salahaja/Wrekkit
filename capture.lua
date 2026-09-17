@@ -402,13 +402,56 @@ function C:Spell(spellId)
   local hit = spellCache[spellId]
   if hit then return hit[1], hit[2] end
 
-  local name, _, texture
+  local name, rank, texture
   if SpellInfo then
-    name, _, texture = SpellInfo(spellId)
+    -- name, RANK, texture. The rank used to be discarded, which made every
+    -- rank of a spell read identically even though they are tracked as
+    -- separate rows -- and they are separate rows for a reason: different
+    -- ranks are different spells with different coefficients and costs.
+    name, rank, texture = SpellInfo(spellId)
   end
-  name = name or ("Spell " .. tostring(spellId))
+
+  --[[ Without SuperWoW there is no SpellInfo, and every spell reads as its
+       raw id. Names learned from the player's own casts fill in what they
+       can; see LearnSpellName. ]]
+  if not name or name == "" then
+    name = W.db and W.db.spellNames and W.db.spellNames[spellId]
+  end
+
+  if name and name ~= "" then
+    if rank and rank ~= "" then name = name .. " (" .. rank .. ")" end
+  else
+    name = "Spell " .. tostring(spellId)
+  end
+
   spellCache[spellId] = { name, texture }
   return name, texture
+end
+
+--[[ Learn a spell's name without SuperWoW.
+
+     SPELLCAST_START is a stock 1.12 event and its first argument is the
+     spell's NAME -- the one thing the nampower events never carry, since
+     they deal in ids. SPELL_GO_SELF fires for the same cast with the ID.
+     Pairing the two teaches us one spell per cast, and the answer is kept
+     in SavedVariables so it accumulates instead of being relearned.
+
+     Only cast-time spells announce themselves this way; instants never fire
+     SPELLCAST_START, so they keep their id. Partial, but it turns the
+     player's own spellbook from numbers into names over a night. ]]
+function C:LearnSpellName(spellId)
+  if not spellId or spellId == 0 then return end
+  if SpellInfo then return end          -- SuperWoW already answers this
+  if not self.pendingCastName then return end
+  if (GetTime() - (self.pendingCastAt or 0)) > 1.0 then return end
+
+  if not W.db then return end
+  if not W.db.spellNames then W.db.spellNames = {} end
+  if W.db.spellNames[spellId] then return end
+
+  W.db.spellNames[spellId] = self.pendingCastName
+  -- Drop the cached "Spell 1234" so the next lookup picks up the name.
+  spellCache[spellId] = nil
 end
 
 ----------------------------------------------------------------------
@@ -575,7 +618,21 @@ dispatch.ENVIRONMENTAL_DMG_SELF = function(a1, a2, a3, a4, a5)
 end
 dispatch.ENVIRONMENTAL_DMG_OTHER = dispatch.ENVIRONMENTAL_DMG_SELF
 
-dispatch.SPELL_GO_SELF = function(a1, a2, a3, a4) C:SPELL_GO(a1, a2, a3, a4) end
+--- SPELLCAST_START(spellName, duration). Stock 1.12, and the only place
+--- a spell name is handed to us when SuperWoW is not installed.
+dispatch.SPELLCAST_START = function(a1)
+  if a1 and a1 ~= "" then
+    C.pendingCastName = a1
+    C.pendingCastAt = GetTime()
+  end
+end
+
+dispatch.SPELL_GO_SELF = function(a1, a2, a3, a4)
+  -- a2 is the spell id for the cast that just started, so this is where the
+  -- name from SPELLCAST_START gets bound to an id.
+  C:LearnSpellName(num(a2))
+  C:SPELL_GO(a1, a2, a3, a4)
+end
 dispatch.SPELL_GO_OTHER = dispatch.SPELL_GO_SELF
 
 dispatch.UNIT_DIED = function(a1) W.encounter:Death(a1) end
@@ -688,6 +745,9 @@ function C:Start()
   f:RegisterEvent("RAID_ROSTER_UPDATE")
   f:RegisterEvent("PARTY_MEMBERS_CHANGED")
   f:RegisterEvent("PLAYER_ENTERING_WORLD")
+  -- Stock 1.12 event whose arg1 is the spell NAME. Only useful when
+  -- SuperWoW is absent, but registering it always keeps the path exercised.
+  f:RegisterEvent("SPELLCAST_START")
 
   self:ScanRoster()
 end
