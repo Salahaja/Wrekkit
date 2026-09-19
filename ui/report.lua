@@ -430,7 +430,7 @@ local function paintRow(row, item, index)
 end
 
 local function paintAbilityRow(row, item, index)
-  row:SetData(index, item.name, W.Short(item.amount),
+  row:SetData(index, item.label or item.name, W.Short(item.amount),
     string.format("%d hits  %.0f%%", item.hits, item._critPct),
     item._frac, item._color or W.color.accent, 92)
   row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
@@ -485,7 +485,7 @@ function R:FillTable(pane, list, view, metricKey, title)
         end
         if ability then
           local stats = W.report:AbilityStats(ability, metricKey)
-          pane.titleText:SetText(target.name .. "  -  " .. ability.name)
+          pane.titleText:SetText(target.name .. "  -  " .. (ability.label or ability.name))
           pane.totalText:SetText("click to go back")
           list:SetData(stats, paintStatRow)
           return

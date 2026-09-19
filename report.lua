@@ -140,6 +140,12 @@ local function addAbilities(dst, src)
             max = 0, min = nil, critAmount = 0 }
       dst[id] = d
     end
+    --[[ Carried, not summed. This is the third place an ability is rebuilt
+         from a named list of fields, and the third place a field that is not
+         named here silently stops existing -- which is how the resist
+         statistics were recorded, persisted and tested correctly while never
+         appearing on screen. ]]
+    if d.school == nil then d.school = row.school end
     d.amount = d.amount + (row.amount or 0)
     d.over = d.over + (row.over or 0)
     d.hits = d.hits + (row.hits or 0)
@@ -367,8 +373,22 @@ function R:Abilities(row, metricKey, ctx)
 
   local out = {}
   eachAbility(source, function(id, a)
+    --[[ The school is decoration on a SEPARATE field, never on the name.
+
+         `name` is what everything else matches an ability by, so folding the
+         school into it turns a lookup key into a display string -- the tests
+         caught that immediately, and in the addon it would have shown up as
+         an ability quietly failing to be found.
+
+         So `label` is what lists print and `name` is what code compares.
+         Nothing was recorded before this existed, so older encounters show
+         no school rather than a wrong one. ]]
+    local name = a.name or ("Spell " .. tostring(id))
+    local school = W.SchoolName(a.school, id)
+
     table.insert(out, {
-      id = id, name = a.name or ("Spell " .. tostring(id)),
+      id = id, name = name, school = a.school,
+      label = school and (name .. " (" .. school .. ")") or name,
       amount = a.amount or 0, over = a.over or 0,
       hits = a.hits or 0, crits = a.crits or 0,
       misses = a.misses or 0, max = a.max or 0,

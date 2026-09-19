@@ -1566,6 +1566,97 @@ check("SuperWoW makes learning unnecessary",
   Wrekkit.db.spellNames[25311], nil)
 
 Wrekkit.db.spellNames = nil
+
+----------------------------------------------------------------------
+-- damage schools
+----------------------------------------------------------------------
+
+--[[ What a mob is hitting you with, and with what school. Recorded from the
+     school nampower passes on the damage event, which was being handed to
+     E:Damage and dropped on the floor before this. ]]
+Wrekkit.ResetData("all")
+Wrekkit.encounter:CombatStart()
+for i = 1, 8 do
+  -- Boss casts Fire (school 2) and Shadow (school 5) at a player, and swings.
+  fire("SPELL_DAMAGE_EVENT_OTHER", "0xP1", "0xBoss", 20811, 400, "0,0,0", 0, 2)
+  fire("SPELL_DAMAGE_EVENT_OTHER", "0xP1", "0xBoss", 20812, 250, "0,0,0", 0, 5)
+  fire("AUTO_ATTACK_OTHER", "0xBoss", "0xP1", 180, 0, 0, 1, 0, 0, 0)
+  advance(1)
+end
+Wrekkit.encounter:CombatEnd()
+Wrekkit.encounter:Finish()
+
+local function abilityNamed(list, name)
+  for _, a in ipairs(list) do
+    if a.name == name or string.find(a.label or "", name, 1, true) then return a end
+  end
+  return nil
+end
+
+local view = Wrekkit.report:View(Wrekkit.report:CurrentSession().encounters, {})
+local mobs = Wrekkit.report:Rank(view, "enemy", {})
+local boss
+for _, r in ipairs(mobs) do if r.damage and r.damage > 0 then boss = r end end
+check("the mob is ranked by what it dealt", boss ~= nil, true)
+
+local abilities = Wrekkit.report:Abilities(boss, "enemy")
+check("the mob's attacks are listed", table.getn(abilities) >= 2, true)
+
+local fireSpell, shadowSpell, melee
+for _, a in ipairs(abilities) do
+  if a.school == 2 then fireSpell = a end
+  if a.school == 5 then shadowSpell = a end
+  if a.id == 0 then melee = a end
+end
+
+check("a fire attack kept its school", fireSpell ~= nil, true)
+check("a shadow attack kept its school", shadowSpell ~= nil, true)
+check("fire is labelled Fire",
+  fireSpell and string.find(fireSpell.label, "(Fire)", 1, true) ~= nil, true)
+check("shadow is labelled Shadow",
+  shadowSpell and string.find(shadowSpell.label, "(Shadow)", 1, true) ~= nil, true)
+check("melee reads as Physical",
+  melee and string.find(melee.label, "(Physical)", 1, true) ~= nil, true)
+
+--[[ The school decorates `label`; `name` stays the plain ability name that
+     every other lookup compares against. Folding it into the name turned a
+     key into a display string and broke thirteen tests at once. ]]
+check("the name is not decorated",
+  fireSpell and string.find(fireSpell.name, "(", 1, true) == nil, true)
+
+-- Damage taken answers the same question from the other side.
+local players = Wrekkit.report:Rank(view, "taken", {})
+local victim
+for _, r in ipairs(players) do if (r.taken or 0) > 0 then victim = r end end
+check("a player took damage", victim ~= nil, true)
+local takenBy = victim and Wrekkit.report:Abilities(victim, "taken") or {}
+local takenFire
+for _, a in ipairs(takenBy) do if a.school == 2 then takenFire = a end end
+check("what hit you keeps its school too", takenFire ~= nil, true)
+
+-- Schools that do not map to a name are shown as the raw number rather than
+-- confidently mislabelled.
+check("an unknown school is not given a name",
+  Wrekkit.SchoolName(99), "School 99")
+check("a missing school on a spell is unknown", Wrekkit.SchoolName(nil, 1234), nil)
+check("a missing school on melee is Physical", Wrekkit.SchoolName(nil, 0), "Physical")
+check("school zero is Physical", Wrekkit.SchoolName(0, 0), "Physical")
+
+--[[ Persistence rebuilds every ability from an explicit field list, which is
+     exactly where the resist statistics were lost once already. ]]
+Wrekkit.encounter:Persist(Wrekkit.report:CurrentSession().encounters[1])
+local keptSchool, keptMobDetail = false, false
+for _, enc in ipairs((Wrekkit.db and Wrekkit.db.encounters) or {}) do
+  for _, actor in pairs(enc.actors or {}) do
+    if not actor.isPlayer and actor.dmgAbility then keptMobDetail = true end
+    for _, a in ipairs(actor.dmgAbility or {}) do
+      if a.school then keptSchool = true end
+    end
+  end
+end
+check("a mob keeps its attacks in history at all", keptMobDetail, true)
+check("the school survives being written to history", keptSchool, true)
+
 Wrekkit.ResetData("all")
 print(string.format("\n%d passed, %d failed\n", pass, fail))
 if fail > 0 then os.exit(1) end

@@ -61,6 +61,32 @@ end
 ----------------------------------------------------------------------
 
 --- Which encounters the current segment covers.
+--[[ How far back the segment menu offers to go, one pull at a time.
+
+     "Last pull" on its own answers "how did that go", but the question after
+     a wipe is usually comparative -- this attempt against the one before it --
+     and the only way to ask it was to open the report window. ]]
+M.PAST_PULLS = 4
+
+--- Segment value -> how many pulls back it means. `last` is 1, kept under its
+--- old name so a saved setting from an earlier version still resolves.
+local BACK = { last = 1, back2 = 2, back3 = 3, back4 = 4, back5 = 5 }
+M.BACK = BACK
+
+local ORDINAL = { "Last pull", "2nd to last", "3rd to last", "4th to last",
+                  "5th to last" }
+M.ORDINAL = ORDINAL
+
+--- The encounter `n` pulls back in this session, newest first, or nil.
+function M:PullBack(n)
+  local session = W.report:CurrentSession()
+  if not session then return nil end
+  local list = session.encounters
+  local total = table.getn(list)
+  if n > total then return nil end
+  return list[total - n + 1], total
+end
+
 function M:Encounters()
   local s = self:Settings()
   local seg = s.segment
@@ -78,10 +104,15 @@ function M:Encounters()
   local session = W.report:CurrentSession()
   if not session then return {}, "No data" end
 
-  if seg == "last" then
-    local list = session.encounters
-    local last = list[table.getn(list)]
-    if last then return { last }, last.name end
+  local back = BACK[seg]
+  if back then
+    local enc = self:PullBack(back)
+    --[[ Asked for a pull that is no longer there -- a reset, or a segment
+         saved when the session was longer. Show the most recent one instead
+         of an empty window, and let the label say which pull that is, so the
+         title never claims to be showing something it is not. ]]
+    if not enc then enc = self:PullBack(1) end
+    if enc then return { enc }, enc.name end
     return {}, "No data"
   end
 
@@ -455,9 +486,28 @@ function M:SegmentMenu(anchor)
   local s = self:Settings()
   local items = {
     { text = "Current pull", value = "current", checked = (s.segment == "current") },
-    { text = "Last pull", value = "last", checked = (s.segment == "last") },
-    { text = "All Session", value = "overall", checked = (s.segment == "overall") },
-    { text = "-- windows --", value = nil, disabled = true },
+  }
+
+  --[[ Named after the pull rather than numbered alone: "3rd to last" is only
+       an answer if you already remember what the third to last pull was, and
+       after a run of wipes on two different bosses nobody does. ]]
+  for i = 1, M.PAST_PULLS do
+    local enc = M:PullBack(i)
+    if enc then
+      local value = (i == 1) and "last" or ("back" .. i)
+      table.insert(items, {
+        text = ORDINAL[i] .. "  |cff9d9d9d" .. (enc.name or "?") .. "|r",
+        value = value,
+        checked = (s.segment == value),
+      })
+    end
+  end
+
+  table.insert(items,
+    { text = "All Session", value = "overall", checked = (s.segment == "overall") })
+  table.insert(items, { text = "-- windows --", value = nil, disabled = true })
+
+  local rest = {
     { text = "Open report", value = "report" },
     { text = s.showToolbar and "Hide toolbar" or "Show toolbar", value = "toolbar" },
     { text = "Start a new log", value = "reset" },
@@ -465,6 +515,8 @@ function M:SegmentMenu(anchor)
     { text = "Settings...", value = "settings" },
     { text = "Hide meter", value = "hide" },
   }
+  for i = 1, table.getn(rest) do table.insert(items, rest[i]) end
+
   UI.Menu(self.frame, anchor, items, function(value)
     if value == "settings" then
       UI.settings:Toggle()
@@ -492,9 +544,65 @@ end
 -- painting
 ----------------------------------------------------------------------
 
+--[[ What one person's number is made of, without having to click into it.
+
+     The drilldown already computes exactly this, so the tooltip asks the same
+     question of the same function rather than adding a second way to total up
+     a row -- two of those would drift, and the one nobody is looking at would
+     be the one that was wrong.
+
+     The totals come off the row as already formatted, so what the tooltip
+     says and what the bar says cannot disagree. ]]
+local MAX_DETAIL = 12
+
+local function actorTooltip(row, item)
+  if not GameTooltip then return end
+  local metricKey = M:Settings().metric
+  local metric = W.metrics.Get(metricKey)
+  local c = item._color or W.ClassColor(item.class)
+
+  GameTooltip:SetOwner(row, "ANCHOR_RIGHT")
+  GameTooltip:AddLine(item.name or "?", c[1], c[2], c[3])
+  GameTooltip:AddDoubleLine(metric.label, item._text or "",
+    0.78, 0.80, 0.85, 1, 1, 1)
+  if item._sub and item._sub ~= "" then
+    GameTooltip:AddDoubleLine(" ", item._sub, 1, 1, 1, 0.62, 0.65, 0.72)
+  end
+
+  local abilities = W.report:Abilities(item, metricKey)
+  local n = table.getn(abilities)
+  if n > 0 then
+    GameTooltip:AddLine(" ")
+    GameTooltip:AddLine("Details:", 0.88, 0.64, 0.17)
+    for i = 1, n do
+      if i > MAX_DETAIL then
+        GameTooltip:AddLine("and " .. (n - MAX_DETAIL) .. " more",
+          0.62, 0.65, 0.72)
+        break
+      end
+      local a = abilities[i]
+      GameTooltip:AddDoubleLine(a.label or a.name,
+        W.Short(a.amount) .. string.format(" (%.1f%%)", a._pct or 0),
+        0.78, 0.80, 0.85, 1, 1, 1)
+    end
+  else
+    GameTooltip:AddLine(" ")
+    GameTooltip:AddLine(W.report:EmptyDetailNote(M.lastView), 0.62, 0.65, 0.72, 1)
+  end
+
+  GameTooltip:Show()
+end
+
 local function paintActor(row, item, index)
   local color = item._color or W.ClassColor(item.class)
   row:SetData(item._rank, item.name, item._text, item._sub, item._frac, color, 58)
+  row.tip = function(self) actorTooltip(self, item) end
+  --[[ The meter repaints twice a second. Without this the numbers under the
+       cursor are frozen at whatever they were when the tooltip opened, which
+       is worst exactly when someone is watching a pull happen. ]]
+  if GameTooltip and GameTooltip.IsOwned and GameTooltip:IsOwned(row) then
+    row:tip()
+  end
   row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
   row:SetScript("OnClick", function()
     if arg1 == "RightButton" then
@@ -511,9 +619,12 @@ end
 
 local function paintAbility(row, item, index)
   local color = item._color or W.color.accent
-  row:SetData(index, item.name,
+  row:SetData(index, item.label or item.name,
     W.Short(item.amount), string.format("%.0f%%", item._pct),
     item._frac, color, 42)
+  -- Rows are reused, so a row that carried the actor tooltip a moment ago
+  -- would go on describing someone who is no longer in this list.
+  row.tip = nil
   row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
   row.abilityId = item.id
   row:SetScript("OnClick", function()
@@ -532,6 +643,7 @@ end
 --- proportional bar behind them would imply a comparison that isn't there.
 local function paintStat(row, item, index)
   row:SetData(nil, item.label, item.value, item.note, 0, W.color.panelHi, 52)
+  row.tip = nil
   row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
   row:SetScript("OnClick", function()
     UI.meter.drillAbility = nil
@@ -554,6 +666,8 @@ function M:RefreshInner()
   local metric = W.metrics.Get(s.metric)
 
   local view = W.report:View(encounters, { petMode = s.petMode })
+  -- Kept for the hover tooltip, which needs it to explain an empty detail.
+  self.lastView = view
   local rows, _, total = W.report:Rank(view, s.metric,
     { search = s.search, groupOnly = s.groupOnly })
 
@@ -581,9 +695,9 @@ function M:RefreshInner()
         end
         if ability then
           local stats = W.report:AbilityStats(ability, s.metric)
-          self:SetSegmentLabel(target.name .. " - " .. ability.name)
+          self:SetSegmentLabel(target.name .. " - " .. (ability.label or ability.name))
           self.list:SetData(stats, paintStat)
-          self.footL:SetText(ability.name)
+          self.footL:SetText((ability.label or ability.name))
           self.footR:SetText("click to go back")
           return
         end

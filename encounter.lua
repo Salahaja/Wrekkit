@@ -513,6 +513,10 @@ function E:Damage(sourceGuid, targetGuid, spellId, amount, info)
     row.amount = row.amount + amount
     row.hits = row.hits + 1
     if info.crit then row.crits = row.crits + 1 end
+    --[[ First hit decides, because a spell has exactly one school. Melee
+         carries none at all and arrives as spell id 0, which W.SchoolName
+         reads as Physical rather than as unknown. ]]
+    if row.school == nil then row.school = info.school end
     noteAmount(row, amount, info.crit)
     -- A PARTIAL resist: the spell landed, the school ate part of it. A FULL
     -- resist never reaches this function at all -- it arrives as a miss.
@@ -536,6 +540,8 @@ function E:Damage(sourceGuid, targetGuid, spellId, amount, info)
     local row = abilityRow(dst.takenAbility, spellId, spellName)
     row.amount = row.amount + amount
     row.hits = row.hits + 1
+    -- What school is actually hurting you is the whole point of this table.
+    if row.school == nil then row.school = info.school end
     noteAmount(row, amount, info.crit)
 
     if dst.isPlayer or dst.class == "PET" then
@@ -884,7 +890,7 @@ local function topAbilities(tbl, limit)
                          max = r.max, min = r.min, critAmount = r.critAmount,
                          resisted = r.resisted, resistHits = r.resistHits,
                          r25 = r.r25, r50 = r.r50, r75 = r.r75,
-                         missBy = r.missBy })
+                         missBy = r.missBy, school = r.school })
   end
   table.sort(rows, W.ByField("amount"))
   while table.getn(rows) > limit do table.remove(rows) end
@@ -990,7 +996,18 @@ function E:Persist(enc)
   end
 
   for guid, a in pairs(enc.actors) do
-    local keepDetail = a.isPlayer or a.class == "PET"
+    --[[ Enemies keep their detail too, which they did not used to.
+
+         Dropping it made "what is this thing hitting us with, and with what
+         school" unanswerable the moment a pull ended: the totals survived and
+         the abilities behind them did not, so the enemy drilldown was empty
+         for every fight except the one still in progress. That is the half
+         you actually want to read afterwards.
+
+         topAbilities already caps each actor at maxAbilities, and a mob
+         typically has two or three attacks, so the cost is a handful of rows
+         per mob rather than another copy of the raid. ]]
+    local keepDetail = true
     rec.actors[guid] = {
       name = a.name, class = a.class, isPlayer = a.isPlayer,
       owner = a.owner, ownerName = a.ownerName,

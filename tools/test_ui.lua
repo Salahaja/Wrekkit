@@ -189,10 +189,30 @@ UIParent:SetWidth(1024) UIParent:SetHeight(768)
 Minimap = CreateFrame("Frame", "Minimap")
 Minimap:SetWidth(140) Minimap:SetHeight(140)
 
+--[[ Records what it was told, so a test can assert on what a tooltip SAYS.
+     A stub that swallows the lines can only prove the code ran. ]]
 GameTooltip = {
-  SetOwner = function() end, AddLine = function() end,
-  Show = function() end, Hide = function() end,
+  lines = {}, owner = nil, shown = false,
+  SetOwner = function(self, owner)
+    self.owner = owner
+    self.lines = {}
+    self.shown = false
+  end,
+  AddLine = function(self, text) table.insert(self.lines, tostring(text)) end,
+  AddDoubleLine = function(self, left, right)
+    table.insert(self.lines, tostring(left) .. "	" .. tostring(right))
+  end,
+  IsOwned = function(self, frame) return self.owner == frame and self.shown end,
+  Show = function(self) self.shown = true end,
+  Hide = function(self) self.shown = false end,
 }
+
+function GameTooltipText(pattern)
+  for _, l in ipairs(GameTooltip.lines) do
+    if string.find(l, pattern, 1, true) then return l end
+  end
+  return nil
+end
 
 SlashCmdList = {}
 StaticPopupDialogs = {}
@@ -1309,6 +1329,306 @@ step("the picker shows for a view and hides for a drilldown", function()
     if chk:IsShown() then error("the picker is offered for a drilldown") end
   end
   UI.CloseConfirm()
+end)
+
+----------------------------------------------------------------------
+-- hover details on a meter row
+----------------------------------------------------------------------
+
+--[[ The reset step above clears everything, so these make their own pull
+     rather than relying on data an earlier test happened to leave behind. ]]
+local function makePull(seconds)
+  Wrekkit.encounter:CombatStart()
+  for i = 1, (seconds or 6) do
+    fire("AUTO_ATTACK_SELF", "0xA", "0xBoss", 250, 0, 0, 1, 0, 0, 0)
+    fire("SPELL_DAMAGE_EVENT_OTHER", "0xA", "0xBoss", 200, 400, "20,0,0", 0, 0)
+    fire("SPELL_DAMAGE_EVENT_OTHER", "0xA", "0xBoss", 100, 150, "0,0,0", 0, 0)
+    fire("AUTO_ATTACK_OTHER", "0xP", "0xBoss", 90, 0, 0, 1, 0, 0, 0)
+    fire("SPELL_HEAL_BY_OTHER", "0xA", "0xB", 500, 300, 0, 0)
+    NOW = NOW + 1
+  end
+  Wrekkit.encounter:CombatEnd()
+  Wrekkit.encounter:Finish()
+end
+
+local function meterRows()
+  -- An earlier step may have left the meter hidden, and RefreshInner does
+  -- nothing at all for a hidden window.
+  UI.meter:Show()
+  UI.meter:Refresh()
+  local out = {}
+  for _, row in ipairs(UI.meter.list.rows or {}) do
+    if row:IsShown() and row.name and row.name:GetText() ~= "" then
+      table.insert(out, row)
+    end
+  end
+  return out
+end
+
+local function hover(row)
+  row:GetScript("OnEnter")()
+end
+
+step("hovering a meter row breaks the number down by ability", function()
+  makePull()
+  UI.meter:Settings().segment = "all"
+  UI.meter.drill = nil
+  UI.meter:SetMetric("damage")
+  UI.meter:Refresh()
+
+  local rows = meterRows()
+  if table.getn(rows) == 0 then error("the meter has no rows to hover") end
+  local row = rows[1]
+  local shown = row.name:GetText()
+
+  hover(row)
+  if not GameTooltip.shown then error("hovering showed no tooltip") end
+  if GameTooltip.owner ~= row then error("the tooltip is not owned by the row") end
+  if not GameTooltipText(shown) then
+    error("the tooltip does not name who it is about")
+  end
+  if not GameTooltipText("Details:") then
+    error("no ability breakdown: " .. table.concat(GameTooltip.lines, " | "))
+  end
+end)
+
+--[[ Two ways to total the same row would drift, and the one nobody is looking
+     at would be the wrong one. The tooltip must quote the row, not recompute. ]]
+step("the tooltip total is the number on the bar", function()
+  UI.meter.drill = nil
+  UI.meter:SetMetric("damage")
+  UI.meter:Refresh()
+  local row = meterRows()[1]
+  local onBar = row.value:GetText()
+
+  hover(row)
+  if not GameTooltipText(onBar) then
+    error("the bar says " .. tostring(onBar) .. " and the tooltip does not: " ..
+      table.concat(GameTooltip.lines, " | "))
+  end
+end)
+
+step("each ability line carries its share", function()
+  UI.meter.drill = nil
+  UI.meter:SetMetric("damage")
+  UI.meter:Refresh()
+  hover(meterRows()[1])
+
+  local pct = false
+  for _, l in ipairs(GameTooltip.lines) do
+    if string.find(l, "%%%)") then pct = true end
+  end
+  if not pct then
+    error("no percentages: " .. table.concat(GameTooltip.lines, " | "))
+  end
+end)
+
+step("hovering still highlights the row", function()
+  UI.meter.drill = nil
+  UI.meter:Refresh()
+  local row = meterRows()[1]
+  hover(row)
+  if not row.hl then error("the row lost its highlight texture") end
+  row:GetScript("OnLeave")()
+  if GameTooltip.shown then error("the tooltip stayed up after leaving") end
+end)
+
+--[[ Rows are reused between modes. A drilled row still carrying the actor
+     tooltip would describe someone who is not in the list any more. ]]
+step("drilling in clears the actor tooltip from reused rows", function()
+  UI.meter.drill = nil
+  UI.meter:SetMetric("damage")
+  UI.meter:Refresh()
+  local row = meterRows()[1]
+  if not row.tip then error("an actor row has no tooltip to begin with") end
+
+  row:GetScript("OnClick")()          -- drill into that actor
+  UI.meter:Refresh()
+  for _, r in ipairs(meterRows()) do
+    if r.tip then
+      error("an ability row kept the tooltip of the actor it replaced")
+    end
+  end
+  UI.meter.drill = nil
+  UI.meter:Refresh()
+end)
+
+--[[ The meter repaints twice a second. Frozen numbers under the cursor are
+     worst exactly when someone is watching a pull happen. ]]
+step("a repaint while hovering rebuilds the tooltip", function()
+  UI.meter.drill = nil
+  UI.meter:Refresh()
+  local row = meterRows()[1]
+  hover(row)
+  local before = table.getn(GameTooltip.lines)
+  if before == 0 then error("nothing in the tooltip to begin with") end
+
+  GameTooltip.lines = {}
+  UI.meter:Refresh()
+  if table.getn(GameTooltip.lines) == 0 then
+    error("the tooltip was not rebuilt and is now showing nothing")
+  end
+end)
+
+step("a row with no ability detail says so instead of nothing", function()
+  UI.meter.drill = nil
+  UI.meter:SetMetric("deaths")
+  UI.meter:Refresh()
+  local rows = meterRows()
+  if table.getn(rows) > 0 then
+    hover(rows[1])
+    if table.getn(GameTooltip.lines) < 2 then
+      error("an empty breakdown produced a bare tooltip")
+    end
+  end
+  UI.meter:SetMetric("damage")
+  UI.meter:Refresh()
+end)
+
+step("every metric can be hovered without erroring", function()
+  UI.meter.drill = nil
+  for _, m in ipairs(Wrekkit.metrics.list) do
+    UI.meter:SetMetric(m.key)
+    UI.meter:Refresh()
+    for _, row in ipairs(meterRows()) do
+      if row.tip then hover(row) end
+    end
+  end
+  UI.meter:SetMetric("damage")
+  UI.meter:Refresh()
+end)
+
+----------------------------------------------------------------------
+-- picking one of the last few pulls
+----------------------------------------------------------------------
+
+local function segmentItems()
+  local found
+  local realMenu = UI.Menu
+  UI.Menu = function(parent, anchor, items, onPick, width)
+    found = items
+    return realMenu(parent, anchor, items, onPick, width)
+  end
+  UI.meter:SegmentMenu(UI.meter.frame.bar)
+  UI.Menu = realMenu
+  UI.CloseMenu()
+  return found or {}
+end
+
+local function itemFor(items, value)
+  for _, it in ipairs(items) do
+    if it.value == value then return it end
+  end
+  return nil
+end
+
+step("the segment menu offers the last few pulls one at a time", function()
+  Wrekkit.ResetData("all")
+  for _ = 1, 6 do makePull(8) end
+
+  local items = segmentItems()
+  for _, value in ipairs({ "current", "last", "back2", "back3", "back4", "overall" }) do
+    if not itemFor(items, value) then
+      error("no menu entry for " .. value)
+    end
+  end
+  -- and no further back than it says it goes
+  if itemFor(items, "back5") then
+    error("offered a pull beyond PAST_PULLS")
+  end
+end)
+
+--[[ "3rd to last" is only an answer if you remember what the third to last
+     pull was, and after a run of wipes on two bosses nobody does. ]]
+step("each pull entry says which pull it is", function()
+  Wrekkit.ResetData("all")
+  for _ = 1, 4 do makePull(8) end
+
+  local items = segmentItems()
+  local entry = itemFor(items, "back2")
+  local enc = UI.meter:PullBack(2)
+  if not enc then error("no second-to-last pull to check against") end
+  if not string.find(entry.text, enc.name, 1, true) then
+    error("entry reads '" .. entry.text .. "' and names no pull")
+  end
+end)
+
+step("only pulls that exist are offered", function()
+  Wrekkit.ResetData("all")
+  makePull(8)
+  makePull(8)
+
+  local items = segmentItems()
+  if not itemFor(items, "last") then error("no entry for the last pull") end
+  if not itemFor(items, "back2") then error("no entry for the one before it") end
+  if itemFor(items, "back3") then
+    error("offered a third pull back when only two exist")
+  end
+end)
+
+step("picking a pull shows that pull", function()
+  Wrekkit.ResetData("all")
+  for _ = 1, 5 do makePull(8) end
+
+  local third = UI.meter:PullBack(3)
+  UI.meter:Settings().segment = "back3"
+  local encounters, label = UI.meter:Encounters()
+  if table.getn(encounters) ~= 1 then
+    error("expected one encounter, got " .. table.getn(encounters))
+  end
+  if encounters[1] ~= third then error("showed the wrong pull") end
+  if label ~= third.name then
+    error("the title says " .. tostring(label) .. " for " .. tostring(third.name))
+  end
+  UI.meter:Settings().segment = "current"
+end)
+
+--[[ A segment survives in saved settings; the pull it pointed at does not.
+     Showing an empty window then reads as the addon being broken. ]]
+step("a pull that no longer exists falls back, and the title says so", function()
+  Wrekkit.ResetData("all")
+  for _ = 1, 4 do makePull(8) end
+  UI.meter:Settings().segment = "back4"
+  if table.getn(UI.meter:Encounters()) ~= 1 then error("no pull to start with") end
+
+  -- A new log: that pull is gone.
+  Wrekkit.ResetData("all")
+  makePull(8)
+  local encounters, label = UI.meter:Encounters()
+  if table.getn(encounters) ~= 1 then
+    error("showed nothing rather than falling back")
+  end
+  if label ~= encounters[1].name then
+    error("the title claims " .. tostring(label) .. " while showing " ..
+      tostring(encounters[1].name))
+  end
+  UI.meter:Settings().segment = "current"
+end)
+
+step("last still means the newest pull", function()
+  Wrekkit.ResetData("all")
+  for _ = 1, 3 do makePull(8) end
+  UI.meter:Settings().segment = "last"
+  local encounters = UI.meter:Encounters()
+  local newest = UI.meter:PullBack(1)
+  if not newest then error("no pulls were recorded at all") end
+  if encounters[1] ~= newest then
+    error("'last' is not the most recent pull any more")
+  end
+  UI.meter:Settings().segment = "current"
+end)
+
+step("every segment renders without erroring", function()
+  Wrekkit.ResetData("all")
+  for _ = 1, 6 do makePull(8) end
+  for _, seg in ipairs({ "current", "last", "back2", "back3", "back4",
+                         "back5", "overall", "nonsense" }) do
+    UI.meter:Settings().segment = seg
+    UI.meter:Show()
+    UI.meter:Refresh()
+  end
+  UI.meter:Settings().segment = "current"
+  UI.meter:Refresh()
 end)
 
 print(string.format("\n%d passed, %d failed  (%d frames created)\n", pass, fail, calls))

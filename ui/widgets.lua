@@ -467,8 +467,19 @@ function UI.Row(parent, height)
 
   r.hl = UI.Fill(r, W.color.text, 0, "OVERLAY")
 
-  r:SetScript("OnEnter", function() r.hl:SetVertexColor(unpackColor(W.color.text, 0.06)) end)
-  r:SetScript("OnLeave", function() r.hl:SetVertexColor(unpackColor(W.color.text, 0)) end)
+  --[[ A painter may hang a Tooltip on the row. Called from here rather than
+       replacing OnEnter, because a painter that set its own OnEnter would
+       silently take the highlight away with it -- and rows are reused, so
+       every painter has to set r.tip or clear it, or a row keeps the one
+       it was given in a mode you have since left. ]]
+  r:SetScript("OnEnter", function()
+    r.hl:SetVertexColor(unpackColor(W.color.text, 0.06))
+    if r.tip then r:tip() end
+  end)
+  r:SetScript("OnLeave", function()
+    r.hl:SetVertexColor(unpackColor(W.color.text, 0))
+    if r.tip and GameTooltip then GameTooltip:Hide() end
+  end)
 
   --- Paint one data row. `frac` is 0..1 of the widest bar in the list.
   r.SetData = function(self, rank, name, value, sub, frac, color, subWidth)

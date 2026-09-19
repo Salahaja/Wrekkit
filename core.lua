@@ -71,6 +71,34 @@ W.classColor = {
   UNKNOWN = { 0.65, 0.65, 0.65 },
 }
 
+
+--[[ Damage schools.
+
+     The numbers are the client's own SPELL_SCHOOL order, which is what the
+     1.12 combat log uses and what nampower passes through: 0 Physical, then
+     Holy, Fire, Nature, Frost, Shadow, Arcane.
+
+     Melee carries no school at all -- it arrives as spell id 0 -- so that is
+     read as Physical rather than as unknown.
+
+     Anything outside that range is reported as its raw number instead of
+     being given a name. If this client encodes schools as a bitmask rather
+     than an index, that is how it will show, which is a great deal better
+     than confidently labelling Frost damage as Holy. ]]
+local SCHOOL = { [0] = "Physical", "Holy", "Fire", "Nature", "Frost",
+                 "Shadow", "Arcane" }
+
+function W.SchoolName(school, spellId)
+  if school == nil then
+    if spellId == 0 then return "Physical" end
+    return nil
+  end
+  local n = tonumber(school)
+  if not n then return nil end
+  if SCHOOL[n] then return SCHOOL[n] end
+  return "School " .. n
+end
+
 function W.ClassColor(class)
   return W.classColor[class or "UNKNOWN"] or W.classColor.UNKNOWN
 end
