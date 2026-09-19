@@ -260,9 +260,15 @@ function UI.Chart(parent)
     txt:SetPoint("LEFT", swatch, "RIGHT", 4, 0)
     txt:SetText(def.label)
 
+    --[[ The key is read off the button, not captured from the loop: in 5.0
+         `def` is one slot for the whole loop and holds nil once it ends, so a
+         closure over it works while the legend is being built and throws the
+         first time anyone clicks it. Same trap as the announce picker. ]]
+    b.seriesKey = def.key
     b:SetScript("OnClick", function()
-      c:Toggle(def.key)
-      local on = c.enabled[def.key]
+      local btn = this or b
+      c:Toggle(btn.seriesKey)
+      local on = c.enabled[btn.seriesKey]
       swatch:SetAlpha(on and 1 or 0.25)
       txt:SetTextColor(on and W.color.textDim[1] or W.color.textFaint[1],
         on and W.color.textDim[2] or W.color.textFaint[2],

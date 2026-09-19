@@ -177,6 +177,93 @@ local function lineColumnAt(src, pos)
     return line, pos - lineStart + 1
 end
 
+--[[ Closures that capture a generic-for CONTROL variable.
+
+     In 5.0 the control variables of `for k, v in ...` belong to the loop, not
+     to one turn of it, and the iterator's terminating nil is assigned to them
+     on the way out. So a closure that captures v and runs LATER -- an OnClick,
+     a getter handed to a widget -- reads nil, and the symptom is "attempt to
+     index a nil value" pointing at a line that reads perfectly.
+
+     Nothing else catches this. It runs correctly under 5.4, where each turn of
+     the loop gets its own copy, so the desktop harness gives the answer we
+     want no matter what the client does. It cost a day in the announce dialog.
+
+     The fix is to not capture it: stash what the closure needs on the widget
+     (as report.lua does with b.tabKey), or take it as a function parameter,
+     which is per-call in every version of Lua.
+
+     Only flags references INSIDE the closure body -- `table.sort(v.list,
+     function(a, b) ... end)` reads v before the closure exists, and runs it
+     before the loop moves on, so it is fine. ]]
+
+local BLOCK_OPEN = { ["function"] = true, ["do"] = true, ["then"] = true,
+                     ["repeat"] = true }
+local BLOCK_CLOSE = { ["end"] = true, ["until"] = true }
+
+-- The position just past the `end` that closes the block opened at `from`.
+local function blockEnd(code, from)
+    local depth, init = 1, from
+    while depth > 0 do
+        local s, e, word = string.find(code, "([%a_][%w_]*)", init)
+        if not s then return #code end
+        -- `elseif ... then` re-opens what it just closed; net zero.
+        if word == "elseif" then depth = depth - 1 end
+        if BLOCK_OPEN[word] then depth = depth + 1
+        elseif BLOCK_CLOSE[word] then depth = depth - 1 end
+        init = e + 1
+    end
+    return init
+end
+
+local function loopVarCaptures(code)
+    local hits, seen, init = {}, {}, 1
+    while true do
+        local s, e, names = string.find(code, "%f[%w_]for%s+([%w_][%w_,%s]-)%s+in%s", init)
+        if not s then break end
+        init = e
+
+        local vars = {}
+        for v in string.gmatch(names, "[%a_][%w_]*") do
+            if v ~= "_" then vars[v] = true end
+        end
+
+        local doStart = string.find(code, "%f[%w_]do%f[^%w_]", e)
+        if doStart then
+            local loopEnd = blockEnd(code, doStart + 2)
+            -- Every closure opened inside this loop body.
+            local fpos = doStart
+            while true do
+                local fs, fe = string.find(code, "%f[%w_]function%s*%(", fpos)
+                if not fs or fs >= loopEnd then break end
+                local closeEnd = blockEnd(code, fe)
+                local body = string.sub(code, fe, math.min(closeEnd, loopEnd))
+                for v in pairs(vars) do
+                    local bi = 1
+                    while true do
+                        local bs, be = string.find(body, "%f[%w_]" .. v .. "%f[^%w_]", bi)
+                        if not bs then break end
+                        -- `R.state.tab` is a field that happens to share the
+                        -- name, not the loop variable.
+                        local prev = bs > 1 and string.sub(body, bs - 1, bs - 1) or ""
+                        if prev ~= "." and prev ~= ":" then
+                            local pos = fe + bs - 1
+                            -- Nested closures see the same reference; report once.
+                            if not seen[pos] then
+                                seen[pos] = true
+                                hits[#hits + 1] = { pos = pos, var = v }
+                            end
+                        end
+                        bi = be + 1
+                    end
+                end
+                fpos = fe
+            end
+        end
+    end
+    return hits
+end
+
 local function lintFile(path)
     local fh = io.open(path, "r")
     if not fh then
@@ -223,7 +310,35 @@ local function lintFile(path)
         end
     end
 
+    for _, hit in ipairs(loopVarCaptures(code)) do
+        local line, col = lineColumnAt(src, hit.pos)
+        print(path .. ":" .. line .. ":" .. col ..
+            ": closure captures the for-in variable '" .. hit.var ..
+            "' - in 5.0 that is one slot for the whole loop, and it holds nil " ..
+            "once the loop ends; pass it as an argument or stash it on the frame")
+        findings = findings + 1
+    end
+
     return findings
+end
+
+--[[ The loop-capture scanner checks itself before it checks anything else.
+
+     It is pattern matching over blanked source, not a parser, so it is exactly
+     the kind of check that can quietly stop matching after an unrelated tweak
+     and report "clean" forever. These two samples are the bug and the shape
+     most likely to be mistaken for it. ]]
+do
+    local bad = "for k, v in pairs(t) do b:SetScript('x', function() f(v.key) end) end"
+    local good = "for k, v in pairs(t) do table.sort(v.list, function(a, b) return a < b end) end"
+    if #loopVarCaptures(blankStringsAndComments(bad)) == 0 then
+        print("vanilla_lint: INTERNAL - the for-in capture check no longer detects its own example")
+        os.exit(1)
+    end
+    if #loopVarCaptures(blankStringsAndComments(good)) > 0 then
+        print("vanilla_lint: INTERNAL - the for-in capture check flags a closure that runs inside the loop")
+        os.exit(1)
+    end
 end
 
 local files = {}

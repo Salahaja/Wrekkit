@@ -59,6 +59,30 @@ local function resetPicked()
   for k in pairs(picked) do picked[k] = nil end
 end
 
+--[[ The picker's two closures, built here rather than inline in the loop.
+
+     They have to be made by a function so `key` arrives as an ARGUMENT, which
+     is per-call in every version of Lua. Written inline they captured the
+     for-in variable instead, and in 5.0 that is a single slot shared by the
+     whole loop which the iterator sets to nil on its way out: correct while
+     the loop is still running -- so every checkbox drew right as it was built
+     -- and nil on every refresh afterwards. That is the "confirm.lua:140:
+     attempt to index a nil value" in the announce menu, and why the dialog
+     then opened with nothing to pick: the throw happened while it was being
+     reconfigured, before the step that lays the picker out.
+
+     5.4 gives each turn of the loop its own copy, so the offline harness ran
+     it correctly no matter what the client did. tools/vanilla_lint.lua now
+     refuses the pattern outright. ]]
+local function pickerHandlers(key, frame)
+  local get = function() return picked[key] == true end
+  local set = function(v)
+    picked[key] = v or nil
+    if frame.Rebuild then frame:Rebuild() end
+  end
+  return get, set
+end
+
 ----------------------------------------------------------------------
 
 --- Plain-language description of who is about to read this.
@@ -156,12 +180,8 @@ local function build()
   for i, m in ipairs(ANNOUNCE_METRICS) do
     local col = math.mod(i - 1, COLS)
     local row = math.floor((i - 1) / COLS)
-    local chk = UI.Check(f, m.label,
-      function() return picked[m.key] == true end,
-      function(v)
-        picked[m.key] = v or nil
-        if f.Rebuild then f:Rebuild() end
-      end)
+    local get, set = pickerHandlers(m.key, f)
+    local chk = UI.Check(f, m.label, get, set)
     chk:SetWidth(COL_W)
     chk._metricKey = m.key
     chk._col, chk._row = col, row
