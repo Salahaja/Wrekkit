@@ -1166,5 +1166,32 @@ step("the announce dialog reseeds its controls on every open", function()
   UI.CloseConfirm()
 end)
 
+--[[ The checkboxes were built and reseeded by tests, but never CLICKED - and a
+     click is the only thing that runs the getter and setter closures. That is
+     the path reported as "error in announce menu ... attempt to index a nil
+     value" at confirm.lua:140, which is the getter. ]]
+step("clicking a metric checkbox in the announce dialog", function()
+  local ctx = { metrics = { "damage" }, encounters = {}, label = "A",
+                filter = {}, petMode = "merge" }
+  UI.ConfirmAnnounce({ "line" }, "GUILD", nil, function() end, ctx)
+
+  local dlg
+  for _, fr in ipairs(allFrames) do
+    if fr._name == "WrekkitConfirm" then dlg = fr end
+  end
+  if not dlg then error("the dialog was never built") end
+
+  local clicked = 0
+  for _, chk in ipairs(dlg.metricChecks) do
+    local onclick = chk._scripts and chk._scripts.OnClick
+    if onclick then
+      onclick()
+      clicked = clicked + 1
+    end
+  end
+  if clicked == 0 then error("no checkbox had an OnClick to drive") end
+  UI.CloseConfirm()
+end)
+
 print(string.format("\n%d passed, %d failed  (%d frames created)\n", pass, fail, calls))
 if fail > 0 then os.exit(1) end
