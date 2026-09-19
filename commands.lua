@@ -44,7 +44,8 @@ local HELP = {
   { "/wrek status", "diagnose why nothing is being recorded" },
   { "/wrek who", "list every actor and how it was classified" },
   { "/wrek mode <metric>", "set the meter metric (dps, healing, taken, ...)" },
-  { "/wrek segment <what>", "current | last | overall" },
+  { "/wrek segment <what>", "current, last, back2..back5 or overall" },
+  { "/wrek boss", "mark the selected pull (or the last one) as a boss" },
   { "/wrek modes", "list every metric" },
   { "/wrek save", "write history to CustomData\\Wrekkit_<char>.txt" },
   { "/wrek load", "read that file back in" },
@@ -123,13 +124,40 @@ local function handler(msg)
 
   elseif cmd == "segment" or cmd == "seg" then
     local v = a[2]
-    if v ~= "current" and v ~= "last" and v ~= "overall" then
-      W.Print("segment must be current, last or overall.")
+    -- back2..back5 are the same pulls the segment menu offers by name.
+    local ok = (v == "current" or v == "overall") or
+               (v and W.ui.meter.BACK and W.ui.meter.BACK[v] ~= nil)
+    if not ok then
+      W.Print("segment must be current, last, back2..back5 or overall.")
       return
     end
     W.ui.meter:Settings().segment = v
     W.ui.meter:Show()
     W.ui.meter:Refresh()
+
+  elseif cmd == "boss" then
+    --[[ Correcting the guess without opening a window. The detector reads
+         the client's classification and falls back to a health threshold,
+         and neither can be right for every server's content, so overruling
+         it has to be one word rather than a setting to go and find. ]]
+    local encounters = W.ui.report:SelectedEncounters()
+    local open = W.ui.report.frame and W.ui.report.frame:IsShown()
+    if open and table.getn(encounters) > 0 then
+      W.ui.report:ToggleBossMark()
+      return
+    end
+
+    local session = W.report:CurrentSession()
+    local list = (session and session.encounters) or {}
+    local last = list[table.getn(list)]
+    if not last then
+      W.Print("no pull to mark yet.")
+      return
+    end
+    local now = W.SetBoss(last, not W.IsBoss(last))
+    W.Print("|cffe0a22c" .. (last.name or "that pull") .. "|r is " ..
+      (now and "a boss pull." or "not a boss pull."))
+    if W.ui.report then W.ui.report:Refresh() end
 
   elseif cmd == "save" then
     W.store:Save()

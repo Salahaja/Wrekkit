@@ -55,9 +55,10 @@ local function defPet(guid, name, owner, maxHP)
   WORLD[guid] = { name = name, isPlayer = false, owner = owner,
                   maxHealth = maxHP or 2000, health = maxHP or 2000 }
 end
-local function defNPC(guid, name, maxHP)
+local function defNPC(guid, name, maxHP, rank)
   WORLD[guid] = { name = name, isPlayer = false,
-                  maxHealth = maxHP or 100000, health = maxHP or 100000 }
+                  maxHealth = maxHP or 100000, health = maxHP or 100000,
+                  rank = rank }
 end
 
 ----------------------------------------------------------------------
@@ -65,6 +66,12 @@ end
 ----------------------------------------------------------------------
 
 GetUnitData = function(guid) return WORLD[guid] and true or nil end
+-- SuperWoW lets a GUID stand in for a unit token, which is what the addon
+-- relies on to ask whether a thing was a boss.
+UnitClassification = function(guid)
+  local d = WORLD[guid]
+  return (d and d.rank) or "normal"
+end
 UnitName = function(u) local d = WORLD[u] return d and d.name end
 UnitIsPlayer = function(u) local d = WORLD[u] return (d and d.isPlayer) and 1 or 0 end
 UnitClass = function(u)
@@ -1656,6 +1663,63 @@ for _, enc in ipairs((Wrekkit.db and Wrekkit.db.encounters) or {}) do
 end
 check("a mob keeps its attacks in history at all", keptMobDetail, true)
 check("the school survives being written to history", keptSchool, true)
+
+
+----------------------------------------------------------------------
+-- boss pulls
+----------------------------------------------------------------------
+
+Wrekkit.ResetData("all")
+Wrekkit.db.bossHealth = 40000
+
+local function pullOn(guid, seconds)
+  Wrekkit.encounter:CombatStart()
+  for _ = 1, (seconds or 8) do
+    fire("AUTO_ATTACK_SELF", "0xP1", guid, 300, 0, 0, 1, 0, 0, 0)
+    fire("AUTO_ATTACK_OTHER", guid, "0xP1", 120, 0, 0, 1, 0, 0, 0)
+    advance(1)
+  end
+  Wrekkit.encounter:CombatEnd()
+  Wrekkit.encounter:Finish()
+  local list = Wrekkit.report:CurrentSession().encounters
+  return list[table.getn(list)]
+end
+
+defNPC("0xBigBoss", "Ragnaros", 900000)
+defNPC("0xTrashA", "Molten Giant", 9000)
+defNPC("0xWorldBoss", "Azuregos", 12000, "worldboss")
+
+local bossPull = pullOn("0xBigBoss")
+local trashPull = pullOn("0xTrashA")
+local wbPull = pullOn("0xWorldBoss")
+
+check("a huge enemy reads as a boss", Wrekkit.IsBoss(bossPull), true)
+check("a small enemy does not", Wrekkit.IsBoss(trashPull), false)
+--[[ The health fallback would call this trash -- it has less health than the
+     threshold. The client's own classification is why it is not. ]]
+check("classification beats the health guess", Wrekkit.IsBoss(wbPull), true)
+check("the pull is named after what it fought", bossPull.name, "Ragnaros")
+
+-- Marking by hand overrules the guess, and sticks in history.
+Wrekkit.SetBoss(trashPull, true)
+check("marking by hand makes it a boss", Wrekkit.IsBoss(trashPull), true)
+local inHistory
+for _, rec in ipairs(Wrekkit.db.encounters or {}) do
+  if rec.id == trashPull.id and rec.sessionId == trashPull.sessionId then
+    inHistory = rec
+  end
+end
+check("the mark is written to history too", inHistory and inHistory.boss, true)
+check("and says it was you, not a guess", inHistory and inHistory.bossBy, "you")
+Wrekkit.SetBoss(trashPull, false)
+check("unmarking works as well", Wrekkit.IsBoss(trashPull), false)
+
+-- The threshold is a setting, because no one number fits all content.
+Wrekkit.db.bossHealth = 5000
+local nowBoss = pullOn("0xTrashA")
+check("lowering the threshold catches smaller bosses",
+  Wrekkit.IsBoss(nowBoss), true)
+Wrekkit.db.bossHealth = 40000
 
 Wrekkit.ResetData("all")
 print(string.format("\n%d passed, %d failed\n", pass, fail))

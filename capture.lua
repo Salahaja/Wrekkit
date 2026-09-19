@@ -82,7 +82,7 @@ C.cvars = {
 -- unit registry
 ----------------------------------------------------------------------
 
--- guid -> { name, class, isPlayer, owner, ownerName, maxHealth, health }
+-- guid -> { name, class, isPlayer, owner, ownerName, maxHealth, health, rank }
 C.units = {}
 
 -- Event tallies, so "nothing is recording" can be distinguished from
@@ -261,6 +261,21 @@ function C:Unit(guid)
   end
 
   u.maxHealth = (UnitHealthMax and UnitHealthMax(guid)) or u.maxHealth
+
+  --[[ "worldboss", "rareelite", "elite", "rare" or "normal". Asked once and
+       kept, because it is the one thing the client will tell us outright
+       about whether a fight was a boss -- health alone cannot separate a
+       raid boss from a dungeon boss without a threshold that is wrong for
+       one of them.
+
+       Guarded rather than assumed: this takes a GUID only because SuperWoW
+       accepts one anywhere a unit token goes, and if that ever stops being
+       true the answer is "no idea", not an error twice a second. ]]
+  if u.rank == nil and UnitClassification then
+    local ok, rank = pcall(UnitClassification, guid)
+    if ok and type(rank) == "string" and rank ~= "" then u.rank = rank end
+  end
+
   return u
 end
 

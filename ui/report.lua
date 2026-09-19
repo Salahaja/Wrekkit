@@ -67,7 +67,147 @@ end
 
 function R:SelectAll()
   self.state.selected = {}
+  self.state.scope = nil
   self:Refresh()
+end
+
+----------------------------------------------------------------------
+-- boss pulls
+----------------------------------------------------------------------
+
+--[[ Selecting by what a pull WAS rather than by where it sits in the list.
+
+     The sidebar could always build any selection by hand, one right-click at
+     a time. That is fine for two pulls and useless for a raid night: the
+     question is almost always "the bosses" or "every attempt at this one",
+     and answering it by clicking nineteen rows and hoping you did not miss
+     one is not an answer.
+
+     Everything still lands in state.selected, the same set the sidebar
+     builds, so every tab, the chart and announcing all keep working without
+     knowing any of this exists. ]]
+
+--- Distinct boss names in this session, first seen first, with attempt counts.
+function R:BossNames(session)
+  session = session or self:Session()
+  local names, seen = {}, {}
+  for _, enc in ipairs((session and session.encounters) or {}) do
+    if W.IsBoss(enc) then
+      local name = enc.name or "?"
+      if not seen[name] then
+        seen[name] = { name = name, attempts = 0, kills = 0 }
+        table.insert(names, seen[name])
+      end
+      seen[name].attempts = seen[name].attempts + 1
+      if enc.kill then seen[name].kills = seen[name].kills + 1 end
+    end
+  end
+  return names
+end
+
+--[[ Select every pull the test accepts.
+
+     Refuses to select nothing. An empty selection already means "the whole
+     night" everywhere else, so quietly ending up with one would show every
+     pull under a heading that says "Bosses" -- the window stating the
+     opposite of what it is showing. ]]
+function R:SelectWhere(pred, label)
+  local session = self:Session()
+  local picked, count = {}, 0
+  for _, enc in ipairs((session and session.encounters) or {}) do
+    if pred(enc) then
+      picked[encKey(enc)] = true
+      count = count + 1
+    end
+  end
+
+  if count == 0 then
+    W.Print("nothing in this session matches |cffe0a22c" .. tostring(label) ..
+      "|r, so the selection is unchanged.")
+    return false
+  end
+
+  self.state.selected = picked
+  self.state.scope = label
+  self.state.drill = nil
+  self.state.drillAbility = nil
+  self:Refresh()
+  return true
+end
+
+function R:SelectBosses()
+  return self:SelectWhere(function(enc) return W.IsBoss(enc) end, "Bosses")
+end
+
+function R:SelectTrash()
+  return self:SelectWhere(function(enc) return not W.IsBoss(enc) end, "Trash")
+end
+
+--- Every attempt at one boss, wipes included -- which is the comparison
+--- anyone asking about a single boss actually wants.
+function R:SelectBossNamed(name)
+  return self:SelectWhere(function(enc)
+    return W.IsBoss(enc) and (enc.name or "?") == name
+  end, name)
+end
+
+--- Toggle what is currently selected between boss and not.
+function R:ToggleBossMark()
+  local encounters, isAll = self:SelectedEncounters()
+  if isAll or table.getn(encounters) == 0 then
+    W.Print("pick a pull in the sidebar first, then mark it.")
+    return
+  end
+  -- One state for the lot: if any of them is not a boss, make them all bosses.
+  local makeBoss = false
+  for _, enc in ipairs(encounters) do
+    if not W.IsBoss(enc) then makeBoss = true end
+  end
+  for _, enc in ipairs(encounters) do W.SetBoss(enc, makeBoss) end
+  W.Print((makeBoss and "Marked " or "Unmarked ") .. table.getn(encounters) ..
+    " pull(s) as " .. (makeBoss and "boss" or "not boss") .. ".")
+  self:Refresh()
+end
+
+function R:ScopeMenu()
+  local session = self:Session()
+  local items = {
+    { text = "All encounters", value = "all" },
+    { text = "Bosses only", value = "bosses" },
+    { text = "Trash only", value = "trash" },
+  }
+
+  local bosses = self:BossNames(session)
+  if table.getn(bosses) > 0 then
+    table.insert(items, { text = "-- each boss --", value = nil, disabled = true })
+    for i = 1, table.getn(bosses) do
+      local b = bosses[i]
+      local note = b.attempts .. (b.attempts == 1 and " pull" or " pulls")
+      if b.kills > 0 then note = note .. ", killed" end
+      table.insert(items, {
+        text = b.name .. "  |cff9d9d9d" .. note .. "|r",
+        value = "boss:" .. b.name,
+      })
+    end
+  end
+
+  table.insert(items, { text = "-- marking --", value = nil, disabled = true })
+  table.insert(items, { text = "Selected pull is/isn't a boss", value = "mark" })
+
+  UI.Menu(self.frame, self.allBtn, items, function(value)
+    if value == "all" then
+      R:SelectAll()
+    elseif value == "bosses" then
+      R:SelectBosses()
+    elseif value == "trash" then
+      R:SelectTrash()
+    elseif value == "mark" then
+      R:ToggleBossMark()
+    elseif value then
+      local _, _, name = string.find(value, "^boss:(.*)$")
+      if name then R:SelectBossNamed(name) end
+    end
+  end, 190)
 end
 
 --[[ What an announcement of this window would contain.
@@ -155,10 +295,15 @@ function R:Create()
   sessionBtn:SetPoint("TOPLEFT", side, "TOPLEFT", 6, -6)
   self.sessionBtn = sessionBtn
 
+  --[[ Was a plain "All encounters" button. It still does that on the first
+       entry, but a raid night is mostly asking for a subset -- the bosses,
+       or one boss -- and that had to be built by hand one right-click at a
+       time. ]]
   local allBtn = UI.Button(side, "All encounters", SIDEBAR - 12, 18, function()
-    R:SelectAll()
+    R:ScopeMenu()
   end)
   allBtn:SetPoint("TOPLEFT", sessionBtn, "BOTTOMLEFT", 0, -4)
+  self.allBtn = allBtn
 
   local encList = UI.ScrollList(side, 30, function(parent, height)
     local row = CreateFrame("Button", nil, parent)
@@ -541,14 +686,30 @@ function R:RefreshSidebar()
   self.sessionBtn.label:SetText((session.zone or "?") .. "  " ..
     date("%m/%d", session.startTime))
 
+  -- The button says what it is showing, not what it would do.
+  if self.allBtn then
+    local _, everything = self:SelectedEncounters()
+    self.allBtn.label:SetText(everything and "All encounters"
+      or (self.state.scope or "Selection"))
+  end
+
   local _, isAll = self:SelectedEncounters()
 
   self.encList:SetData(session.encounters, function(row, enc, index)
     local key = encKey(enc)
     local on = self.state.selected[key] or isAll
+    local isBoss = W.IsBoss(enc)
     row.name:SetText(enc.name or "Trash")
-    row.meta:SetText(W.Duration(enc.combat or 0) .. "   " ..
-      W.Short((enc.totals and enc.totals.damage) or 0))
+
+    --[[ A guessed boss flag is only safe if the guess is visible. Marked in
+         the meta line rather than by colour alone, because the row already
+         uses colour to mean selected. ]]
+    local meta = W.Duration(enc.combat or 0) .. "   " ..
+      W.Short((enc.totals and enc.totals.damage) or 0)
+    if isBoss then
+      meta = meta .. "   |cffe0a22c" .. (enc.kill and "BOSS KILL" or "BOSS") .. "|r"
+    end
+    row.meta:SetText(meta)
 
     row.lock:SetLit(enc.locked == true)
     row.lock:SetScript("OnClick", function()

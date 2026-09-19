@@ -57,7 +57,7 @@ declare(LUA, [[
 declare(WOW, [[
   CreateFrame UIParent GetTime GetLocale GetBuildInfo GetRealZoneText
   GetRealmName IsInInstance GetNumRaidMembers GetNumPartyMembers
-  GetRaidRosterInfo UnitName UnitClass UnitLevel UnitHealth UnitHealthMax
+  GetRaidRosterInfo UnitName UnitClass UnitLevel UnitHealth UnitHealthMax UnitClassification
   UnitExists UnitIsPlayer UnitIsUnit UnitCanCooperate UnitAffectingCombat
   SetCVar GetCVar SendChatMessage SendAddonMessage GetAddOnMetadata
   GetNumSavedInstances GetSavedInstanceInfo UnitIsGhost
@@ -357,6 +357,9 @@ end
 STUB.UnitLevel = function() return 60 end
 STUB.UnitHealth = function(u) local d = WORLD[u] return d and d.health or 0 end
 STUB.UnitHealthMax = function(u) local d = WORLD[u] return d and d.maxHealth or 0 end
+--[[ Elite, worldboss and so on. The real one takes a unit token; SuperWoW
+     lets a GUID stand in, which is what the addon relies on. ]]
+STUB.UnitClassification = function(u) local d = WORLD[u] return d and d.rank or "normal" end
 STUB.UnitIsUnit = function(a, b) return a == b end
 STUB.UnitCanCooperate = function() return 1 end
 STUB.UnitExists = function(u) return WORLD[u] ~= nil, u end

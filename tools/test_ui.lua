@@ -1349,6 +1349,11 @@ local function makePull(seconds)
   end
   Wrekkit.encounter:CombatEnd()
   Wrekkit.encounter:Finish()
+  -- The pull as the report will see it: read back out of history, which is
+  -- a different table from the one just recorded.
+  local session = Wrekkit.report:CurrentSession()
+  local list = (session and session.encounters) or {}
+  return list[table.getn(list)]
 end
 
 local function meterRows()
@@ -1629,6 +1634,185 @@ step("every segment renders without erroring", function()
   end
   UI.meter:Settings().segment = "current"
   UI.meter:Refresh()
+end)
+
+----------------------------------------------------------------------
+-- boss pulls in the report
+----------------------------------------------------------------------
+
+local function scopeItems()
+  local found
+  local realMenu = UI.Menu
+  UI.Menu = function(parent, anchor, items, onPick, width)
+    found = { items = items, pick = onPick }
+    return realMenu(parent, anchor, items, onPick, width)
+  end
+  UI.report:ScopeMenu()
+  UI.Menu = realMenu
+  UI.CloseMenu()
+  return found or { items = {}, pick = function() end }
+end
+
+local function pickScope(value)
+  local menu = scopeItems()
+  menu.pick(value)
+end
+
+--[[ A raid night: two attempts at one boss, a second boss, and trash in
+     between -- which is the shape the whole feature exists for. ]]
+local function raidNight()
+  Wrekkit.ResetData("all")
+  UI.report.state.selected = {}
+  UI.report.state.scope = nil
+  UI.report.state.sessionIndex = 1
+  makePull(8)                                   -- trash
+  local a = makePull(8)
+  local b = makePull(8)
+  local c = makePull(8)
+  local session = Wrekkit.report:CurrentSession()
+  local list = session.encounters
+  --[[ Marked by hand, both ways. The harness fights one 100k-health dummy,
+       so detection would call every pull a boss; what is under test here is
+       selecting them, not spotting them. ]]
+  Wrekkit.SetBoss(list[1], false)
+  list[2].name = "Ragnaros"  Wrekkit.SetBoss(list[2], true)
+  list[3].name = "Ragnaros"  Wrekkit.SetBoss(list[3], true)
+  list[4].name = "Majordomo" Wrekkit.SetBoss(list[4], true)
+  UI.report:Show()
+  UI.report:Refresh()
+  return list
+end
+
+step("the scope menu lists every boss in the session", function()
+  raidNight()
+  local items = scopeItems().items
+  local seen = {}
+  for _, it in ipairs(items) do
+    if it.value then seen[it.value] = it.text end
+  end
+  for _, v in ipairs({ "all", "bosses", "trash", "boss:Ragnaros", "boss:Majordomo" }) do
+    if not seen[v] then error("no menu entry for " .. v) end
+  end
+  -- Two attempts at Ragnaros, one at Majordomo.
+  if not string.find(seen["boss:Ragnaros"], "2 pulls", 1, true) then
+    error("Ragnaros entry reads '" .. seen["boss:Ragnaros"] .. "'")
+  end
+end)
+
+step("bosses only selects the bosses and nothing else", function()
+  local list = raidNight()
+  pickScope("bosses")
+  local picked = UI.report:SelectedEncounters()
+  if table.getn(picked) ~= 3 then
+    error("selected " .. table.getn(picked) .. " pulls, expected 3 bosses")
+  end
+  for _, enc in ipairs(picked) do
+    if not Wrekkit.IsBoss(enc) then error("trash crept into the boss selection") end
+  end
+end)
+
+step("trash only is the other half", function()
+  local list = raidNight()
+  pickScope("trash")
+  local picked = UI.report:SelectedEncounters()
+  if table.getn(picked) ~= 1 then
+    error("selected " .. table.getn(picked) .. " pulls, expected 1 trash")
+  end
+  if Wrekkit.IsBoss(picked[1]) then error("a boss was picked as trash") end
+end)
+
+--[[ Singling one boss out means every attempt at it, wipes included: the
+     comparison anyone asking about a boss actually wants. ]]
+step("one boss means all of its attempts", function()
+  raidNight()
+  pickScope("boss:Ragnaros")
+  local picked = UI.report:SelectedEncounters()
+  if table.getn(picked) ~= 2 then
+    error("selected " .. table.getn(picked) .. " attempts, expected 2")
+  end
+  for _, enc in ipairs(picked) do
+    if enc.name ~= "Ragnaros" then error("picked up " .. tostring(enc.name)) end
+  end
+end)
+
+step("all encounters goes back to the whole night", function()
+  local list = raidNight()
+  pickScope("bosses")
+  pickScope("all")
+  local picked, isAll = UI.report:SelectedEncounters()
+  if not isAll then error("did not return to the whole session") end
+  if table.getn(picked) ~= table.getn(list) then
+    error("got " .. table.getn(picked) .. " of " .. table.getn(list))
+  end
+end)
+
+--[[ An empty selection already means "everything" everywhere else, so a scope
+     that matches nothing must refuse rather than quietly show the whole night
+     under a heading that says Bosses. ]]
+step("a scope that matches nothing changes nothing", function()
+  Wrekkit.ResetData("all")
+  UI.report.state.selected = {}
+  local only = makePull(8)
+  Wrekkit.SetBoss(only, false)
+  UI.report:Show()
+  UI.report:Refresh()
+
+  local before = table.getn(UI.report:SelectedEncounters())
+  local ok = UI.report:SelectBosses()
+  if ok then error("claimed to select bosses when there are none") end
+  local after, isAll = UI.report:SelectedEncounters()
+  if not isAll or table.getn(after) ~= before then
+    error("the selection moved anyway")
+  end
+end)
+
+step("the button says what is being shown", function()
+  raidNight()
+  pickScope("bosses")
+  if UI.report.allBtn.label:GetText() ~= "Bosses" then
+    error("button reads '" .. tostring(UI.report.allBtn.label:GetText()) .. "'")
+  end
+  pickScope("all")
+  if UI.report.allBtn.label:GetText() ~= "All encounters" then
+    error("button did not go back: " .. tostring(UI.report.allBtn.label:GetText()))
+  end
+end)
+
+step("marking from the menu flips the selected pulls", function()
+  local list = raidNight()
+  pickScope("trash")
+  local trash = UI.report:SelectedEncounters()[1]
+  if Wrekkit.IsBoss(trash) then error("started out as a boss") end
+  pickScope("mark")
+  if not Wrekkit.IsBoss(trash) then error("marking did nothing") end
+  pickScope("mark")
+  if Wrekkit.IsBoss(trash) then error("unmarking did nothing") end
+end)
+
+step("the sidebar says which pulls are bosses", function()
+  raidNight()
+  UI.report:RefreshSidebar()
+  local marked = 0
+  for _, row in ipairs(UI.report.encList.rows or {}) do
+    if row:IsShown() and row.meta and string.find(row.meta:GetText() or "", "BOSS", 1, true) then
+      marked = marked + 1
+    end
+  end
+  if marked < 1 then error("no row in the sidebar says BOSS") end
+end)
+
+step("every scope renders without erroring", function()
+  raidNight()
+  for _, v in ipairs({ "all", "bosses", "trash", "boss:Ragnaros",
+                       "boss:Majordomo", "boss:Nobody", "mark", "all" }) do
+    pickScope(v)
+    for _, tab in ipairs(UI.report.tabs) do
+      UI.report.state.tab = tab.key
+      UI.report:Refresh()
+    end
+  end
+  UI.report.state.tab = "summary"
+  pickScope("all")
 end)
 
 print(string.format("\n%d passed, %d failed  (%d frames created)\n", pass, fail, calls))

@@ -52,6 +52,7 @@ local function newActor(guid, u)
     owner = u and u.owner or nil,
     ownerName = u and u.ownerName or nil,
     maxHealth = u and u.maxHealth or 0,
+    rank = u and u.rank or nil,
 
     damage = 0, taken = 0, healing = 0, overheal = 0,
     absorbed = 0, deaths = 0, dispels = 0, interrupts = 0,
@@ -822,7 +823,61 @@ local function deriveName(enc)
       best, bestHP, bestDmg = e, hp, dmg
     end
   end
-  return (best and best.name) or "Trash", anyDead
+  return (best and best.name) or "Trash", anyDead, best
+end
+
+--[[ Was this a boss pull?
+
+     Asked of the biggest thing in the fight -- the same enemy the encounter
+     is named after, so the answer always agrees with the name on the row.
+
+     The client's own classification is trusted first, because it is the only
+     source that actually knows. Health is the fallback, and it is a fallback
+     rather than the rule for a reason: no single number separates a raid boss
+     from a dungeon boss from a beefy trash pack across all content, so the
+     threshold is a setting and the answer is always correctable by hand.
+
+     A wrong guess here is visible -- the row is marked in the sidebar -- and
+     one click fixes it. That is the whole design: guess, show the guess, and
+     make it cheap to overrule. ]]
+local function looksLikeBoss(primary)
+  if not primary then return false end
+
+  --[[ Asked of the unit cache as well as the actor, because an actor copies
+       its metadata the first time it is seen -- which is the instant the
+       fight starts, when the client may not have resolved the thing yet.
+       Whatever the actor recorded then is frozen; the cache has had the
+       whole pull to catch up, and this runs at the end of it. ]]
+  local u = primary.guid and W.capture:Unit(primary.guid)
+  local rank = (u and u.rank) or primary.rank
+  if rank == "worldboss" then return true end
+
+  local hp = primary.maxHealth or 0
+  local cached = (u and u.maxHealth) or 0
+  if cached > hp then hp = cached end
+
+  local floor = (W.db and W.db.bossHealth) or 40000
+  return hp >= floor
+end
+
+--- Mark or unmark a pull by hand. Sticks: an override is never re-guessed.
+function W.SetBoss(enc, isBoss)
+  if not enc then return false end
+  enc.boss = isBoss and true or false
+  enc.bossBy = "you"
+  --[[ History is a separate copy, so changing the live encounter alone would
+       last until the next reload and then quietly revert. ]]
+  for _, rec in ipairs((W.db and W.db.encounters) or {}) do
+    if rec.id == enc.id and rec.sessionId == enc.sessionId then
+      rec.boss = enc.boss
+      rec.bossBy = "you"
+    end
+  end
+  return enc.boss
+end
+
+function W.IsBoss(enc)
+  return enc and enc.boss == true
 end
 
 function E:Finish()
@@ -841,9 +896,15 @@ function E:Finish()
     return
   end
 
-  local name, anyDead = deriveName(enc)
+  local name, anyDead, primary = deriveName(enc)
   enc.name = name
   enc.kill = anyDead
+  --[[ Decided here, at the end of the pull, and then left alone. Judging it
+       later would mean re-judging it every time the report is drawn, and a
+       pull that changed its mind about being a boss between two refreshes
+       would be worse than one that guessed wrong once. ]]
+  enc.boss = looksLikeBoss(primary)
+  enc.bossBy = "guess"
 
   local session = self.session
   enc.id = session.nextId
@@ -914,6 +975,10 @@ function E:Persist(enc)
     duration = enc.duration,
     combat = enc.combat,
     kill = enc.kill,
+    -- The report reads sessions back out of history, so a flag that only
+    -- exists on the live encounter is a flag the report never sees.
+    boss = enc.boss,
+    bossBy = enc.bossBy,
     totals = enc.totals,
     deaths = enc.deaths,
     actors = {},
