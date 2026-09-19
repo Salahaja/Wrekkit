@@ -216,6 +216,31 @@ local function blockEnd(code, from)
     return init
 end
 
+--[[ Closures these hand straight to something that calls them before it
+     returns are safe: the loop has not moved on yet. Everything else is
+     stored and called later, which is the whole problem. ]]
+local CALLED_IMMEDIATELY = {
+    pcall = true, xpcall = true, sort = true, foreach = true, foreachi = true,
+}
+
+-- The name of the call whose argument list `pos` sits in, if any.
+local function enclosingCall(code, pos)
+    local depth, i = 0, pos - 1
+    while i > 0 do
+        local c = string.sub(code, i, i)
+        if c == ")" then depth = depth + 1
+        elseif c == "(" then
+            if depth == 0 then
+                local name = string.match(string.sub(code, 1, i - 1), "([%a_][%w_]*)%s*$")
+                return name
+            end
+            depth = depth - 1
+        end
+        i = i - 1
+    end
+    return nil
+end
+
 local function loopVarCaptures(code)
     local hits, seen, init = {}, {}, 1
     while true do
@@ -236,28 +261,32 @@ local function loopVarCaptures(code)
             while true do
                 local fs, fe = string.find(code, "%f[%w_]function%s*%(", fpos)
                 if not fs or fs >= loopEnd then break end
-                local closeEnd = blockEnd(code, fe)
-                local body = string.sub(code, fe, math.min(closeEnd, loopEnd))
-                for v in pairs(vars) do
-                    local bi = 1
-                    while true do
-                        local bs, be = string.find(body, "%f[%w_]" .. v .. "%f[^%w_]", bi)
-                        if not bs then break end
-                        -- `R.state.tab` is a field that happens to share the
-                        -- name, not the loop variable.
-                        local prev = bs > 1 and string.sub(body, bs - 1, bs - 1) or ""
-                        if prev ~= "." and prev ~= ":" then
-                            local pos = fe + bs - 1
-                            -- Nested closures see the same reference; report once.
-                            if not seen[pos] then
-                                seen[pos] = true
-                                hits[#hits + 1] = { pos = pos, var = v }
+                fpos = fe
+
+                local caller = enclosingCall(code, fs)
+                if not (caller and CALLED_IMMEDIATELY[caller]) then
+                    local closeEnd = blockEnd(code, fe)
+                    local body = string.sub(code, fe, math.min(closeEnd, loopEnd))
+                    for v in pairs(vars) do
+                        local bi = 1
+                        while true do
+                            local bs, be = string.find(body, "%f[%w_]" .. v .. "%f[^%w_]", bi)
+                            if not bs then break end
+                            -- `R.state.tab` is a field that happens to share
+                            -- the name, not the loop variable.
+                            local prev = bs > 1 and string.sub(body, bs - 1, bs - 1) or ""
+                            if prev ~= "." and prev ~= ":" then
+                                local pos = fe + bs - 1
+                                -- Nested closures see the same reference once.
+                                if not seen[pos] then
+                                    seen[pos] = true
+                                    hits[#hits + 1] = { pos = pos, var = v }
+                                end
                             end
+                            bi = be + 1
                         end
-                        bi = be + 1
                     end
                 end
-                fpos = fe
             end
         end
     end
