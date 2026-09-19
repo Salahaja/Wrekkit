@@ -263,6 +263,20 @@ SendChatMessage = function(msg, chan, _, target)
   table.insert(CHAT, { msg = msg, chan = chan, target = target })
 end
 IsInGuild = function() return true end
+-- Reads the real .toc, so "what version is this" can be asserted against what
+-- actually ships rather than against a second copy written down in Lua.
+GetAddOnMetadata = function(addon, field)
+  if addon ~= "Wrekkit" or field ~= "Version" then return nil end
+  local fh = io.open("Wrekkit.toc", "r")
+  if not fh then return nil end
+  local found
+  for line in fh:lines() do
+    local v = string.match(line, "^##%s*Version:%s*(%S+)")
+    if v then found = v end
+  end
+  fh:close()
+  return found
+end
 
 ----------------------------------------------------------------------
 -- load everything
@@ -1190,6 +1204,110 @@ step("clicking a metric checkbox in the announce dialog", function()
     end
   end
   if clicked == 0 then error("no checkbox had an OnClick to drive") end
+  UI.CloseConfirm()
+end)
+
+--[[ The version the addon reports has to be the version that shipped.
+
+     /wrek status is the first thing asked for in a bug report, and it named
+     0.1.0 for days after the .toc said 0.1.1, because the number was written
+     out a second time in core.lua. A wrong version does not just misinform --
+     it sends the search after the wrong source. ]]
+step("the reported version is the one in the .toc", function()
+  local shipped = GetAddOnMetadata("Wrekkit", "Version")
+  if not shipped then error("could not read the version out of the .toc") end
+  if Wrekkit.version ~= shipped then
+    error("the addon reports " .. tostring(Wrekkit.version) ..
+          " but the .toc ships " .. shipped)
+  end
+end)
+
+--[[ The reported crash was "attempt to index a nil value" in the checkbox
+     getter, which can only mean the state it reads was not there when a tick
+     refreshed. Nothing offline reproduced HOW it went missing, so the state
+     moved off the frame and into the module, and this asserts the property
+     that makes the how irrelevant: clear the frame's field entirely and the
+     picker still refreshes, still takes clicks, and still reseeds.
+
+     Note the lastError check. UI.Check runs its click inside W.Guard, so a
+     getter that throws on click does not fail a test that only calls it --
+     it prints and carries on. That is how this class of bug hides. ]]
+step("the picker does not depend on a field of the dialog frame", function()
+  local ctx = { metrics = { "damage" }, encounters = {}, label = "A",
+                filter = {}, petMode = "merge" }
+  UI.ConfirmAnnounce({ "line" }, "GUILD", nil, function() end, ctx)
+  local dlg = _G["WrekkitConfirm"]
+  if not dlg then error("the dialog was never built") end
+
+  Wrekkit.ClearErrors()
+  dlg.picked = nil
+  dlg.count = nil
+  for _, chk in ipairs(dlg.metricChecks) do chk:Refresh() end
+  for _, chk in ipairs(dlg.metricChecks) do chk:GetScript("OnClick")() end
+  if dlg.Rebuild then dlg:Rebuild() end
+  if Wrekkit.lastError then
+    error("a guarded handler swallowed: " .. tostring(Wrekkit.lastError.err))
+  end
+  UI.CloseConfirm()
+
+  -- And a fresh request must still seed and draw correctly afterwards.
+  UI.ConfirmAnnounce({ "line" }, "GUILD", nil, function() end,
+    { metrics = { "healing" }, encounters = {}, label = "B",
+      filter = {}, petMode = "merge" })
+  for _, chk in ipairs(dlg.metricChecks) do
+    local lit = chk.tick and chk.tick:IsShown()
+    if chk._metricKey == "healing" and not lit then
+      error("healing was not lit once the frame field was gone")
+    end
+    if chk._metricKey == "damage" and lit then
+      error("damage stayed lit once the frame field was gone")
+    end
+  end
+  UI.CloseConfirm()
+end)
+
+--[[ Half-configured is worse than closed. If anything between "build" and
+     "show" fails, the dialog must not be left on screen describing the
+     request BEFORE this one -- a confirmation that states the wrong
+     destination or the wrong lines is the exact accident it exists to stop. ]]
+step("a failed open leaves the dialog down, not showing the last request", function()
+  local ctx = { metrics = { "damage" }, encounters = {}, label = "A",
+                filter = {}, petMode = "merge" }
+  UI.ConfirmAnnounce({ "line" }, "GUILD", nil, function() end, ctx)
+  local dlg = _G["WrekkitConfirm"]
+  if not dlg:IsShown() then error("the dialog did not open at all") end
+
+  local realSetText = dlg.who.SetText
+  dlg.who.SetText = function() error("broken on purpose") end
+  local ok = pcall(UI.ConfirmAnnounce, { "other" }, "SAY", nil, function() end, ctx)
+  dlg.who.SetText = realSetText
+  if ok then error("the sabotaged open did not fail") end
+  if dlg:IsShown() then
+    error("the dialog is still up, still describing the previous request")
+  end
+end)
+
+--[[ The picker is hidden on purpose for a drilldown, and that is the only
+     reason it should ever be missing. Assert both halves, because "no option
+     to choose what to announce" is indistinguishable, on screen, from the
+     dialog failing to lay itself out. ]]
+step("the picker shows for a view and hides for a drilldown", function()
+  local base = { metrics = { "damage" }, encounters = {}, label = "A",
+                 filter = {}, petMode = "merge" }
+  UI.ConfirmAnnounce({ "line" }, "GUILD", nil, function() end, base)
+  local dlg = _G["WrekkitConfirm"]
+  for _, chk in ipairs(dlg.metricChecks) do
+    if not chk:IsShown() then error("the picker is missing for a plain view") end
+  end
+  if not dlg.countStepper:IsShown() then error("Top N is missing for a plain view") end
+  UI.CloseConfirm()
+
+  local drilled = { metrics = { "damage" }, encounters = {}, label = "A",
+                    filter = {}, petMode = "merge", drill = "Salahaja" }
+  UI.ConfirmAnnounce({ "line" }, "GUILD", nil, function() end, drilled)
+  for _, chk in ipairs(dlg.metricChecks) do
+    if chk:IsShown() then error("the picker is offered for a drilldown") end
+  end
   UI.CloseConfirm()
 end)
 

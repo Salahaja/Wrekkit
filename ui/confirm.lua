@@ -39,6 +39,26 @@ local ANNOUNCE_METRICS = {
 
 local dialog
 
+--[[ What the picker has ticked, and how many lines it will post.
+
+     Module state, not fields on the dialog frame, because the checkbox
+     getters below read this every time a tick refreshes -- while the dialog
+     is still being built, and again on every open. Keeping it on the frame
+     made something the widgets read unconditionally into something two
+     separate functions had to have assigned first, and "attempt to index a
+     nil value" inside the getter is exactly what that looks like when the
+     assumption does not hold in the client. Declared here, it exists from
+     the moment the file loads and there is no ordering left to get wrong.
+
+     Emptied in place rather than replaced, so the table the frame and the
+     tests hold on to stays the one the widgets are reading. ]]
+local picked = {}        -- metric key -> true, which ticks are lit
+local topCount = 5       -- what the Top N stepper shows
+
+local function resetPicked()
+  for k in pairs(picked) do picked[k] = nil end
+end
+
 ----------------------------------------------------------------------
 
 --- Plain-language description of who is about to read this.
@@ -130,16 +150,16 @@ local function build()
        Live state is deliberately not stored anywhere: these reset from the
        view every time the dialog opens, so yesterday's choice cannot
        silently decide today's post. ]]
-  f.picked = {}
+  f.picked = picked   -- the same table, exposed for tests and debugging
   f.metricChecks = {}
   local COLS, COL_W = 3, 128
   for i, m in ipairs(ANNOUNCE_METRICS) do
     local col = math.mod(i - 1, COLS)
     local row = math.floor((i - 1) / COLS)
     local chk = UI.Check(f, m.label,
-      function() return f.picked[m.key] == true end,
+      function() return picked[m.key] == true end,
       function(v)
-        f.picked[m.key] = v or nil
+        picked[m.key] = v or nil
         if f.Rebuild then f:Rebuild() end
       end)
     chk:SetWidth(COL_W)
@@ -149,9 +169,9 @@ local function build()
   end
 
   f.countStepper = UI.Stepper(f, "Top",
-    function() return f.count or 5 end,
+    function() return topCount end,
     function(v)
-      f.count = v
+      topCount = v
       if f.Rebuild then f:Rebuild() end
     end,
     1, MAX_LINES_PICK, 1,
@@ -202,6 +222,12 @@ end
 --- Show the gate. onAccept(target) fires only on an explicit Send.
 function UI.ConfirmAnnounce(lines, channel, target, onAccept, ctx)
   local f = build()
+  --[[ Hidden while it is reconfigured, shown again only once it is fully
+       painted at the bottom of this function. If anything in between fails,
+       the dialog stays down rather than sitting on screen still describing
+       the PREVIOUS request -- which is the one outcome a confirmation step
+       must never produce. ]]
+  f:Hide()
   local A = W.announce
 
   local shown = table.getn(lines)
@@ -217,26 +243,14 @@ function UI.ConfirmAnnounce(lines, channel, target, onAccept, ctx)
   --[==[ Seed the picker from what is on screen. Reset every open on
          purpose: a sticky selection would let a choice made for one pull
          quietly decide the next post. ]==]
-  f.picked = {}
+  resetPicked()
   if ctx then
     for _, k in ipairs(ctx.metrics or { ctx.metric or "damage" }) do
-      f.picked[k] = true
+      picked[k] = true
     end
   end
-  f.count = (ctx and ctx.count) or (W.db and W.db.announceCount) or 5
+  topCount = (ctx and ctx.count) or (W.db and W.db.announceCount) or 5
 
-  --[[ Push the reseeded values into the widgets.
-
-       The dialog is a single reused frame, so these controls outlive the
-       request that configured them. Resetting f.picked and f.count alone
-       changes what Send would do without changing what the dialog SHOWS --
-       the ticks and the number would still be last time's, which is the
-       worst possible failure for a confirmation step: it would be lying
-       about what it is going to post. ]]
-  for _, chk in ipairs(f.metricChecks) do
-    if chk.Refresh then chk:Refresh() end
-  end
-  if f.countStepper and f.countStepper.Refresh then f.countStepper:Refresh() end
 
   -- whisper needs a name before Send means anything
   local needsTarget = (channel == "WHISPER")
@@ -268,6 +282,9 @@ function UI.ConfirmAnnounce(lines, channel, target, onAccept, ctx)
         chk:SetPoint("TOPLEFT", top, needsTarget and "BOTTOMLEFT" or "BOTTOMLEFT",
           (needsTarget and -12 or 12) + chk._col * 128, -8 - chk._row * 20)
         chk:Show()
+        -- Drawn and synced in one place: a control that is placed but still
+        -- showing the last request's tick is a confirmation step telling a lie.
+        chk:Refresh()
       end
       local rows = math.ceil(table.getn(f.metricChecks) / 3)
       controlH = rows * 20 + 8
@@ -276,6 +293,7 @@ function UI.ConfirmAnnounce(lines, channel, target, onAccept, ctx)
       f.countStepper:SetPoint("TOPLEFT", top, "BOTTOMLEFT",
         (needsTarget and -12 or 12), -8 - rows * 20 - 4)
       f.countStepper:Show()
+      f.countStepper:Refresh()
       controlH = controlH + 24
 
       f.viewNote:ClearAllPoints()
@@ -348,13 +366,13 @@ function UI.ConfirmAnnounce(lines, channel, target, onAccept, ctx)
     if not ctx then return end
     local chosen = {}
     for _, m in ipairs(ANNOUNCE_METRICS) do
-      if f.picked[m.key] then table.insert(chosen, m.key) end
+      if picked[m.key] then table.insert(chosen, m.key) end
     end
     local probe = {}
     for k, v in pairs(ctx) do probe[k] = v end
     probe.metrics = chosen
     probe.metric = chosen[1] or ctx.metric
-    paint(W.announce:Lines(probe, f.count))
+    paint(W.announce:Lines(probe, topCount))
   end
 
   paint(lines)

@@ -14,7 +14,14 @@ whole file, so tools/vanilla_lint.lua guards the release.
 ]]
 
 Wrekkit = {}
-Wrekkit.version = "0.1.0"
+
+--[[ Read from the .toc instead of repeating it here. This was a second copy of
+     the version, and a second copy is one that goes stale: it still said 0.1.0
+     after the .toc went to 0.1.1, so /wrek status -- the one thing asked for
+     when reporting a bug -- named a build that was not running, and the peers
+     sync told everyone else the same wrong number. ]]
+Wrekkit.version = (GetAddOnMetadata and GetAddOnMetadata("Wrekkit", "Version"))
+                  or "unknown"
 
 local W = Wrekkit
 
