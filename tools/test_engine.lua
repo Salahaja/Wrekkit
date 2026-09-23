@@ -1988,8 +1988,6 @@ check("and reached the view the window reads",
 Wrekkit.ResetData("all")
 end
 
-print(string.format("\n%d passed, %d failed\n", pass, fail))
-
 ----------------------------------------------------------------------
 print("\n-- aura uptime --")
 ----------------------------------------------------------------------
@@ -2075,4 +2073,7 @@ fire("PLAYER_REGEN_ENABLED")
 Wrekkit.encounter:Finish()
 Wrekkit.ResetData("all")
 end
+
+print(string.format("\n%d passed, %d failed\n", pass, fail))
+
 if fail > 0 then os.exit(1) end
