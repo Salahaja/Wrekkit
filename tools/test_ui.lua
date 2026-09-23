@@ -1977,5 +1977,121 @@ step("the bar clamps and quantises like the client", function()
   bar:Refresh()
 end)
 
+--[[ The settings window must fit the screen at every text size.
+
+     In one column it did not: 478px at the default and 777px at 180%, on a
+     768px screen, with the bottom controls unreachable and no way to scroll
+     to them. Two columns halve it. This guards the property rather than the
+     number, so adding settings later fails here instead of in the game. ]]
+
+step("the settings window fits the screen at any text size", function()
+  local realScale = Wrekkit.db.fontScale
+  for _, scale in ipairs({ 1.0, 1.2, 1.5, 1.8 }) do
+    Wrekkit.db.fontScale = scale
+    UI.ApplyFontScale()
+
+    -- Rebuild from scratch: the window sizes itself while stacking.
+    UI.settings.frame = nil
+    local win = UI.settings:Create()
+    local h = win:GetHeight() or 0
+
+    if h <= 0 then error("the settings window has no height at " .. scale .. "x") end
+    if h > 700 then
+      error(string.format("%.1fx text makes it %dpx tall, past a 768px screen",
+        scale, h))
+    end
+  end
+  Wrekkit.db.fontScale = realScale
+  UI.ApplyFontScale()
+end)
+
+step("settings controls are laid out in two columns", function()
+  UI.settings.frame = nil
+  UI.settings:Create()
+
+  -- Paired controls must sit at two distinct x offsets, or the "columns"
+  -- are one column wearing a hat.
+  local xs = {}
+  for _, c in ipairs(UI.settings.controls) do
+    local p = c._points and c._points[1]
+    if p and p[4] then xs[p[4]] = (xs[p[4]] or 0) + 1 end
+  end
+
+  local distinct = 0
+  for _ in pairs(xs) do distinct = distinct + 1 end
+  if distinct < 2 then
+    error("every control shares one x offset; nothing was paired")
+  end
+end)
+
+--[[ The window has to get WIDER with the text, not just taller.
+
+     Control heights are fixed literals, so a larger text size never grew the
+     window -- it only grew the labels inside a window that stayed 310px. At
+     180% the longest label wanted 259px of a column that would not give it,
+     and it ran into the value beside it. ]]
+
+step("the settings window widens with the text size", function()
+  local real = Wrekkit.db.fontScale
+
+  Wrekkit.db.fontScale = 1
+  UI.ApplyFontScale()
+  UI.settings.frame = nil
+  local narrow = UI.settings:Create():GetWidth()
+
+  Wrekkit.db.fontScale = 1.8
+  UI.ApplyFontScale()
+  UI.settings:Layout()
+  local wide = UI.settings.frame:GetWidth()
+
+  Wrekkit.db.fontScale = real
+  UI.ApplyFontScale()
+  UI.settings:Layout()
+
+  if not (wide > narrow) then
+    error(string.format("1.8x text gave %dpx, same as %dpx at 1.0x",
+      wide or 0, narrow or 0))
+  end
+end)
+
+step("a column stays wide enough for the longest label", function()
+  local real = Wrekkit.db.fontScale
+  Wrekkit.db.fontScale = 1.8
+  UI.ApplyFontScale()
+  UI.settings.frame = nil
+  UI.settings:Create()
+
+  -- "Record open-world combat" is the longest, ~6px a character at 1.0.
+  local needed = string.len("Record open-world combat") * 6 * 1.8
+  local widest = 0
+  for _, c in ipairs(UI.settings.controls) do
+    local w = c:GetWidth() or 0
+    if w > widest then widest = w end
+  end
+
+  Wrekkit.db.fontScale = real
+  UI.ApplyFontScale()
+  UI.settings.frame = nil
+  UI.settings:Create()
+
+  if widest < needed then
+    error(string.format("columns are %dpx but the longest label needs %d",
+      widest, needed))
+  end
+end)
+
+step("re-laying out does not multiply the control list", function()
+  UI.settings.frame = nil
+  UI.settings:Create()
+  local before = table.getn(UI.settings.items)
+  UI.settings:Layout()
+  UI.settings:Layout()
+  local after = table.getn(UI.settings.items)
+  if after ~= before then
+    error(string.format("items grew from %d to %d across two layouts",
+      before, after))
+  end
+end)
+
 print(string.format("\n%d passed, %d failed  (%d frames created)\n", pass, fail, calls))
 if fail > 0 then os.exit(1) end

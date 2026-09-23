@@ -17,9 +17,43 @@ local UI = W.ui
 UI.settings = {}
 local S = UI.settings
 
-local WIDTH = 310
+--[[ Two columns, not one.
+
+     A single column made a tall, narrow window, and narrow was the problem:
+     every label scales with the text-size setting while the window did not.
+     Pairing the controls buys the width back and halves the height, so
+     nothing has to scroll or hide.
+
+     Worth being precise, since it is easy to assume otherwise: control
+     HEIGHTS here are fixed literals (18, 20, 30) and do NOT scale with the
+     text. Only the text inside them does. So the window never grew taller
+     at a larger setting -- it grew tighter, and the labels ran into the
+     values beside them. ]]
+local COLS = 2
+local COL_GAP = 18
+
+--[[ The width has to move with the text.
+
+     It was a fixed 310px while every label scaled with the text-size
+     setting, so at 180% "Record open-world combat" wanted 259px of a column
+     that was not going to give it. Control HEIGHTS are fixed literals and do
+     not scale, so the window never grew taller -- it just got tighter, and
+     the labels ran into the values beside them.
+
+     Capped against the screen, because scaling without a ceiling would walk
+     the window off the edge at large text on a small resolution. ]]
+local BASE_WIDTH = 560
 local PAD = 14
 local GAP = 3
+
+local function windowWidth()
+  local w = BASE_WIDTH * (UI.FontScale and UI.FontScale() or 1)
+  local screen = UIParent and UIParent:GetWidth() or 1024
+  local ceiling = screen - 40
+  if w > ceiling then w = ceiling end
+  if w < BASE_WIDTH then w = BASE_WIDTH end
+  return math.floor(w)
+end
 
 ----------------------------------------------------------------------
 -- helpers
@@ -32,34 +66,95 @@ local GAP = 3
      probed for with `control.Refresh`, because asking a frame whether it has
      a method is indistinguishable from calling one that does not exist --
      the caller already knows which controls are live. ]]
-local function stack(self, control, extraGap, live)
-  control:SetPoint("TOPLEFT", self.body, "TOPLEFT", PAD, -self.y)
-  control:SetPoint("TOPRIGHT", self.body, "TOPRIGHT", -PAD, -self.y)
-  self.y = self.y + control:GetHeight() + GAP + (extraGap or 0)
+local function columnWidth()
+  return (windowWidth() - PAD * 2 - COL_GAP * (COLS - 1)) / COLS
+end
+
+--- Close the row being filled, if any, and drop to the next one.
+local function endRow(self, extraGap)
+  if self.col > 0 then
+    self.y = self.y + self.rowH + GAP + (extraGap or 0)
+    self.col, self.rowH = 0, 0
+    return true
+  end
+  return false
+end
+
+--[[ Place a control, either in the next column or across the whole row.
+
+     `live` marks the ones that mirror a setting and therefore need
+     re-reading when the window opens. It is passed explicitly rather than
+     probed for with `control.Refresh`, because asking a frame whether it has
+     a method is indistinguishable from calling one that does not exist --
+     the caller already knows which controls are live.
+
+     `full` is for anything that needs the width: a heading, which labels
+     everything under it, and a slider, whose track is the control. Placing
+     one closes whatever row was half-filled, so a heading can never end up
+     beside the last setting of the section above it. ]]
+local function position(self, control, full, extraGap)
+  if full then endRow(self) end
+
+  local w = columnWidth()
+  local x = PAD + self.col * (w + COL_GAP)
+  control:SetPoint("TOPLEFT", self.body, "TOPLEFT", x, -self.y)
+
+  if full then
+    control:SetPoint("TOPRIGHT", self.body, "TOPRIGHT", -PAD, -self.y)
+  else
+    control:SetWidth(w)
+  end
+
+  local h = control:GetHeight() or 18
+  if h > self.rowH then self.rowH = h end
+
+  if full then
+    self.y = self.y + h + GAP + (extraGap or 0)
+    self.col, self.rowH = 0, 0
+  else
+    self.col = self.col + 1
+    if self.col >= COLS then endRow(self, extraGap) end
+  end
+
+  return control
+end
+
+--[[ Position a control AND remember it.
+
+     The two are deliberately separate calls. Layout re-runs the positioning
+     over the list, so if positioning also recorded, every re-layout would
+     append the whole window to the list it was iterating -- a loop with no
+     end, which is exactly what happened the first time this was written. ]]
+local function place(self, control, live, full, extraGap)
+  position(self, control, full, extraGap)
   if live then table.insert(self.controls, control) end
+  table.insert(self.items, { control = control, full = full, gap = extraGap })
   return control
 end
 
 local function heading(self, label)
-  return stack(self, UI.Heading(self.body, label), 2, false)
+  return place(self, UI.Heading(self.body, label), false, true, 2)
 end
 
 local function check(self, label, get, set, tip)
-  return stack(self, UI.Check(self.body, label, get, set, tip), 0, true)
+  return place(self, UI.Check(self.body, label, get, set, tip), true, false)
 end
 
 local function stepper(self, label, get, set, min, max, step, fmt)
-  return stack(self, UI.Stepper(self.body, label, get, set, min, max, step, fmt),
-    0, true)
+  return place(self, UI.Stepper(self.body, label, get, set, min, max, step, fmt),
+    true, false)
 end
 
+--- Full width: the track IS the control, and half a window is not enough
+--- of it to drag meaningfully.
 local function slider(self, label, get, set, min, max, step, fmt)
-  return stack(self, UI.Slider(self.body, label, get, set, min, max, step, fmt),
-    0, true)
+  return place(self, UI.Slider(self.body, label, get, set, min, max, step, fmt),
+    true, true)
 end
 
 local function choice(self, label, options, get, set, tip)
-  return stack(self, UI.Choice(self.body, label, options, get, set, tip), 0, true)
+  return place(self, UI.Choice(self.body, label, options, get, set, tip),
+    true, false)
 end
 
 ----------------------------------------------------------------------
@@ -69,8 +164,8 @@ end
 function S:Create()
   if self.frame then return self.frame end
 
-  local f = UI.Window("WrekkitSettings", WIDTH, 200, "Wrekkit Settings", {
-    minW = WIDTH, minH = 200,
+  local f = UI.Window("WrekkitSettings", windowWidth(), 200, "Wrekkit Settings", {
+    minW = windowWidth(), minH = 200,
     -- Above both windows: it is opened from them and must not hide behind.
     strata = "DIALOG",
   })
@@ -88,7 +183,12 @@ function S:Create()
 
   self.body = f.body
   self.controls = {}
+  self.items = {}
   self.y = PAD
+  -- Which column the next control goes in, and how tall the row it is in
+  -- has grown so far. A row is only as tall as its tallest control.
+  self.col = 0
+  self.rowH = 0
 
   local meter = UI.meter
 
@@ -109,6 +209,10 @@ function S:Create()
       W.db.fontScale = v / 100
       UI.ApplyFontScale()
       meter:ApplyLayout()
+      -- This window is built once, so it has to be told to re-flow at the
+      -- new size; otherwise the control you just used is the one that
+      -- stops fitting.
+      S:Layout()
     end,
     70, 180, 5,
     function(v) return v .. "%" end)
@@ -235,7 +339,8 @@ function S:Create()
   ------------------------------------------------------------------
   local row = CreateFrame("Frame", nil, self.body)
   row:SetHeight(22)
-  stack(self, row, 4, false)
+  -- Full width: the buttons sit along it, and it closes the last column row.
+  place(self, row, false, true, 4)
 
   local saveBtn = UI.Button(row, "Save now", 72, 20, function()
     W.Guard("settings save", function() W.store:Save() end)
@@ -267,8 +372,34 @@ function S:Create()
   peersBtn:SetPoint("LEFT", statusBtn, "RIGHT", 5, 0)
 
   ------------------------------------------------------------------
-  f:SetHeight(self.y + PAD + (f.bar:GetHeight() or 26))
+  -- A half-filled last row still occupies height; without this the
+  -- window would clip whatever is sitting in it.
+  self:Layout()
   return f
+end
+
+--[[ Re-place every control at the current text size.
+
+     Cheap: it moves frames that already exist rather than building any, so
+     it can run whenever the window opens or the text size changes. ]]
+function S:Layout()
+  local f = self.frame
+  if not f or not self.items then return end
+
+  local w = windowWidth()
+  f:SetWidth(w)
+  if f.SetMinResize then f:SetMinResize(w, 200) end
+
+  self.y = PAD
+  self.col = 0
+  self.rowH = 0
+
+  for _, item in ipairs(self.items) do
+    position(self, item.control, item.full, item.gap)
+  end
+
+  endRow(self)
+  f:SetHeight(self.y + PAD + (f.bar:GetHeight() or 26))
 end
 
 ----------------------------------------------------------------------
