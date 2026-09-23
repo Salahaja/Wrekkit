@@ -448,7 +448,7 @@ function R:Create()
       W.Guard("tab click", function()
         if not R.state then R.state = {} end
         R.state.tab = btn.tabKey or "summary"
-        R.state.drill = nil
+        R.state.drill = nil R.state.deathDrill = nil
         if btn.tabMetric then R.state.sortKey = btn.tabMetric end
         R:Refresh()
       end)
@@ -563,7 +563,7 @@ local function paintRow(row, item, index)
   row:SetScript("OnClick", function()
     W.Guard("row click", function()
       if arg1 == "RightButton" then
-        R.state.drill = nil
+        R.state.drill = nil R.state.deathDrill = nil
       else
         R.state.drill = (R.state.drill == item.key) and nil or item.key
       end
@@ -584,7 +584,7 @@ local function paintAbilityRow(row, item, index)
     local btn = this or row
     W.Guard("ability click", function()
       if arg1 == "RightButton" then
-        R.state.drill = nil
+        R.state.drill = nil R.state.deathDrill = nil
         R.state.drillAbility = nil
       else
         R.state.drillAbility = btn.abilityId
@@ -824,10 +824,44 @@ function R:FillDeaths(view)
   self.mainPane.titleText:SetText("Deaths")
   self.mainPane.totalText:SetText(table.getn(deaths) .. " total")
 
+  -- Drilled into, like every other row in this window. A death list
+  -- answers "who"; the question after a wipe is "what happened". Clicking
+  -- again backs out, matching the ability drilldown, so there is one way
+  -- back rather than two.
+  if self.state.deathDrill then
+    local target
+    for _, d in ipairs(deaths) do
+      if (tostring(d.name) .. ":" .. tostring(d.t)) == self.state.deathDrill then
+        target = d
+      end
+    end
+
+    if target then
+      self.mainPane.titleText:SetText(
+        (target.name or "?") .. " died at " .. W.Clock(target.t or 0))
+      self.mainPane.totalText:SetText("click to go back")
+      self.mainList:SetData(W.report:DeathRecap(target), function(row, st, i)
+        row:SetData(nil, st.label, st.value, st.note or "", 0,
+          W.ClassColor(target.class), 110)
+        row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+        row:SetScript("OnClick", function()
+          R.state.deathDrill = nil
+          R:Refresh()
+        end)
+      end)
+      return
+    end
+    self.state.deathDrill = nil
+  end
+
   self.mainList:SetData(deaths, function(row, d, index)
     row:SetData(index, d.name or "?", W.Clock(d.t or 0), d.encounter or "",
       0, W.ClassColor(d.class), 110)
-    row:SetScript("OnClick", nil)
+    row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    row:SetScript("OnClick", function()
+      R.state.deathDrill = tostring(d.name) .. ":" .. tostring(d.t)
+      R:Refresh()
+    end)
   end)
 end
 

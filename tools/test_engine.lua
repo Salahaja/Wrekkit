@@ -1727,6 +1727,7 @@ Wrekkit.ResetData("all")
 ----------------------------------------------------------------------
 print("\n-- combat log range --")
 ----------------------------------------------------------------------
+do
 
 --[[ The client only reports combat within CombatLogRange, and its default
      on this client is 30 yards. Anyone further away generates no events at
@@ -1770,9 +1771,12 @@ CVARS = { CombatLogRangeCreature = "30" }
 check("status can read the range back", Wrekkit.capture:CombatLogRange(), 30)
 CVARS = {}
 
+end
+
 ----------------------------------------------------------------------
 print("\n-- history eviction --")
 ----------------------------------------------------------------------
+do
 
 --[[ A ring buffer silently dropping the oldest pull is correct for a buffer
      and wrong for a log. Someone raiding all week has no way to know their
@@ -1836,9 +1840,12 @@ Wrekkit.db.maxEncounters = nil
 Wrekkit.encounter.warnedEviction = nil
 Wrekkit.ResetData("all")
 
+end
+
 ----------------------------------------------------------------------
 print("\n-- per-second basis --")
 ----------------------------------------------------------------------
+do
 
 --[[ Skada divides by the length of the fight, Recount by the seconds the
      player actually acted. The two genuinely disagree, and a player who
@@ -1904,5 +1911,82 @@ Wrekkit.db.dpsBasis = nil
 check("no active time falls back to the fight length", v, 100)
 
 Wrekkit.ResetData("all")
+
+end
+
+----------------------------------------------------------------------
+print("\n-- death recap --")
+----------------------------------------------------------------------
+do
+
+-- The question after a wipe is not who died, it is what the last few
+-- seconds looked like. The ring keeps being overwritten as the fight goes
+-- on, so the snapshot has to be taken AT the death and copied, not
+-- referenced -- otherwise it would describe whatever happened next.
+
+Wrekkit.ResetData("all")
+IN_COMBAT = true
+fire("PLAYER_REGEN_DISABLED")
+
+Wrekkit.encounter:Damage("0xBoss", "0xP1", 11605, 300, {})
+advance(1)
+Wrekkit.encounter:Damage("0xBoss", "0xP1", 99001, 450, {})
+advance(1)
+Wrekkit.encounter:Damage("0xBoss", "0xP1", 11605, 900, {})
+Wrekkit.encounter:Death("0xP1")
+
+local live = Wrekkit.encounter.live
+local death = live.deaths[1]
+check("the death was recorded", death ~= nil, true)
+check("with a recap attached", death.recap ~= nil, true)
+check("holding the hits before it", table.getn(death.recap) >= 3, true)
+
+local last = death.recap[table.getn(death.recap)]
+check("the killing blow is last", last.a, 900)
+check("and names what did it", last.src, "Onyxia")
+
+-- Hits AFTER the death must not rewrite what killed them.
+local before = table.getn(death.recap)
+for i = 1, 12 do
+  advance(1)
+  Wrekkit.encounter:Damage("0xBoss", "0xP1", 11605, 5, {})
+end
+check("the snapshot did not drift", table.getn(death.recap), before)
+check("and still ends on the killing blow",
+  death.recap[table.getn(death.recap)].a, 900)
+
+-- The ring is bounded, however long the fight runs.
+local act = live.actors["0xP1"]
+local ringSize = 0
+for _ in pairs(act.recent or {}) do ringSize = ringSize + 1 end
+check("the ring stays bounded", ringSize <= 8, true)
+
+-- And it formats into something readable.
+local rows = Wrekkit.report:DeathRecap(death)
+check("the recap renders rows", table.getn(rows) >= 3, true)
+check("timed relative to the death",
+  string.find(rows[1].label, "^%-%d") ~= nil, true)
+
+-- A death with nothing recorded says so rather than showing an empty box.
+local empty = Wrekkit.report:DeathRecap({ t = 5, recap = {} })
+check("an empty recap explains itself", table.getn(empty), 1)
+
+advance(8)
+Wrekkit.encounter:Damage("0xP1", "0xBoss", 11267, 100, {})
+IN_COMBAT = false
+fire("PLAYER_REGEN_ENABLED")
+Wrekkit.encounter:Finish()
+
+local stored = Wrekkit.db.encounters[table.getn(Wrekkit.db.encounters)]
+local sd = stored and stored.deaths and stored.deaths[1]
+check("the recap survived persisting", sd and sd.recap and table.getn(sd.recap) >= 3, true)
+
+local view = Wrekkit.report:View({ stored }, { petMode = "merge" })
+check("and reached the view the window reads",
+  view.deaths[1] and view.deaths[1].recap ~= nil, true)
+
+Wrekkit.ResetData("all")
+end
+
 print(string.format("\n%d passed, %d failed\n", pass, fail))
 if fail > 0 then os.exit(1) end

@@ -380,6 +380,39 @@ local function noteActive(a, enc, now)
   end
 end
 
+--- How many hits before a death the recap keeps.
+local RECAP_HITS = 8
+
+--- Remember the last few hits this actor took, oldest overwritten first.
+--- A fixed ring rather than a growing list: this runs on every hit taken by
+--- every player in the raid, and only the tail is ever read.
+local function noteRecent(a, enc, now, srcName, spell, amount, overkill)
+  if not a.recent then a.recent = {} a.recentAt = 0 end
+  a.recentAt = math.mod(a.recentAt or 0, RECAP_HITS) + 1
+  a.recent[a.recentAt] = {
+    t = now - enc.startT,
+    src = srcName,
+    spell = spell,
+    a = amount,
+    hp = a.health,
+  }
+end
+
+--- The ring read out oldest-first, which is the order a recap is read in.
+local function recentInOrder(a)
+  if not a.recent then return {} end
+  local out = {}
+  local n = RECAP_HITS
+  local at = a.recentAt or 0
+  for i = 1, n do
+    local idx = math.mod(at + i - 1, n) + 1
+    local e = a.recent[idx]
+    if e then table.insert(out, e) end
+  end
+  table.sort(out, function(x, y) return (x.t or 0) < (y.t or 0) end)
+  return out
+end
+
 local function bucketFor(enc, now)
   local i = math.floor(now - enc.startT)
   if i < 0 then i = 0 end
@@ -568,6 +601,9 @@ function E:Damage(sourceGuid, targetGuid, spellId, amount, info)
       -- Recorded from the victim's side: the source is whatever hit them,
       -- which is how the readout can say who was attacking whom.
       contribute(b, "t", sourceGuid, targetGuid, spellId, amount)
+      -- Remember the hit itself, so a death can be explained afterwards.
+      local su = W.capture.units[sourceGuid]
+      noteRecent(dst, enc, now, (su and su.name) or "?", spellName, amount)
     end
 
     -- Track the biggest thing we fought so the encounter can be named.
@@ -698,11 +734,23 @@ function E:Death(guid)
 
   a.deaths = a.deaths + 1
   if a.isPlayer then
+    --[[ Snapshot what killed them WHILE it is still known.
+
+         The ring keeps being overwritten as the fight goes on, so reading
+         it later would describe whatever happened next rather than what
+         happened last. Copied, not referenced, for the same reason. ]]
+    local recap = {}
+    for _, e in ipairs(recentInOrder(a)) do
+      table.insert(recap, { t = e.t, src = e.src, spell = e.spell,
+                            a = e.a, hp = e.hp })
+    end
+
     table.insert(enc.deaths, {
       t = GetTime() - enc.startT,
       guid = guid,
       name = a.name,
       class = a.class,
+      recap = recap,
     })
   else
     -- An enemy dying is how we learn the pull was a kill.

@@ -216,6 +216,9 @@ function R:View(encounters, opts)
     for _, d in ipairs(enc.deaths or {}) do
       table.insert(view.deaths, {
         t = (d.t or 0) + off, name = d.name, class = d.class, encounter = enc.name,
+        -- Carried through, or clicking a death in the report finds nothing
+        -- to show: the window reads the view, not the encounter behind it.
+        recap = d.recap,
       })
     end
 
@@ -432,6 +435,41 @@ end
      For healing, the spread is measured on raw output (effective plus
      overheal), which is what the spell actually did; effective healing is
      reported separately above it. ]]
+--[[ What killed someone, as lines.
+
+     The question after a wipe is never "who died" -- the raid watched that
+     happen. It is what the last few seconds looked like, which is why every
+     meter people rate has a version of this, and why it is the feature they
+     name first when asked what they use.
+
+     Oldest first, so it reads as a sequence rather than a list. ]]
+function R:DeathRecap(death)
+  local rows = {}
+  if not death then return rows end
+
+  local last = death.t or 0
+  for _, e in ipairs(death.recap or {}) do
+    local ago = last - (e.t or 0)
+    local who = e.src or "?"
+    if e.spell and e.spell ~= "" and e.spell ~= "Melee" then
+      who = who .. "  " .. e.spell
+    end
+    table.insert(rows, {
+      label = string.format("-%.1fs  %s", ago, who),
+      value = W.Comma(e.a or 0),
+      note = e.hp and ("hp " .. W.Short(e.hp)) or nil,
+    })
+  end
+
+  if table.getn(rows) == 0 then
+    table.insert(rows, {
+      label = "nothing was recorded in the seconds before this",
+      value = "",
+    })
+  end
+  return rows
+end
+
 function R:AbilityStats(a, metricKey)
   if not a then return {} end
   local metric = W.metrics.Get(metricKey)
