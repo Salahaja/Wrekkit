@@ -781,6 +781,30 @@ function E:CloseAuras(enc)
   end
 end
 
+--[[ Someone else's own totals, for a pull we are both in.
+
+     Kept apart from actors on purpose. These were asserted by another
+     client rather than observed by this one, so they must never overwrite
+     something measured here: the merge takes them only where local
+     observation is missing or smaller, and the report marks them, so nobody
+     mistakes a report for a measurement. ]]
+function E:RemoteTotals(name, class, damage, healing, taken, active)
+  local enc = self.live
+  if not enc then return end
+  if not name or name == "" then return end
+
+  if not enc.remote then enc.remote = {} end
+  enc.remote[name] = {
+    name = name,
+    class = (class and class ~= "" and class) or "UNKNOWN",
+    damage = damage or 0,
+    healing = healing or 0,
+    taken = taken or 0,
+    active = active or 0,
+    at = GetTime(),
+  }
+end
+
 function E:Death(guid)
   local enc = self.live
   if not enc then return end
@@ -879,6 +903,9 @@ function E:HealStuckCombat()
 end
 
 function E:CombatStart()
+  -- Only while something is happening: reporting into an empty raid is
+  -- traffic nobody asked for.
+  if W.db and W.db.liveSync and W.sync then W.sync:StartLive() end
   if not self:ShouldRecord() then
     -- Say so once per zone. Silently recording nothing is the single most
     -- confusing way for this addon to behave.

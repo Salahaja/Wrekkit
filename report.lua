@@ -293,6 +293,47 @@ function R:View(encounters, opts)
         row.class = a.class
       end
     end
+
+    --[[ Fill gaps from what other players reported about themselves.
+
+         Strictly a gap-filler. A number measured here always wins, because
+         it was observed rather than asserted, and a raider sitting inside
+         our combat log range needs no help. Where we saw LESS than they
+         report -- the usual case for someone at the far end of a room --
+         their figure is used and the row is marked, so a report is never
+         mistaken for a measurement.
+
+         Taking the larger rather than summing matters: both numbers
+         describe the same damage, so adding them would double it. ]]
+    for name, rem in pairs(enc.remote or {}) do
+      local key = "p:" .. name
+      local row = view.index[key]
+      if not row then
+        row = blankRow({ name = name, class = rem.class, isPlayer = true }, key)
+        view.index[key] = row
+        table.insert(view.rows, row)
+      end
+
+      local filled = false
+      if (rem.damage or 0) > (row.damage or 0) then
+        row.damage = rem.damage filled = true
+      end
+      if (rem.healing or 0) > (row.healing or 0) then
+        row.healing = rem.healing filled = true
+      end
+      if (rem.taken or 0) > (row.taken or 0) then
+        row.taken = rem.taken filled = true
+      end
+      if (rem.active or 0) > (row.active or 0) then
+        row.active = rem.active
+      end
+      if filled then
+        row.remote = true
+        if row.class == "UNKNOWN" and rem.class ~= "UNKNOWN" then
+          row.class = rem.class
+        end
+      end
+    end
   end
 
   view.elapsed = (maxStop or 0) - (minStart or 0)

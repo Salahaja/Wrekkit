@@ -358,6 +358,8 @@ STUB.Minimap:SetWidth(140) STUB.Minimap:SetHeight(140)
 
 STUB.DEFAULT_CHAT_FRAME = { AddMessage = function() end }
 STUB.GameTooltip = { SetOwner = function() end, AddLine = function() end,
+                     AddDoubleLine = function() end,
+                     ClearLines = function() end,
                      Show = function() end, Hide = function() end }
 STUB.SlashCmdList = {}
 STUB.StaticPopupDialogs = {}
@@ -868,6 +870,61 @@ step("widget interactions", function()
         W.announce:Lines(ctx, 5)
       end
     end
+  end
+
+  -- Everything added since the last coverage pass. Driven here because an
+  -- unexercised function reads no globals at all, which is how MouseIsOver
+  -- once sat undeclared through a clean audit.
+  do
+    -- the aura dispatch entries themselves, not just the handler
+    do
+      local D = W.capture.dispatch
+      D.BUFF_ADDED_OTHER("0xA", 1, 17628)
+      D.BUFF_REMOVED_OTHER("0xA", 1, 17628)
+      D.DEBUFF_ADDED_SELF("0xA", 2, 11722)
+      D.DEBUFF_REMOVED_SELF("0xA", 2, 11722)
+    end
+
+    -- the meter's row tooltip
+    do
+      local rows = W.ui.meter.list and W.ui.meter.list.rows
+      local row = rows and rows[1]
+      if row and row._scripts and row._scripts.OnEnter then
+        row._scripts.OnEnter()
+        if row._scripts.OnLeave then row._scripts.OnLeave() end
+      end
+    end
+
+    -- auras, both directions, through the real dispatch
+    W.capture:Aura("0xP1", 17628, true)
+    W.capture:Aura("0xP1", 17628, false)
+    W.encounter:Aura("0xP1", 11722, true)
+    W.encounter:Aura("0xP1", 11722, false)
+
+    -- live sync, send and receive
+    W.db.shareEnabled = true
+    W.db.liveSync = true
+    W.sync:BroadcastMine()
+    W.encounter:RemoteTotals("Faraway", "MAGE", 100, 0, 0, 5)
+    W.db.liveSync = nil
+    W.db.shareEnabled = false
+
+    -- death recap rendering
+    W.report:DeathRecap({ t = 10, recap = {
+      { t = 8, src = "Onyxia", spell = "Flame Breath", a = 900, hp = 200 },
+    } })
+    W.report:DeathRecap({ t = 1 })
+
+    -- boss marking and the scope menu
+    W.SetBoss(W.db.encounters[1], true)
+    W.ui.report:SelectBosses()
+    W.ui.report:SelectTrash()
+    W.ui.report:SelectBossNamed("Onyxia")
+    W.ui.report:ToggleBossMark()
+    W.ui.report:BossNames()
+    W.ui.report:ScopeMenu()
+    W.ui.CloseMenu()
+    W.ui.report:SelectAll()
   end
 
   -- announce channel picker

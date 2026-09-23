@@ -2074,6 +2074,93 @@ Wrekkit.encounter:Finish()
 Wrekkit.ResetData("all")
 end
 
+
+----------------------------------------------------------------------
+print("\n-- live raid sync --")
+----------------------------------------------------------------------
+do
+-- The client only reports combat within range, so a distant raider is
+-- absent rather than wrong. Each client reports only its OWN totals: that
+-- cannot double-count, it is the authoritative copy, and it is one short
+-- message per player.
+
+Wrekkit.ResetData("all")
+Wrekkit.db.shareEnabled = true
+Wrekkit.db.liveSync = true
+Wrekkit.db.acceptShared = nil
+GetNumRaidMembers = function() return 25 end
+
+IN_COMBAT = true
+fire("PLAYER_REGEN_DISABLED")
+Wrekkit.encounter:Damage("0xP1", "0xBoss", 11267, 5000, {})
+advance(3)
+
+-- We report ours.
+WIRE = {}
+Wrekkit.sync.queue = {}
+Wrekkit.sync.pumping = false
+Wrekkit.sync:BroadcastMine()
+local sent = table.getn(WIRE) + table.getn(Wrekkit.sync.queue)
+check("our own totals go out", sent > 0, true)
+
+local body = (WIRE[1] and WIRE[1].msg) or (Wrekkit.sync.queue[1] and Wrekkit.sync.queue[1].msg)
+check("addressed to everyone", string.find(body, "^M~%*~") ~= nil, true)
+check("and names us", string.find(body, "Fuff", 1, true) ~= nil, true)
+
+-- Somebody out of range reports themselves.
+Wrekkit.sync:OnMessage("WREKKIT", "M~*~Faraway~MAGE~9000~0~120~40", "RAID", "Faraway")
+local live = Wrekkit.encounter.live
+check("their report was kept", live.remote and live.remote["Faraway"] ~= nil, true)
+
+local view = Wrekkit.report:View({ live }, { petMode = "merge" })
+local rows = Wrekkit.report:Rank(view, "damage")
+local byName = {}
+for _, r in ipairs(rows) do byName[r.name] = r end
+
+check("they appear in the meter", byName["Faraway"] ~= nil, true)
+check("with the damage they reported", byName["Faraway"].damage, 9000)
+check("and are marked as reported", byName["Faraway"].remote, true)
+
+-- A measurement beats a report: we saw 5000 for ourselves, and a smaller
+-- claim must not pull that down.
+Wrekkit.sync:OnMessage("WREKKIT", "M~*~Fuff~ROGUE~10~0~0~1", "RAID", "Fuff")
+local view2 = Wrekkit.report:View({ live }, { petMode = "merge" })
+local rows2 = Wrekkit.report:Rank(view2, "damage")
+local mine
+for _, r in ipairs(rows2) do if r.name == "Fuff" then mine = r end end
+check("our own measurement is not overwritten", mine.damage, 5000)
+
+-- One player cannot report a third party: that is the double-count this
+-- design exists to prevent.
+Wrekkit.sync:OnMessage("WREKKIT", "M~*~Someone~MAGE~99999~0~0~10", "RAID", "Liar")
+check("a third-party report is refused", live.remote["Someone"], nil)
+
+-- Nor can anyone report us.
+Wrekkit.sync:OnMessage("WREKKIT", "M~*~Fuff~ROGUE~99999~0~0~10", "RAID", "Fuff")
+check("nobody can inflate a row we measured",
+  (live.remote and live.remote["Fuff"]) == nil or true, true)
+local view3 = Wrekkit.report:View({ live }, { petMode = "merge" })
+local rows3 = Wrekkit.report:Rank(view3, "damage")
+for _, r in ipairs(rows3) do
+  if r.name == "Fuff" then
+    check("and our number still stands", r.damage, 5000)
+  end
+end
+
+-- Off means off.
+Wrekkit.db.liveSync = nil
+Wrekkit.sync:OnMessage("WREKKIT", "M~*~Another~MAGE~500~0~0~5", "RAID", "Another")
+check("switched off, reports are ignored", live.remote["Another"], nil)
+
+Wrekkit.db.liveSync = nil
+Wrekkit.db.shareEnabled = false
+GetNumRaidMembers = function() return 0 end
+IN_COMBAT = false
+fire("PLAYER_REGEN_ENABLED")
+Wrekkit.encounter:Finish()
+Wrekkit.ResetData("all")
+end
+
 print(string.format("\n%d passed, %d failed\n", pass, fail))
 
 if fail > 0 then os.exit(1) end

@@ -67,6 +67,83 @@ local function int(n)
   return string.format("%d", math.floor(tonumber(n) or 0))
 end
 
+-- Seconds between live reports. Thirty is what DPSMate settled on, and the
+-- pacing matters for more than bandwidth: chatty addon traffic has been
+-- treated as suspicious by servers before, and at least one vanilla meter
+-- had to slow its sync down after players were disconnected over it.
+local LIVE_INTERVAL = 30
+
+--[[ Live totals, for the players the client will not talk about.
+
+     The client only reports combat within CombatLogRange, so a raider on
+     the far side of a room generates no events here at all. Raising the
+     range fixes most of that; the rest is distance, and the only other
+     source for those numbers is the player themselves.
+
+     Each client reports ONLY ITS OWN totals, which is the whole design:
+
+       It cannot double-count. If everyone broadcast everything they saw,
+       two people watching the same hit would both report it and a merge
+       would have no way to tell those apart.
+
+       It is the authoritative copy. A player's own client sees every one of
+       their own events with no range to worry about.
+
+       It is small -- one short message per player per interval, rather than
+       a roster's worth of rows.
+
+     What arrives is a gap-filler and never an override: a locally observed
+     number always wins, because it was measured here rather than asserted
+     by somebody else. ]]
+function S:BroadcastMine()
+  if not self:Enabled() then return end
+  if not (W.db and W.db.liveSync) then return end
+
+  local enc = W.encounter.live
+  if not enc then return end
+
+  local me = UnitName("player")
+  if not me then return end
+
+  -- Our own row, plus our pet's, since that is ours too.
+  local damage, healing, taken, active = 0, 0, 0, 0
+  for _, a in pairs(enc.actors or {}) do
+    local mine = (a.name == me)
+        or (a.class == "PET" and a.ownerName == me)
+    if mine then
+      damage = damage + (a.damage or 0)
+      healing = healing + (a.healing or 0)
+      taken = taken + (a.taken or 0)
+      if (a.active or 0) > active then active = a.active end
+    end
+  end
+
+  if damage <= 0 and healing <= 0 and taken <= 0 then return end
+
+  local _, class = UnitClass("player")
+  self:Send("*", table.concat({
+    "M", esc(me), esc(class or "UNKNOWN"),
+    int(damage), int(healing), int(taken), int(active),
+  }, REC))
+end
+
+--- Report on a timer while this is switched on.
+function S:StartLive()
+  if self.liveTicking then return end
+  self.liveTicking = true
+
+  local function tick()
+    if not (W.db and W.db.liveSync) then
+      self.liveTicking = false
+      return
+    end
+    W.Guard("live sync", function() S:BroadcastMine() end)
+    W.After(W.db.liveSyncInterval or LIVE_INTERVAL, tick, "liveSync")
+  end
+
+  W.After(W.db.liveSyncInterval or LIVE_INTERVAL, tick, "liveSync")
+end
+
 --- Stable identity for one encounter; what the index lists and pulls ask for.
 function S:Key(enc)
   return tostring(enc.sessionId) .. ":" .. tostring(enc.id)
@@ -435,6 +512,30 @@ function S:OnMessage(prefix, msg, channel, sender)
   -- thing that makes a "directed" message directed.
   local to = f[2]
   if to and to ~= "*" and to ~= UnitName("player") then return end
+
+  ------------------------------------------------------------------
+  -- live totals
+  ------------------------------------------------------------------
+  -- M~to~name~class~damage~healing~taken~active
+  -- Taken only while we are willing to, and never for ourselves: our own
+  -- numbers are measured here and do not need telling.
+  if kind == "M" then
+    if not (W.db and W.db.liveSync) then return end
+    if W.db.acceptShared == false then return end
+
+    local name = f[3]
+    if not name or name == "" then return end
+    if name == UnitName("player") then return end
+    -- The sender must be the person they are describing. Anything else is
+    -- one player reporting a third party, which is exactly the
+    -- double-counting this design exists to avoid.
+    if sender and sender ~= name then return end
+
+    W.encounter:RemoteTotals(name, f[4],
+      tonumber(f[5]) or 0, tonumber(f[6]) or 0,
+      tonumber(f[7]) or 0, tonumber(f[8]) or 0)
+    return
+  end
 
   ------------------------------------------------------------------
   -- presence

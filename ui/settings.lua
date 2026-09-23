@@ -371,6 +371,23 @@ function S:Create()
     end,
     { "auto picks raid, else party, else guild." })
 
+  check(self, "Live raid sync",
+    function() return W.db.liveSync == true end,
+    function(v)
+      W.db.liveSync = v or nil
+      if v then W.sync:StartLive() end
+    end,
+    { "Each player reports only their OWN totals,",
+      "which fills in anyone the client cannot see",
+      "because they are out of log range. Needs",
+      "sharing on, and them running Wrekkit too." })
+
+  stepper(self, "Report every",
+    function() return W.db.liveSyncInterval or 30 end,
+    function(v) W.db.liveSyncInterval = v end,
+    10, 120, 5,
+    function(v) return v .. "s" end)
+
   check(self, "Accept logs from others",
     function() return W.db.acceptShares ~= false end,
     function(v) W.db.acceptShares = v end,
