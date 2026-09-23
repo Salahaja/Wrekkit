@@ -258,6 +258,22 @@ function S:Create()
       "with which spell, to whom. Costs storage:",
       "the busiest 60 seconds of each fight." })
 
+  choice(self, "Per-second basis",
+    {
+      { value = "combat", label = "combat time" },
+      { value = "active", label = "active time" },
+    },
+    function() return W.db.dpsBasis or "combat" end,
+    function(v)
+      W.db.dpsBasis = (v == "active") and "active" or nil
+      meter:Refresh()
+      if UI.report and UI.report.frame then UI.report:Refresh() end
+    end,
+    { "combat time divides by the length of the",
+      "fight, like Skada. active time divides by",
+      "the seconds each player was acting, like",
+      "Recount. They disagree; both are defensible." })
+
   check(self, "Raise the combat log range",
     function() return W.db.combatLogRange ~= false end,
     function(v)

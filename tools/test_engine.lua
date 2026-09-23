@@ -1835,5 +1835,74 @@ check("the locked pull survived eviction", keptLocked, true)
 Wrekkit.db.maxEncounters = nil
 Wrekkit.encounter.warnedEviction = nil
 Wrekkit.ResetData("all")
+
+----------------------------------------------------------------------
+print("\n-- per-second basis --")
+----------------------------------------------------------------------
+
+--[[ Skada divides by the length of the fight, Recount by the seconds the
+     player actually acted. The two genuinely disagree, and a player who
+     stood around for half a pull is where you see it. ]]
+
+Wrekkit.ResetData("all")
+Wrekkit.db.dpsBasis = nil
+
+IN_COMBAT = true
+fire("PLAYER_REGEN_DISABLED")
+
+-- Ten seconds of fight. Fuff swings throughout; Elfpriest acts for two.
+for sec = 1, 10 do
+  Wrekkit.encounter:Damage("0xP1", "0xBoss", 11267, 100, {})
+  if sec <= 2 then
+    Wrekkit.encounter:Damage("0xP2", "0xBoss", 11267, 100, {})
+  end
+  advance(1)
+end
+Wrekkit.encounter:Damage("0xP1", "0xBoss", 11267, 100, {})
+IN_COMBAT = false
+fire("PLAYER_REGEN_ENABLED")
+Wrekkit.encounter:Finish()
+
+local enc = Wrekkit.db.encounters[table.getn(Wrekkit.db.encounters)]
+local byName = {}
+for _, a in pairs(enc.actors or {}) do byName[a.name] = a end
+
+check("a full-fight actor banked ~one second each", byName["Fuff"].active >= 10, true)
+check("a brief actor banked only its own", byName["Elfpriest"].active, 2)
+
+local view = Wrekkit.report:View({ enc }, { petMode = "merge" })
+
+Wrekkit.db.dpsBasis = "combat"
+local combatRows = Wrekkit.report:Rank(view, "dps")
+local combatBy = {}
+for _, r in ipairs(combatRows) do combatBy[r.name] = r._v end
+
+Wrekkit.db.dpsBasis = "active"
+local activeRows = Wrekkit.report:Rank(view, "dps")
+local activeBy = {}
+for _, r in ipairs(activeRows) do activeBy[r.name] = r._v end
+
+Wrekkit.db.dpsBasis = nil
+
+--[[ The player who acted throughout should read about the same either way;
+     the one who acted briefly should read much HIGHER on active time,
+     because the idle seconds stop counting against them. That difference
+     is the entire reason the setting exists. ]]
+check("the brief actor rises on active time",
+  activeBy["Elfpriest"] > combatBy["Elfpriest"] * 2, true)
+check("the constant actor barely moves",
+  math.abs(activeBy["Fuff"] - combatBy["Fuff"]) < combatBy["Fuff"] * 0.5, true)
+check("and the two bases really differ",
+  activeBy["Elfpriest"] ~= combatBy["Elfpriest"], true)
+
+-- An old log with no recorded active time must not divide by zero.
+local stale = { name = "Old", damage = 1000, active = 0 }
+Wrekkit.db.dpsBasis = "active"
+local m = Wrekkit.metrics.Get("dps")
+local v = m.value(stale, { duration = 10 })
+Wrekkit.db.dpsBasis = nil
+check("no active time falls back to the fight length", v, 100)
+
+Wrekkit.ResetData("all")
 print(string.format("\n%d passed, %d failed\n", pass, fail))
 if fail > 0 then os.exit(1) end

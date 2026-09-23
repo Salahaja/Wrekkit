@@ -126,7 +126,7 @@ local function blankRow(a, key)
     ownerName = a.ownerName,
     damage = 0, taken = 0, healing = 0, overheal = 0, absorbed = 0,
     deaths = 0, dispels = 0, interrupts = 0,
-    hits = 0, crits = 0, misses = 0, consumes = 0,
+    hits = 0, crits = 0, misses = 0, consumes = 0, active = 0,
     dmgAbility = {}, healAbility = {}, takenAbility = {}, consumeItem = {},
   }
 end
@@ -261,6 +261,10 @@ function R:View(encounters, opts)
       row.crits = row.crits + (a.crits or 0)
       row.misses = row.misses + (a.misses or 0)
       row.consumes = row.consumes + (a.consumes or 0)
+      -- Summed across encounters, like every other total. Merging a pet
+      -- into its owner adds the pet's seconds, which is right: the owner
+      -- was contributing through it.
+      row.active = (row.active or 0) + (a.active or 0)
 
       addAbilities(row.dmgAbility, a.dmgAbility)
       addAbilities(row.healAbility, a.healAbility)

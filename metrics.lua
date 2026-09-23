@@ -18,6 +18,28 @@ local function rate(value, duration)
   return value / duration
 end
 
+--[[ What a per-second figure is divided BY.
+
+     Skada divides by the length of the fight; Recount divides by the time
+     the player actually spent acting. They disagree, sometimes sharply --
+     a rogue who stood around for half a pull looks bad by one measure and
+     fine by the other -- and which one is "right" is a real argument rather
+     than a bug in either.
+
+     Combat time stays the default because it is what a raid leader usually
+     means: it asks what the raid got out of the pull, not how efficient
+     someone was during the seconds they happened to be swinging.
+
+     Falls back to the fight length when an actor has no recorded active
+     time, which covers rows merged from a log written before this existed. ]]
+local function basis(r, ctx)
+  if W.db and W.db.dpsBasis == "active" then
+    local a = r and r.active
+    if a and a > 0 then return a end
+  end
+  return ctx and ctx.duration
+end
+
 --[[ Each entry:
      key      stable id, stored in saved settings
      label    menu and header text
@@ -33,25 +55,25 @@ M.list = {
   {
     key = "damage", label = "Damage Done", short = "DMG", side = "player",
     value = function(r) return r.damage end,
-    sub = function(r, ctx) return W.Short(rate(r.damage, ctx.duration)) .. " dps" end,
+    sub = function(r, ctx) return W.Short(rate(r.damage, basis(r, ctx))) .. " dps" end,
     detail = "dmgAbility",
   },
   {
     key = "dps", label = "DPS", short = "DPS", side = "player",
-    value = function(r, ctx) return rate(r.damage, ctx.duration) end,
+    value = function(r, ctx) return rate(r.damage, basis(r, ctx)) end,
     sub = function(r) return W.Short(r.damage) end,
     detail = "dmgAbility",
   },
   {
     key = "healing", label = "Healing (effective)", short = "HEAL", side = "player",
     value = function(r) return r.healing end,
-    sub = function(r, ctx) return W.Short(rate(r.healing, ctx.duration)) .. " hps" end,
+    sub = function(r, ctx) return W.Short(rate(r.healing, basis(r, ctx))) .. " hps" end,
     color = W.color.healing,
     detail = "healAbility",
   },
   {
     key = "hps", label = "HPS", short = "HPS", side = "player",
-    value = function(r, ctx) return rate(r.healing, ctx.duration) end,
+    value = function(r, ctx) return rate(r.healing, basis(r, ctx)) end,
     sub = function(r) return W.Short(r.healing) end,
     color = W.color.healing,
     detail = "healAbility",
@@ -81,7 +103,7 @@ M.list = {
   {
     key = "taken", label = "Damage Taken", short = "TAKEN", side = "player",
     value = function(r) return r.taken end,
-    sub = function(r, ctx) return W.Short(rate(r.taken, ctx.duration)) .. " dtps" end,
+    sub = function(r, ctx) return W.Short(rate(r.taken, basis(r, ctx))) .. " dtps" end,
     color = W.color.taken,
     detail = "takenAbility",
   },
@@ -136,14 +158,14 @@ M.list = {
   {
     key = "enemy", label = "Enemy Damage", short = "DMG", side = "enemy",
     value = function(r) return r.damage end,
-    sub = function(r, ctx) return W.Short(rate(r.damage, ctx.duration)) .. " dps" end,
+    sub = function(r, ctx) return W.Short(rate(r.damage, basis(r, ctx))) .. " dps" end,
     color = W.color.taken,
     detail = "dmgAbility",
   },
   {
     key = "enemyTaken", label = "Enemy Damage Taken", short = "TAKEN", side = "enemy",
     value = function(r) return r.taken end,
-    sub = function(r, ctx) return W.Short(rate(r.taken, ctx.duration)) .. " dps" end,
+    sub = function(r, ctx) return W.Short(rate(r.taken, basis(r, ctx))) .. " dps" end,
     detail = "takenAbility",
   },
 }

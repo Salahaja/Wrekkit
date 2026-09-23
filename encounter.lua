@@ -58,6 +58,11 @@ local function newActor(guid, u)
     absorbed = 0, deaths = 0, dispels = 0, interrupts = 0,
     hits = 0, crits = 0, misses = 0, consumes = 0,
 
+    -- Seconds this actor actually did something. Recount divides by
+    -- this; Skada divides by the whole fight. The two disagree and
+    -- people argue about it, so Wrekkit can answer either way.
+    active = 0, lastActiveSec = nil,
+
     dmgAbility = {},    -- spellId -> { name, amount, hits, crits, max, misses }
     healAbility = {},   -- spellId -> { name, amount, over, hits, crits }
     takenAbility = {},  -- spellId -> { name, amount, hits, max }
@@ -364,6 +369,17 @@ end
 -- timeline
 ----------------------------------------------------------------------
 
+--- Count a second in which this actor did something. O(1): only the
+--- second index is compared, so a busy second costs one comparison.
+local function noteActive(a, enc, now)
+  if not a then return end
+  local sec = math.floor(now - enc.startT)
+  if a.lastActiveSec ~= sec then
+    a.lastActiveSec = sec
+    a.active = (a.active or 0) + 1
+  end
+end
+
 local function bucketFor(enc, now)
   local i = math.floor(now - enc.startT)
   if i < 0 then i = 0 end
@@ -510,6 +526,7 @@ function E:Damage(sourceGuid, targetGuid, spellId, amount, info)
     src.hits = src.hits + 1
     if info.crit then src.crits = src.crits + 1 end
 
+    noteActive(src, enc, now)
     local row = abilityRow(src.dmgAbility, spellId, spellName)
     row.amount = row.amount + amount
     row.hits = row.hits + 1
@@ -597,6 +614,7 @@ function E:Heal(casterGuid, targetGuid, spellId, effective, over, info)
   noteAmount(row, effective + over, info.crit)
 
   if src.isPlayer or src.class == "PET" then
+    noteActive(src, enc, now)
     enc.totals.healing = enc.totals.healing + effective
     enc.totals.overheal = enc.totals.overheal + over
     local b = bucketFor(enc, now)
@@ -1081,6 +1099,7 @@ function E:Persist(enc)
       dispels = a.dispels, interrupts = a.interrupts,
       hits = a.hits, crits = a.crits, misses = a.misses,
       consumes = a.consumes,
+      active = a.active,
       dmgAbility = keepDetail and topAbilities(a.dmgAbility, limit) or nil,
       healAbility = keepDetail and topAbilities(a.healAbility, limit) or nil,
       takenAbility = keepDetail and topAbilities(a.takenAbility, limit) or nil,
