@@ -67,6 +67,13 @@ C.events = {
   "ENVIRONMENTAL_DMG_SELF", "ENVIRONMENTAL_DMG_OTHER",
   "SPELL_GO_SELF", "SPELL_GO_OTHER",
   "UNIT_DIED",
+
+  -- Auras. Edge-triggered by nampower: these fire when something is gained
+  -- or lost, never on a timer, so uptime costs nothing to follow.
+  "BUFF_ADDED_SELF", "BUFF_REMOVED_SELF",
+  "BUFF_ADDED_OTHER", "BUFF_REMOVED_OTHER",
+  "DEBUFF_ADDED_SELF", "DEBUFF_REMOVED_SELF",
+  "DEBUFF_ADDED_OTHER", "DEBUFF_REMOVED_OTHER",
 }
 
 -- CVars nampower gates the richer events behind. Enabling them is cheap and
@@ -76,6 +83,7 @@ C.cvars = {
   "NP_EnableSpellHealEvents",
   "NP_EnableSpellEnergizeEvents",
   "NP_EnableSpellGoEvents",     -- carries the itemId behind a cast
+  "NP_EnableAuraCastEvents",    -- buff and debuff add/remove
 }
 
 ----------------------------------------------------------------------
@@ -559,6 +567,13 @@ function C:SPELL_HEAL(target, caster, spellId, amount, critical, periodic)
   })
 end
 
+--- An aura went on or came off a unit. Both directions land here so the
+--- encounter only has one entry point to reason about.
+function C:Aura(guid, spellId, gained)
+  if not spellId or spellId == 0 then return end
+  W.encounter:Aura(guid, spellId, gained)
+end
+
 function C:SPELL_MISS(caster, target, spellId, missInfo)
   W.encounter:Miss(caster, target, num(spellId), missInfo)
 end
@@ -618,6 +633,25 @@ dispatch.SPELL_HEAL_BY_OTHER = dispatch.SPELL_HEAL_BY_SELF
 -- HEAL_ON_SELF can duplicate HEAL_BY_SELF when you heal yourself; the
 -- aggregator de-dupes on (caster, target, spell, amount) within a tick.
 dispatch.SPELL_HEAL_ON_SELF = dispatch.SPELL_HEAL_BY_SELF
+
+-- BUFF/DEBUFF_ADDED/REMOVED(guid, slot, spellId, ...). The slot is the
+-- client's aura index and is not stable across a fight, so only the guid
+-- and the spell id are used.
+local function auraOn(a1, a2, a3)
+  C:Aura(a1, num(a3), true)
+end
+local function auraOff(a1, a2, a3)
+  C:Aura(a1, num(a3), false)
+end
+
+dispatch.BUFF_ADDED_SELF = auraOn
+dispatch.BUFF_ADDED_OTHER = auraOn
+dispatch.DEBUFF_ADDED_SELF = auraOn
+dispatch.DEBUFF_ADDED_OTHER = auraOn
+dispatch.BUFF_REMOVED_SELF = auraOff
+dispatch.BUFF_REMOVED_OTHER = auraOff
+dispatch.DEBUFF_REMOVED_SELF = auraOff
+dispatch.DEBUFF_REMOVED_OTHER = auraOff
 
 dispatch.SPELL_MISS_SELF = function(a1, a2, a3, a4) C:SPELL_MISS(a1, a2, a3, a4) end
 dispatch.SPELL_MISS_OTHER = dispatch.SPELL_MISS_SELF

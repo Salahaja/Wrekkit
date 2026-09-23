@@ -63,6 +63,8 @@ local function newActor(guid, u)
     -- people argue about it, so Wrekkit can answer either way.
     active = 0, lastActiveSec = nil,
 
+    -- spellId -> { name, up (seconds), since (nil when down), applied }
+    auras = {},
     dmgAbility = {},    -- spellId -> { name, amount, hits, crits, max, misses }
     healAbility = {},   -- spellId -> { name, amount, over, hits, crits }
     takenAbility = {},  -- spellId -> { name, amount, hits, max }
@@ -726,6 +728,59 @@ function E:Consumable(guid, itemId, spellId)
   row.name = name
 end
 
+-- An aura went on or came off. Intervals, not edges: the edges are what
+-- arrives, but "how long was the flask up" is the question anyone actually
+-- asks, and keeping every edge would be a per-second cost for a
+-- once-per-encounter answer.
+--
+-- Re-applying something already up is NOT counted as a second application
+-- here, because the client sends an add without a matching remove when a
+-- buff is refreshed; counting it would inflate the count and, worse, reset
+-- the interval and lose the uptime accrued so far.
+function E:Aura(guid, spellId, gained)
+  local enc = self.live
+  if not enc then return end
+  if W.db and W.db.trackAuras == false then return end
+
+  local a = self:Actor(guid)
+  if not a then return end
+  if not a.auras then a.auras = {} end
+
+  local row = a.auras[spellId]
+  if not row then
+    row = { id = spellId, name = W.capture:Spell(spellId), up = 0,
+            since = nil, applied = 0 }
+    a.auras[spellId] = row
+  end
+
+  local now = GetTime()
+  if gained then
+    if not row.since then
+      row.since = now
+      row.applied = row.applied + 1
+    end
+  else
+    if row.since then
+      row.up = row.up + (now - row.since)
+      row.since = nil
+    end
+  end
+end
+
+--- Close every aura still running, so uptime is not lost at the end of a
+--- fight just because nothing removed it.
+function E:CloseAuras(enc)
+  local stop = enc.stopT or GetTime()
+  for _, a in pairs(enc.actors or {}) do
+    for _, row in pairs(a.auras or {}) do
+      if row.since then
+        row.up = row.up + (stop - row.since)
+        row.since = nil
+      end
+    end
+  end
+end
+
 function E:Death(guid)
   local enc = self.live
   if not enc then return end
@@ -962,6 +1017,11 @@ function E:Finish()
     return
   end
 
+  -- Anything still up when the pull ended was up until the pull ended.
+  -- Without this, a flask that was never removed reads as zero uptime --
+  -- the exact opposite of the truth.
+  self:CloseAuras(enc)
+
   local name, anyDead, primary = deriveName(enc)
   enc.name = name
   enc.kill = anyDead
@@ -1008,6 +1068,21 @@ end
      the rollups and the timeline, cap ability rows per actor, and drop the
      per-ability detail for trash mobs -- which is 90% of the rows and the
      part nobody reads. ]]
+
+-- Auras worth storing: anything that was actually up. Sorted by uptime so
+-- a capped list keeps what mattered rather than whatever hashed first.
+local function topAuras(tbl, limit)
+  local rows = {}
+  for id, r in pairs(tbl or {}) do
+    if (r.up or 0) > 0.5 then
+      table.insert(rows, { id = id, name = r.name, up = r.up,
+                           applied = r.applied })
+    end
+  end
+  table.sort(rows, function(x, y) return (x.up or 0) > (y.up or 0) end)
+  while table.getn(rows) > (limit or 24) do table.remove(rows) end
+  return rows
+end
 
 local function topAbilities(tbl, limit)
   local rows = {}
@@ -1148,6 +1223,9 @@ function E:Persist(enc)
       hits = a.hits, crits = a.crits, misses = a.misses,
       consumes = a.consumes,
       active = a.active,
+      -- Uptime as an array, same shape as the ability tables: the live one
+      -- is keyed by spell id, the stored one is a list.
+      auras = topAuras(a.auras),
       dmgAbility = keepDetail and topAbilities(a.dmgAbility, limit) or nil,
       healAbility = keepDetail and topAbilities(a.healAbility, limit) or nil,
       takenAbility = keepDetail and topAbilities(a.takenAbility, limit) or nil,

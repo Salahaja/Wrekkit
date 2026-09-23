@@ -251,6 +251,13 @@ function S:Create()
   ------------------------------------------------------------------
   heading(self, "Recording")
 
+  check(self, "Track buff uptime",
+    function() return W.db.trackAuras ~= false end,
+    function(v) W.db.trackAuras = v and nil or false end,
+    { "Follows buffs and debuffs as they come and",
+      "go, so uptime is answerable: was the flask",
+      "actually up, was the debuff kept on." })
+
   check(self, "Timeline detail",
     function() return W.db.timelineDetail ~= false end,
     function(v) W.db.timelineDetail = v and nil or false end,

@@ -1989,4 +1989,90 @@ Wrekkit.ResetData("all")
 end
 
 print(string.format("\n%d passed, %d failed\n", pass, fail))
+
+----------------------------------------------------------------------
+print("\n-- aura uptime --")
+----------------------------------------------------------------------
+do
+-- Nampower fires these on change, never on a timer, so uptime is intervals
+-- rather than samples. The cases that matter: a refresh must not restart
+-- the interval, and something still up at the end of the pull was up until
+-- the end of the pull.
+
+Wrekkit.ResetData("all")
+Wrekkit.db.trackAuras = nil
+IN_COMBAT = true
+fire("PLAYER_REGEN_DISABLED")
+
+-- Flask on at t0, still on at the end.
+fire("BUFF_ADDED_SELF", "0xP1", 1, 17628)
+advance(5)
+-- Re-applied while already up: a refresh, not a second application.
+fire("BUFF_ADDED_SELF", "0xP1", 1, 17628)
+advance(5)
+
+-- A debuff that goes on and comes off.
+fire("DEBUFF_ADDED_OTHER", "0xBoss", 2, 11722)
+advance(4)
+fire("DEBUFF_REMOVED_OTHER", "0xBoss", 2, 11722)
+advance(2)
+
+local live = Wrekkit.encounter.live
+local me = live.actors["0xP1"]
+local flask = me.auras[17628]
+
+check("the aura was tracked", flask ~= nil, true)
+check("a refresh is not a second application", flask.applied, 1)
+check("and did not restart the interval", flask.since ~= nil, true)
+
+local boss = live.actors["0xBoss"]
+local curse = boss.auras[11722]
+check("a removed debuff banked its uptime", math.floor(curse.up + 0.5), 4)
+check("and is no longer running", curse.since, nil)
+
+-- Finishing closes whatever is still up.
+Wrekkit.encounter:Damage("0xP1", "0xBoss", 11267, 100, {})
+IN_COMBAT = false
+fire("PLAYER_REGEN_ENABLED")
+Wrekkit.encounter:Finish()
+
+local stored = Wrekkit.db.encounters[table.getn(Wrekkit.db.encounters)]
+local savedAuras
+for _, a in pairs(stored.actors or {}) do
+  if a.name == "Fuff" then savedAuras = a.auras end
+end
+check("uptime persisted", savedAuras ~= nil and table.getn(savedAuras) > 0, true)
+
+local kept
+for _, au in ipairs(savedAuras or {}) do
+  if au.id == 17628 then kept = au end
+end
+check("the open aura was closed at the end", kept and kept.up > 9, true)
+
+-- It reaches the view, and the metric reads it.
+local view = Wrekkit.report:View({ stored }, { petMode = "merge" })
+local rows = Wrekkit.report:Rank(view, "uptime")
+local found = false
+for _, r in ipairs(rows) do
+  if r.name == "Fuff" and r._v > 0 then found = true end
+end
+check("the uptime metric ranks on it", found, true)
+
+-- Off means off.
+Wrekkit.ResetData("all")
+Wrekkit.db.trackAuras = false
+IN_COMBAT = true
+fire("PLAYER_REGEN_DISABLED")
+fire("BUFF_ADDED_SELF", "0xP1", 1, 17628)
+local off = Wrekkit.encounter.live.actors["0xP1"]
+local n = 0
+for _ in pairs((off and off.auras) or {}) do n = n + 1 end
+check("the setting can turn it off", n, 0)
+
+Wrekkit.db.trackAuras = nil
+IN_COMBAT = false
+fire("PLAYER_REGEN_ENABLED")
+Wrekkit.encounter:Finish()
+Wrekkit.ResetData("all")
+end
 if fail > 0 then os.exit(1) end

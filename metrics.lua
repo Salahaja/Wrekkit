@@ -147,6 +147,32 @@ M.list = {
     integer = true,
   },
   {
+    -- Longest single aura this actor held. Ranked on the best one rather
+    -- than a sum, because "who kept their flask up" is a question about one
+    -- buff, and summing every buff in the game would rank whoever had the
+    -- most auras rather than whoever maintained the important one.
+    key = "uptime", label = "Buff Uptime", short = "UP", side = "player",
+    value = function(r, ctx)
+      local best = 0
+      W.report.eachAbility(r.auras, function(_, au)
+        if (au.up or 0) > best then best = au.up end
+      end)
+      local base = ctx and ctx.duration
+      if not base or base <= 0 then return 0 end
+      local pct = best / base * 100
+      if pct > 100 then pct = 100 end
+      return pct
+    end,
+    sub = function(r)
+      local n = 0
+      W.report.eachAbility(r.auras, function() n = n + 1 end)
+      return n > 0 and (n .. " tracked") or "-"
+    end,
+    color = W.color.accent,
+    percent = true,
+    detail = "auras",
+  },
+  {
     key = "crit", label = "Crit %", short = "CRIT", side = "player",
     value = function(r)
       if (r.hits or 0) <= 0 then return 0 end

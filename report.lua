@@ -127,6 +127,7 @@ local function blankRow(a, key)
     damage = 0, taken = 0, healing = 0, overheal = 0, absorbed = 0,
     deaths = 0, dispels = 0, interrupts = 0,
     hits = 0, crits = 0, misses = 0, consumes = 0, active = 0,
+    auras = {},
     dmgAbility = {}, healAbility = {}, takenAbility = {}, consumeItem = {},
   }
 end
@@ -268,6 +269,19 @@ function R:View(encounters, opts)
       -- into its owner adds the pet's seconds, which is right: the owner
       -- was contributing through it.
       row.active = (row.active or 0) + (a.active or 0)
+
+      -- Uptime sums across pulls the same way damage does, so "flask up for
+      -- 92% of the night" is answerable rather than only per pull.
+      if not row.auras then row.auras = {} end
+      W.report.eachAbility(a.auras, function(id, au)
+        local d = row.auras[id]
+        if not d then
+          d = { id = id, name = au.name, up = 0, applied = 0 }
+          row.auras[id] = d
+        end
+        d.up = d.up + (au.up or 0)
+        d.applied = d.applied + (au.applied or 0)
+      end)
 
       addAbilities(row.dmgAbility, a.dmgAbility)
       addAbilities(row.healAbility, a.healAbility)
