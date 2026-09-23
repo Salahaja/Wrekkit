@@ -118,8 +118,9 @@ GetRealZoneText = function() return "Onyxia's Lair" end
 GetNumRaidMembers = function() return 0 end
 GetNumPartyMembers = function() return 0 end
 GetRaidRosterInfo = function() return nil end
-SetCVar = function() end
-GetCVar = function() return "1" end
+CVARS = {}
+SetCVar = function(k, v) CVARS[k] = v end
+GetCVar = function(k) return CVARS[k] or "1" end
 IsInInstance = function() return true, "raid" end
 
 -- Saved-instance lockout. SAVED_ID is what the server hands out per reset;
@@ -1721,6 +1722,118 @@ check("lowering the threshold catches smaller bosses",
   Wrekkit.IsBoss(nowBoss), true)
 Wrekkit.db.bossHealth = 40000
 
+Wrekkit.ResetData("all")
+
+----------------------------------------------------------------------
+print("\n-- combat log range --")
+----------------------------------------------------------------------
+
+--[[ The client only reports combat within CombatLogRange, and its default
+     on this client is 30 yards. Anyone further away generates no events at
+     all, so they are missing from the meter rather than wrong in it. That
+     is the most common complaint about every 1.12 meter, and DPSMate's own
+     documentation tells people to raise exactly these. ]]
+
+CVARS = {}
+Wrekkit.db.combatLogRange = nil
+Wrekkit.db.combatLogRangeYards = nil
+Wrekkit.capture:ApplyCombatLogRange()
+
+check("creature range was raised", tonumber(CVARS["CombatLogRangeCreature"]), 200)
+check("party range too", tonumber(CVARS["CombatLogRangeParty"]), 200)
+check("and party PETS, which are easy to forget",
+  tonumber(CVARS["CombatLogRangePartyPet"]), 200)
+
+local raised = 0
+for _, cv in ipairs(Wrekkit.capture.rangeCvars) do
+  if CVARS[cv] then raised = raised + 1 end
+end
+check("every category was raised, not just one", raised, 7)
+
+-- The user can pick their own figure.
+CVARS = {}
+Wrekkit.db.combatLogRangeYards = 80
+Wrekkit.capture:ApplyCombatLogRange()
+check("a chosen range is honoured", tonumber(CVARS["CombatLogRangeCreature"]), 80)
+
+-- And opt out entirely.
+CVARS = {}
+Wrekkit.db.combatLogRange = false
+Wrekkit.capture:ApplyCombatLogRange()
+check("opting out leaves the client alone", CVARS["CombatLogRangeCreature"], nil)
+
+Wrekkit.db.combatLogRange = nil
+Wrekkit.db.combatLogRangeYards = nil
+
+-- Reported, so a short range is diagnosable rather than mysterious.
+CVARS = { CombatLogRangeCreature = "30" }
+check("status can read the range back", Wrekkit.capture:CombatLogRange(), 30)
+CVARS = {}
+
+----------------------------------------------------------------------
+print("\n-- history eviction --")
+----------------------------------------------------------------------
+
+--[[ A ring buffer silently dropping the oldest pull is correct for a buffer
+     and wrong for a log. Someone raiding all week has no way to know their
+     Tuesday is being deleted to make room for Thursday. ]]
+
+Wrekkit.ResetData("all")
+Wrekkit.encounter.warnedEviction = nil
+Wrekkit.db.maxEncounters = 3
+
+local said = 0
+local realPrint = Wrekkit.Print
+Wrekkit.Print = function(msg)
+  if string.find(tostring(msg), "history is full", 1, true) then said = said + 1 end
+end
+
+for i = 1, 6 do
+  IN_COMBAT = true
+  fire("PLAYER_REGEN_DISABLED")
+  for k = 1, 8 do
+    Wrekkit.encounter:Damage("0xP1", "0xBoss", 11267, 100, {})
+    advance(1)
+  end
+  IN_COMBAT = false
+  fire("PLAYER_REGEN_ENABLED")
+  Wrekkit.encounter:Finish()
+end
+Wrekkit.Print = realPrint
+
+check("the buffer held its cap", table.getn(Wrekkit.db.encounters), 3)
+check("and said so, once", said, 1)
+
+-- A locked pull is never the one thrown away.
+Wrekkit.ResetData("all")
+Wrekkit.encounter.warnedEviction = nil
+Wrekkit.db.maxEncounters = 2
+Wrekkit.Print = function() end
+for i = 1, 4 do
+  IN_COMBAT = true
+  fire("PLAYER_REGEN_DISABLED")
+  for k = 1, 8 do
+    Wrekkit.encounter:Damage("0xP1", "0xBoss", 11267, 100, {})
+    advance(1)
+  end
+  IN_COMBAT = false
+  fire("PLAYER_REGEN_ENABLED")
+  Wrekkit.encounter:Finish()
+  if i == 1 then
+    local first = Wrekkit.db.encounters[1]
+    if first then first.locked = true end
+  end
+end
+Wrekkit.Print = realPrint
+
+local keptLocked = false
+for _, e in ipairs(Wrekkit.db.encounters) do
+  if e.locked then keptLocked = true end
+end
+check("the locked pull survived eviction", keptLocked, true)
+
+Wrekkit.db.maxEncounters = nil
+Wrekkit.encounter.warnedEviction = nil
 Wrekkit.ResetData("all")
 print(string.format("\n%d passed, %d failed\n", pass, fail))
 if fail > 0 then os.exit(1) end

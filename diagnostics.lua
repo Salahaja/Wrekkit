@@ -65,6 +65,19 @@ function W.Status()
        "   GetUnitData " .. yn(GetUnitData))
   line("Nampower    file API " .. yn(WriteCustomFile and ReadCustomFile))
 
+  --[[ The range is worth stating outright. At the client default of 30
+       yards, most of a raid generates no events at all -- they are absent
+       from the meter rather than merely wrong in it, and nothing else in
+       this report would explain why their damage reads as zero. ]]
+  local range = W.capture:CombatLogRange()
+  if range then
+    local note = ""
+    if range < 100 then
+      note = "  |cffd44f53too short for a raid; anyone past this is invisible|r"
+    end
+    line("Log range   " .. range .. " yards" .. note)
+  end
+
   if GetCVar then
     local parts = {}
     for _, cv in ipairs(W.capture.cvars) do

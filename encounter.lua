@@ -1098,6 +1098,7 @@ function E:Persist(enc)
        is allowed to exceed its cap rather than break the promise the lock
        makes. ]]
   local maxKeep = W.db.maxEncounters or 60
+  local evicted = 0
   while table.getn(W.db.encounters) > maxKeep do
     local victim = nil
     for i = 1, table.getn(W.db.encounters) do
@@ -1105,5 +1106,21 @@ function E:Persist(enc)
     end
     if not victim then break end
     table.remove(W.db.encounters, victim)
+    evicted = evicted + 1
+  end
+
+  --[[ Say so the first time the buffer starts eating history.
+
+       Silently dropping the oldest pull is the correct behaviour for a ring
+       buffer and the wrong behaviour for a log: someone who has been
+       raiding all week has no way to know their Tuesday is being deleted to
+       make room for Thursday. Said ONCE per session, because the buffer
+       evicts on every pull once it is full and a message each time would be
+       nagging rather than informing. ]]
+  if evicted > 0 and not self.warnedEviction then
+    self.warnedEviction = true
+    W.Print(string.format(
+      "history is full at %d pulls, so the oldest are being dropped.", maxKeep))
+    W.Print("raise it in settings, or lock the ones worth keeping.")
   end
 end

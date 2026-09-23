@@ -710,11 +710,59 @@ function C:WarnIfSilent()
     "which is not enabled by default. Run |cffe0a22c/wrek status|r for details.")
 end
 
+--[[ How far away the client will tell us about combat.
+
+     The default is 30 yards on this client, which is well inside a raid.
+     Anyone further than that generates no events at all, so they are not
+     merely inaccurate in the meter -- they are absent from it. This is the
+     most common complaint about every combat-log meter on 1.12, and
+     DPSMate's own documentation tells people to raise exactly these.
+
+     Raised to 200, the same figure DPSMate recommends, which covers any
+     raid instance. Every one is listed because the client gates each
+     category separately: missing PartyPet alone loses every hunter and
+     warlock pet in the raid. ]]
+C.rangeCvars = {
+  "CombatLogRangeCreature",
+  "CombatLogRangeParty",
+  "CombatLogRangePartyPet",
+  "CombatLogRangeFriendlyPlayers",
+  "CombatLogRangeFriendlyPlayersPets",
+  "CombatLogRangeHostilePlayers",
+  "CombatLogRangeHostilePlayersPets",
+}
+
+C.RANGE_DEFAULT = 200
+
+--- What the client currently admits to, for /wrek status and the settings.
+function C:CombatLogRange()
+  if not GetCVar then return nil end
+  local v = GetCVar("CombatLogRangeCreature")
+  return tonumber(v)
+end
+
+--[[ Raise the range, unless the user asked us not to.
+
+     Opt-out rather than opt-in: a meter that silently under-reports half
+     the raid is worse than one that changed a setting, and the setting only
+     affects how much the client tells this client. It does not touch what
+     anyone else sees. ]]
+function C:ApplyCombatLogRange()
+  if not SetCVar then return end
+  if W.db and W.db.combatLogRange == false then return end
+
+  local want = (W.db and W.db.combatLogRangeYards) or self.RANGE_DEFAULT
+  for _, cv in ipairs(self.rangeCvars) do
+    pcall(SetCVar, cv, want)
+  end
+end
+
 function C:EnableCVars()
   if not SetCVar then return end
   for _, cv in ipairs(self.cvars) do
     SetCVar(cv, 1)
   end
+  self:ApplyCombatLogRange()
 end
 
 function C:Start()

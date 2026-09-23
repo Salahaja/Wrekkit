@@ -258,6 +258,25 @@ function S:Create()
       "with which spell, to whom. Costs storage:",
       "the busiest 60 seconds of each fight." })
 
+  check(self, "Raise the combat log range",
+    function() return W.db.combatLogRange ~= false end,
+    function(v)
+      W.db.combatLogRange = v and nil or false
+      if v then W.capture:ApplyCombatLogRange() end
+    end,
+    { "The client only reports combat within this",
+      "range. Its 30 yard default leaves most of a",
+      "raid invisible to any meter." })
+
+  stepper(self, "Log range",
+    function() return W.db.combatLogRangeYards or W.capture.RANGE_DEFAULT end,
+    function(v)
+      W.db.combatLogRangeYards = v
+      W.capture:ApplyCombatLogRange()
+    end,
+    30, 200, 10,
+    function(v) return v .. " yd" end)
+
   check(self, "Record open-world combat",
     function() return W.db.trackOpenWorld == true end,
     function(v)
