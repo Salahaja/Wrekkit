@@ -204,6 +204,27 @@ local function region(kind)
   m.Hide = function(self) self._shown = false end
   m.IsShown = function(self) return self._shown end
   m.IsVisible = function(self) return self._shown end
+  --[[ Slider. Modelled on the real thing rather than no-ops: the client
+       clamps, quantises to the step, and FIRES OnValueChanged from SetValue.
+       That last part matters -- it is what makes a control that refreshes
+       itself from its own setter re-enter, so a stub that stayed silent
+       would hide the bug the guard exists for. ]]
+  m.SetOrientation = function() end
+  m.SetMinMaxValues = function(self, lo, hi) self._min, self._max = lo, hi end
+  m.GetMinMaxValues = function(self) return self._min or 0, self._max or 1 end
+  m.SetValueStep = function(self, st) self._step = st end
+  m.SetThumbTexture = function(self, t) self._thumb = t end
+  m.GetThumbTexture = function(self) return self._thumb end
+  m.SetValue = function(self, v)
+    local lo, hi = self._min or 0, self._max or 1
+    if v < lo then v = lo elseif v > hi then v = hi end
+    local st = self._step
+    if st and st > 0 then v = lo + math.floor((v - lo) / st + 0.5) * st end
+    self._value = v
+    local fn = self._scripts and self._scripts.OnValueChanged
+    if fn then fn() end
+  end
+  m.GetValue = function(self) return self._value or self._min or 0 end
   m.SetAlpha = function() end
   m.GetAlpha = function() return 1 end
   m.SetTexture = function(self, v) self._tex = v end

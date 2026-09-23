@@ -53,6 +53,11 @@ local function stepper(self, label, get, set, min, max, step, fmt)
     0, true)
 end
 
+local function slider(self, label, get, set, min, max, step, fmt)
+  return stack(self, UI.Slider(self.body, label, get, set, min, max, step, fmt),
+    0, true)
+end
+
 local function choice(self, label, options, get, set, tip)
   return stack(self, UI.Choice(self.body, label, options, get, set, tip), 0, true)
 end
@@ -117,7 +122,7 @@ function S:Create()
     10, 32, 1,
     function(v) return v .. "px" end)
 
-  stepper(self, "Window opacity",
+  slider(self, "Window opacity",
     function() return math.floor(((meter:Settings().opacity or 1) * 100) + 0.5) end,
     function(v)
       meter:Settings().opacity = v / 100

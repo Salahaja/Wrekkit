@@ -56,6 +56,27 @@ local function region(kind)
     -- Round-tripped, not discarded. A stub whose GetAlpha is always 1 cannot
     -- tell "fades only the background" from "fades the whole frame, text
     -- included", which is the entire point of the opacity design.
+    --[==[ Slider. Modelled on the real thing rather than no-ops: the client
+           clamps, quantises to the step, and FIRES OnValueChanged from
+           SetValue. That last part matters -- it is what makes a control
+           that refreshes itself from its own setter re-enter, so a stub
+           that stayed silent would hide the bug the guard exists for. ]==]
+    SetOrientation = function() end,
+    SetMinMaxValues = function(self, lo, hi) self._min, self._max = lo, hi end,
+    GetMinMaxValues = function(self) return self._min or 0, self._max or 1 end,
+    SetValueStep = function(self, st) self._step = st end,
+    SetThumbTexture = function(self, t) self._thumb = t end,
+    GetThumbTexture = function(self) return self._thumb end,
+    SetValue = function(self, v)
+      local lo, hi = self._min or 0, self._max or 1
+      if v < lo then v = lo elseif v > hi then v = hi end
+      local st = self._step
+      if st and st > 0 then v = lo + math.floor((v - lo) / st + 0.5) * st end
+      self._value = v
+      local fn = self._scripts and self._scripts.OnValueChanged
+      if fn then fn() end
+    end,
+    GetValue = function(self) return self._value or self._min or 0 end,
     SetAlpha = function(self, a) self._alpha = a end,
     GetAlpha = function(self) return self._alpha or 1 end,
     SetTexture = function() end,
@@ -1894,6 +1915,66 @@ step("the meter applies its saved opacity on layout", function()
   end
   UI.meter:Settings().opacity = 1
   UI.meter:ApplyLayout()
+end)
+
+--[[ The opacity bar. A slider that writes its setting from OnValueChanged,
+     and refreshes itself by calling SetValue, will re-enter: SetValue fires
+     OnValueChanged, which calls set(), which is what asked for the refresh.
+     These check the value reaches the setting and the loop does not form. ]]
+
+step("dragging the opacity bar changes the setting", function()
+  UI.settings:Create()
+  local bar
+  for _, c in ipairs(UI.settings.controls) do
+    if c.slider then bar = c end
+  end
+  if not bar then error("no slider was built in the settings window") end
+
+  UI.meter:Settings().opacity = 1
+  bar:Refresh()
+
+  bar.slider:SetValue(40)
+  local got = UI.meter:Settings().opacity
+  if math.abs(got - 0.40) > 0.001 then
+    error("opacity is " .. tostring(got) .. ", expected 0.40")
+  end
+end)
+
+step("the bar refreshes from the setting without writing back", function()
+  local bar
+  for _, c in ipairs(UI.settings.controls) do
+    if c.slider then bar = c end
+  end
+
+  UI.meter:Settings().opacity = 0.7
+  local writes = 0
+  local realApply = UI.meter.ApplyLayout
+  UI.meter.ApplyLayout = function(self) writes = writes + 1 end
+
+  bar:Refresh()
+  UI.meter.ApplyLayout = realApply
+
+  -- Refresh reads the setting. If it wrote back through set(), the value
+  -- would have been quantised and re-applied -- a loop waiting to happen.
+  if writes > 0 then
+    error("Refresh wrote back to the setting " .. writes .. " time(s)")
+  end
+  if math.abs(UI.meter:Settings().opacity - 0.7) > 0.001 then
+    error("Refresh changed the setting it was only meant to read")
+  end
+end)
+
+step("the bar clamps and quantises like the client", function()
+  local bar
+  for _, c in ipairs(UI.settings.controls) do
+    if c.slider then bar = c end
+  end
+  bar.slider:SetValue(500)
+  if UI.meter:Settings().opacity > 1.0 then error("not clamped high") end
+  bar.slider:SetValue(-100)
+  if UI.meter:Settings().opacity < 0.20 then error("not clamped to the floor") end
+  UI.meter:Settings().opacity = 1
+  bar:Refresh()
 end)
 
 print(string.format("\n%d passed, %d failed  (%d frames created)\n", pass, fail, calls))

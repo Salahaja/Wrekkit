@@ -913,11 +913,106 @@ function UI.Check(parent, label, get, set, tip)
   return b
 end
 
+--[[ A dragged bar: label, track, value.
+
+     For settings you want to FEEL rather than name a number for. Opacity is
+     the case that earned it -- nobody knows they want 45%, they want to drag
+     until the boss is visible through the meter, and a stepper makes that
+     sixteen clicks.
+
+     Built on the client's own Slider frame rather than a texture and mouse
+     maths, so dragging, clicking the track and the step quantisation are the
+     same as every other slider in the game.
+
+     Live-updating on purpose: `set` fires as the thumb moves, so the thing
+     being adjusted changes under the cursor. That is the entire point of
+     reaching for a bar instead of a number. ]]
+function UI.Slider(parent, label, get, set, min, max, step, format)
+  step = step or 1
+  local f = CreateFrame("Frame", nil, parent)
+  f:SetHeight(30)
+
+  local text = UI.Text(f, 11, W.color.text)
+  text:SetPoint("TOPLEFT", f, "TOPLEFT", 0, 0)
+  text:SetText(label or "")
+
+  local value = UI.Text(f, 11, W.color.accent, "RIGHT")
+  value:SetPoint("TOPRIGHT", f, "TOPRIGHT", 0, 0)
+
+  local slider = CreateFrame("Slider", nil, f)
+  slider:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 0, 0)
+  slider:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", 0, 0)
+  slider:SetHeight(12)
+  slider:SetOrientation("HORIZONTAL")
+  slider:SetMinMaxValues(min, max)
+  slider:SetValueStep(step)
+
+  -- The groove the thumb runs in.
+  local groove = UI.Fill(slider, W.color.bg)
+  groove:ClearAllPoints()
+  groove:SetPoint("LEFT", slider, "LEFT", 0, 0)
+  groove:SetPoint("RIGHT", slider, "RIGHT", 0, 0)
+  groove:SetHeight(4)
+
+  local filled = slider:CreateTexture(nil, "BORDER")
+  filled:SetTexture(UI.media.white)
+  filled:SetVertexColor(unpackColor(W.color.accent, 0.55))
+  filled:SetPoint("LEFT", groove, "LEFT", 0, 0)
+  filled:SetHeight(4)
+
+  local thumb = slider:CreateTexture(nil, "OVERLAY")
+  thumb:SetTexture(UI.media.white)
+  thumb:SetVertexColor(unpackColor(W.color.accent))
+  thumb:SetWidth(6)
+  thumb:SetHeight(12)
+  slider:SetThumbTexture(thumb)
+
+  --[[ Guards re-entry. SetValue fires OnValueChanged, so refreshing the
+       control from the setting would call set() again -- and set() is what
+       triggered the refresh. Harmless for opacity, not for anything that
+       writes to disk. ]]
+  local applying = false
+
+  local function paintFill(v)
+    local span = max - min
+    local frac = (span > 0) and ((v - min) / span) or 0
+    if frac < 0 then frac = 0 elseif frac > 1 then frac = 1 end
+    local w = (slider:GetWidth() or 0) * frac
+    if w < 1 then w = 1 end
+    filled:SetWidth(w)
+  end
+
+  local function show()
+    local v = get()
+    applying = true
+    slider:SetValue(v)
+    applying = false
+    value:SetText(format and format(v) or tostring(v))
+    paintFill(v)
+  end
+
+  slider:SetScript("OnValueChanged", function()
+    if applying then return end
+    W.Guard("setting: " .. tostring(label), function()
+      local v = slider:GetValue()
+      set(v)
+      value:SetText(format and format(v) or tostring(v))
+      paintFill(v)
+    end)
+  end)
+
+  -- Exposed so a test can drive the bar without synthesising mouse drags.
+  f.slider = slider
+  f.Refresh = show
+  show()
+  return f
+end
+
 --[[ A numeric stepper: - value + .
 
-     Deliberately not a slider. Every one of these settings is a small,
-     meaningful integer (row height, how many rows, how many days) where the
-     exact number matters and dragging to it is fiddly at 1.12's frame sizes. ]]
+     Used where the exact number matters and dragging to it would be fiddly
+     at 1.12's frame sizes -- row height, how many rows, how many days. Where
+     the feel matters more than the figure, UI.Slider is the better control. ]]
 function UI.Stepper(parent, label, get, set, min, max, step, format)
   step = step or 1
   local f = CreateFrame("Frame", nil, parent)
