@@ -33,11 +33,11 @@ function P:Create()
     W.db.peerWindow = { point = "CENTER", x = 0, y = -40, w = 560, h = 380 }
   end
 
+  --[[ The report is also HIGH. Two frames on the same strata fall back to
+       frame level for draw order, which is creation order here, so the
+       browser opened from the report was drawn UNDER it. DIALOG puts it
+       above, the way settings already sits above both. ]]
   local f = UI.Window("WrekkitPeers", W.db.peerWindow.w, W.db.peerWindow.h,
-    --[==[ The report is also HIGH. Two frames on the same strata fall back
-           to frame level for draw order, which is creation order here, so
-           the browser opened from the report was drawn UNDER it. DIALOG
-           puts it above, the way settings already sits above both. ]==]
     "Shared Logs", { minW = 440, minH = 260, strata = "DIALOG" })
   self.frame = f
   UI.BindGeometry(f, W.db.peerWindow)

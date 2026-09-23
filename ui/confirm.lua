@@ -260,9 +260,9 @@ function UI.ConfirmAnnounce(lines, channel, target, onAccept, ctx)
                       isPublic(channel) and 0.30 or 0.17)
   f.who:SetText(audience(channel, target) .. " will see this.")
 
-  --[==[ Seed the picker from what is on screen. Reset every open on
-         purpose: a sticky selection would let a choice made for one pull
-         quietly decide the next post. ]==]
+  --[[ Seed the picker from what is on screen. Reset every open on
+       purpose: a sticky selection would let a choice made for one pull
+       quietly decide the next post. ]]
   resetPicked()
   if ctx then
     for _, k in ipairs(ctx.metrics or { ctx.metric or "damage" }) do

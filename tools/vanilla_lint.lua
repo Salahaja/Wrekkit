@@ -154,6 +154,24 @@ local RULES = {
 -- rather than the blanked copy the rules above use.
 local RAW_RULES = {
     {
+        -- Long-bracket LEVELS ([=[ , [==[ , ]==] ) are a Lua 5.1 addition.
+        -- 5.0 has plain [[ ]] and nothing else, so in 1.12 a "--[==[" is
+        -- read as an ordinary -- line comment and every line beneath it is
+        -- parsed as CODE. The failure is a syntax error pointing at a word
+        -- inside what the author believed was prose:
+        --   "function arguments expected near 'sticky'"
+        --
+        -- This interpreter is 5.4 and accepts the syntax happily, so no
+        -- amount of running the tests can find it. Only this rule can.
+        pattern = "%-%-%[=+%[",
+        msg = "--[=[ long-bracket comments are Lua 5.1 - vanilla 1.12 is 5.0 and reads this as a plain -- comment, then parses the following lines as code. Use --[[ ]]",
+    },
+    {
+        pattern = "[^%-]%[=+%[",
+        msg = "[=[ long-bracket strings are Lua 5.1 - vanilla 1.12 is 5.0 and has no bracket levels. Use [[ ]]",
+    },
+
+    {
         -- 1.12 SendAddonMessage accepts PARTY, RAID, GUILD and BATTLEGROUND
         -- only. "WHISPER" is not rejected politely: the client throws
         -- "Unknown addon chat type" and can take the process down with it
