@@ -53,10 +53,18 @@ local function region(kind)
     Hide = function(self) self._shown = false end,
     IsShown = function(self) return self._shown end,
     IsVisible = function(self) return self._shown end,
-    SetAlpha = function() end,
-    GetAlpha = function() return 1 end,
+    -- Round-tripped, not discarded. A stub whose GetAlpha is always 1 cannot
+    -- tell "fades only the background" from "fades the whole frame, text
+    -- included", which is the entire point of the opacity design.
+    SetAlpha = function(self, a) self._alpha = a end,
+    GetAlpha = function(self) return self._alpha or 1 end,
     SetTexture = function() end,
-    SetVertexColor = function() end,
+    -- Recorded, not discarded: opacity is expressed through the alpha
+    -- channel here, so a stub that throws it away cannot tell a working
+    -- opacity setting from one that does nothing.
+    SetVertexColor = function(self, r, g, b, a)
+      self._r, self._g, self._b, self._a = r, g, b, a
+    end,
     SetTexCoord = function() end,
     SetBlendMode = function() end,
     SetDrawLayer = function() end,
@@ -1813,6 +1821,79 @@ step("every scope renders without erroring", function()
   end
   UI.report.state.tab = "summary"
   pickScope("all")
+end)
+
+--[[ Opacity fades the CHROME only.
+
+     frame:SetAlpha would have been one line, and wrong: it fades everything
+     inside the frame too, so at the setting people actually want -- a meter
+     thin enough to see a boss through -- the names and numbers are equally
+     thin and the meter stops being readable. These pin that down. ]]
+
+step("window opacity fades the panel, bar and border", function()
+  local win = UI.meter.frame
+  if not win.SetOpacity then error("UI.Window has no SetOpacity") end
+
+  win:SetOpacity(0.4)
+  local function alphaOf(tex, what)
+    if not tex then error("no " .. what .. " texture to fade") end
+    if tex._a == nil then error(what .. " alpha was never set") end
+    return tex._a
+  end
+
+  if math.abs(alphaOf(win.bg, "panel") - 0.4) > 0.001 then
+    error("panel alpha is " .. tostring(win.bg._a))
+  end
+  if math.abs(alphaOf(win.barBg, "title bar") - 0.4) > 0.001 then
+    error("title bar alpha is " .. tostring(win.barBg._a))
+  end
+  for _, e in ipairs(win.edges or {}) do
+    if math.abs((e._a or 1) - 0.4) > 0.001 then
+      error("a border edge is at " .. tostring(e._a))
+    end
+  end
+  win:SetOpacity(1)
+end)
+
+step("opacity keeps the colour, it only changes alpha", function()
+  local win = UI.meter.frame
+  win:SetOpacity(0.3)
+  local r, g, b = win.bg._r, win.bg._g, win.bg._b
+  if r == nil then error("the panel colour was lost") end
+  win:SetOpacity(1)
+  if win.bg._r ~= r or win.bg._g ~= g or win.bg._b ~= b then
+    error("the colour changed when only the alpha should have")
+  end
+end)
+
+step("opacity never fades the text", function()
+  local win = UI.meter.frame
+  -- The frame's own alpha must stay untouched: that is what would drag the
+  -- names and numbers down with the background.
+  local before = win:GetAlpha()
+  win:SetOpacity(0.25)
+  if win:GetAlpha() ~= before then
+    error("SetOpacity changed the frame alpha, which fades the text too")
+  end
+  win:SetOpacity(1)
+end)
+
+step("opacity is clamped and survives a nil", function()
+  local win = UI.meter.frame
+  win:SetOpacity(5)    if win._opacity ~= 1 then error("not clamped high") end
+  win:SetOpacity(-2)   if win._opacity ~= 0 then error("not clamped low") end
+  win:SetOpacity(nil)  if win._opacity ~= 1 then error("nil did not mean opaque") end
+end)
+
+step("the meter applies its saved opacity on layout", function()
+  UI.meter:Settings().opacity = 0.5
+  UI.meter:ApplyLayout()
+  if math.abs((UI.meter.frame.bg._a or 1) - 0.5) > 0.001 then
+    error("ApplyLayout did not apply the setting: " ..
+      tostring(UI.meter.frame.bg._a))
+  end
+  UI.meter:Settings().opacity = 1
+  UI.meter:ApplyLayout()
 end)
 
 print(string.format("\n%d passed, %d failed  (%d frames created)\n", pass, fail, calls))

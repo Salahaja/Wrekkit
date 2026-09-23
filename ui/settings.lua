@@ -117,6 +117,15 @@ function S:Create()
     10, 32, 1,
     function(v) return v .. "px" end)
 
+  stepper(self, "Window opacity",
+    function() return math.floor(((meter:Settings().opacity or 1) * 100) + 0.5) end,
+    function(v)
+      meter:Settings().opacity = v / 100
+      meter:ApplyLayout()
+    end,
+    20, 100, 5,
+    function(v) return v .. "%" end)
+
   check(self, "Show meter toolbar",
     function() return meter:Settings().showToolbar ~= false end,
     function(v)

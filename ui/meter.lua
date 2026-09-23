@@ -32,6 +32,9 @@ M.defaults = {
   showToolbar = true,
   compact = false,
   rowHeight = 18,
+  -- Chrome opacity, 0-1. Only the panel, title bar and border fade; the
+  -- text and bars stay fully opaque so the meter is readable at any value.
+  opacity = 1.0,
   locked = false,
   window = { point = "CENTER", x = -320, y = 0, w = 260, h = 200 },
 }
@@ -425,6 +428,8 @@ function M:ApplyLayout()
   self.list:SetPoint("BOTTOMRIGHT", f.body, "BOTTOMRIGHT", -2, footerH + 1)
 
   self.list:SetRowHeight(px(s.rowHeight or 18))
+
+  if f.SetOpacity then f:SetOpacity(s.opacity) end
 
   --[[ Move the minimum size with the chrome.
 

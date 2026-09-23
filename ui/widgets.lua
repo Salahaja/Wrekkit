@@ -50,6 +50,10 @@ function UI.Fill(parent, color, alpha, layer)
   t:SetTexture(UI.media.white)
   t:SetVertexColor(unpackColor(color, alpha))
   t:SetAllPoints(parent)
+  -- Remembered so the alpha can be changed later without losing the colour:
+  -- SetVertexColor takes all four at once, so re-applying alpha alone is not
+  -- possible without knowing the other three.
+  t._color = color
   return t
 end
 
@@ -93,7 +97,10 @@ function UI.Panel(parent, color, borderColor, name)
 
   f.SetBorderColor = function(self, c, a)
     for _, e in ipairs(self.edges) do e:SetVertexColor(unpackColor(c, a)) end
+    self._borderColor = c
+    self._borderAlpha = a
   end
+  f._borderColor = bc
   return f
 end
 
@@ -691,7 +698,7 @@ function UI.Window(name, width, height, title, opts)
   bar:SetHeight(opts.barHeight or 26)
   bar:SetPoint("TOPLEFT", f, "TOPLEFT", 1, -1)
   bar:SetPoint("TOPRIGHT", f, "TOPRIGHT", -1, -1)
-  UI.Fill(bar, W.color.panel)
+  f.barBg = UI.Fill(bar, W.color.panel)
 
   local sheen = bar:CreateTexture(nil, "ARTWORK")
   sheen:SetTexture(UI.media.sheen)
@@ -776,6 +783,34 @@ function UI.Window(name, width, height, title, opts)
        instead of one per frame, which matters because Refresh re-sorts and
        repaints every row. The key makes W.After replace any pending
        relayout for this window rather than queue another. ]]
+  --[[ Let the window see through to the game behind it.
+
+       Deliberately NOT frame:SetAlpha. That fades the frame and everything
+       inside it -- the names, the numbers, the bars -- so at the setting
+       people actually want, a meter thin enough to see a boss through is
+       also too thin to read. Only the chrome fades here: the panel fill,
+       the title bar and the border. Text and bars keep their own alpha and
+       stay crisp at any setting.
+
+       The sheen over the title bar is left alone too; it is a highlight on
+       the bar, so it tracks the bar rather than the world behind it. ]]
+  f.SetOpacity = function(self, alpha)
+    if alpha == nil then alpha = 1 end
+    if alpha < 0 then alpha = 0 end
+    if alpha > 1 then alpha = 1 end
+    self._opacity = alpha
+
+    if self.bg and self.bg._color then
+      self.bg:SetVertexColor(unpackColor(self.bg._color, alpha))
+    end
+    if self.barBg and self.barBg._color then
+      self.barBg:SetVertexColor(unpackColor(self.barBg._color, alpha))
+    end
+    for _, e in ipairs(self.edges or {}) do
+      e:SetVertexColor(unpackColor(self._borderColor or W.color.border, alpha))
+    end
+  end
+
   f._resizeKey = "resize:" .. tostring(name or f)
   f:SetScript("OnSizeChanged", function()
     if not f.OnResize then return end
