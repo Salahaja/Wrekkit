@@ -102,7 +102,7 @@ Deliberately spare, so it can sit on screen during a pull.
 | --- | --- |
 | click the segment | pick Current / last pull / All Session |
 | the cog | settings: compact mode, text size, recording, history |
-| left-click title | metric menu — damage, dps, healing, hps, overheal, taken, deaths, dispels, interrupts, crit %, enemy damage |
+| left-click title | metric menu — damage, dps, healing, hps, overheal, taken, deaths, dispels, interrupts, consumables, buff uptime, crit %, enemy damage |
 | right-click title | segment menu — current pull, last pull, all session |
 | left-click a row | that player's ability breakdown |
 | left-click an ability | full detail for it (see below) |
@@ -136,6 +136,20 @@ tightens the rows, for a meter that can sit on screen permanently.
 **Text size** scales the pixel dimensions along with the letters. Scaling type
 without scaling what contains it just clips it, which is the usual way a text
 size option ends up useless.
+
+**In combat** fades the meter while you fight (pointing at it brings it
+back) or hides it until the fight is over. `/wrek` shows it anyway, and a
+meter you closed yourself stays closed.
+
+**Per-second basis** picks what DPS and HPS divide by: combat time, like
+Skada, or active time, like Recount. Each action counts as 3.5 seconds of
+acting, so a caster between casts is acting and someone standing idle is
+not; a player and their pet share one active time rather than adding up.
+
+**Raise the combat log range** is on by default. The client only reports
+combat within its log range, and its 30-yard default leaves most of a raid
+out. Wrekkit raises it to 200 yards (adjustable), and switching the option
+off puts back what the client had.
 
 ### Starting a new log
 
@@ -223,6 +237,12 @@ not noise anyone sees.
 You can browse without being listed yourself. Pulling *from* someone needs
 them to have sharing on; looking does not need you to.
 
+**Live raid sync** (settings, off by default) fills in raiders your client
+cannot see. Each player's Wrekkit reports only its own totals, every 30
+seconds and once more when a pull ends. Everyone else uses those only where
+they saw less, and marks the row `*`. It needs sharing on, and the other
+players on 0.4.0 or later.
+
 ### Keeping encounters
 
 Every encounter in the report's sidebar has a padlock. Click it and that
@@ -256,6 +276,17 @@ an ordinary spell, non-zero for an item. "Did this cast come from an item" is
 therefore true by construction, and anything this server added itself is
 picked up for free.
 
+### Buff uptime
+
+Pick **Buff Uptime** from the metric menu, click a player to see their
+buffs, and click one — a flask, an elixir — to rank the whole raid by how
+long it was up. Players without it are listed as missing. Click it again to
+go back.
+
+A buff that was up before the pull counts from the start of the pull, which
+matters because that is when a flask gets drunk. Only your party or raid is
+followed. *Track buff uptime* in settings turns it off.
+
 ### Ability detail
 
 Clicking a player opens their abilities; clicking an ability opens its full
@@ -276,6 +307,9 @@ what makes the header read "16 encounters selected".
 
 Tabs: **Summary** (timeline chart plus damage and healing side by side),
 **Damage**, **Healing**, **Taken**, **Enemies**, **Deaths**.
+
+Clicking a death shows what killed them: the last eight hits before it, with
+the health left after each — lava and falling included.
 
 The timeline is a rolling average of damage done, damage taken and effective
 healing, with a red tick at every player death. Click a legend entry to hide
@@ -382,9 +416,10 @@ is the only route that reaches people not running the addon.
 Honest limits, all of them inherited from what vanilla exposes — the website
 worked under the same ones:
 
-- **Range.** The client only receives events for things it can see. Someone
-  healing across the room from you is recorded; someone in a separate wing
-  is not. This is why sharing exists.
+- **Range.** The client only receives events within its combat log range.
+  Its default is 30 yards; Wrekkit raises it to 200, which covers a raid
+  instance. Past that, live raid sync fills in players who also run Wrekkit,
+  and sharing covers the rest.
 - **Overhealing is derived, not reported.** Heal events carry the raw
   amount only. Wrekkit tracks each unit's health forward from damage and
   healing events, resyncing against `UnitHealth` every 0.4s, and splits the
