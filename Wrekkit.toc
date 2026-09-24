@@ -2,7 +2,7 @@
 ## Title: Wrekkit
 ## Notes: In-game raid analysis. Damage, healing, deaths and timelines, recorded and reviewed without leaving the client.
 ## Author: Salahaja
-## Version: 0.4.0
+## Version: 0.4.1
 ## DefaultState: enabled
 ## SavedVariables: WrekkitDB
 
