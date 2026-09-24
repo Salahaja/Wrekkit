@@ -997,6 +997,34 @@ step("widget interactions", function()
       m:Refresh()
     end
 
+    -- Combat fade and hide: drive the meter's watcher through every mode,
+    -- in and out of a fight. That code only ever runs from the watcher's
+    -- OnUpdate, so without this its globals would first be read in a raid.
+    do
+      local m = W.ui.meter
+      local s = m:Settings()
+      local tick = m.watcher and m.watcher:GetScript("OnUpdate")
+      local wasInCombat = IN_COMBAT
+      W.lastError = nil
+      if tick then
+        for _, mode in ipairs({ "fade", "hide", "show" }) do
+          s.combat = mode
+          IN_COMBAT = true
+          for _ = 1, 20 do NOW = NOW + 0.05 tick() end
+          IN_COMBAT = false
+          for _ = 1, 20 do NOW = NOW + 0.05 tick() end
+        end
+      end
+      -- The watcher is guarded, so an error there is swallowed and printed
+      -- once; surface it here instead of letting the audit pass over it.
+      if W.lastError and W.lastError.label == "meter combat fade" then
+        error("meter combat fade: " .. tostring(W.lastError.err))
+      end
+      IN_COMBAT = wasInCombat
+      s.combat = "show"
+      m:Show()
+    end
+
     -- death recap rendering
     W.report:DeathRecap({ t = 10, recap = {
       { t = 8, src = "Onyxia", spell = "Flame Breath", a = 900, hp = 200 },

@@ -1080,6 +1080,9 @@ function UI.Choice(parent, label, options, get, set, tip)
 
   local value = UI.Text(f, 11, W.color.accent, "RIGHT")
   value:SetPoint("RIGHT", f, "RIGHT", 0, 0)
+  -- Exposed for the same reason UI.Check exposes its tick: so a test can
+  -- assert on what is DRAWN, not only on the setting behind it.
+  f.valueText = value
 
   local function labelFor(v)
     for _, o in ipairs(options) do

@@ -954,6 +954,23 @@ step("settings window builds and every control works", function()
         error("checkbox #" .. i .. " did not come back when clicked again")
       end
       flipped = flipped + 1
+    elseif fn and c.valueText then
+      -- A choice cycles through its options. It must change on the first
+      -- click, and clicking on round must bring it back -- which also
+      -- leaves every setting as this loop found it.
+      local start = c.valueText:GetText()
+      fn()
+      if c.valueText:GetText() == start then
+        error("choice #" .. i .. " did not change when clicked")
+      end
+      local clicks = 1
+      while c.valueText:GetText() ~= start and clicks < 10 do
+        fn()
+        clicks = clicks + 1
+      end
+      if c.valueText:GetText() ~= start then
+        error("choice #" .. i .. " never came back round to where it started")
+      end
     elseif fn then
       fn() fn()
     end
@@ -967,6 +984,112 @@ step("settings window builds and every control works", function()
   UI.settings:Refresh()
   UI.settings:Toggle()
   UI.settings:Toggle()
+end)
+
+step("the meter fades or hides itself in combat, if asked", function()
+  local m = UI.meter
+  local s = m:Settings()
+  m:Show()
+  local f = m.frame
+  local tick = m.watcher and m.watcher:GetScript("OnUpdate")
+  if not tick then error("no combat watcher") end
+
+  -- Drive the watcher as the client would, a frame every 50ms. Nothing in
+  -- this step fires PLAYER_REGEN_ENABLED: leaving combat is only ever seen
+  -- by polling, which is the point -- that event can be missed in-game.
+  local function run(seconds)
+    for _ = 1, math.floor(seconds / 0.05 + 0.5) do
+      NOW = NOW + 0.05
+      tick()
+    end
+  end
+  local function near(a, b) return math.abs((a or 0) - b) < 0.001 end
+  Wrekkit.lastError = nil
+
+  -- Shown, the default: a fight changes nothing.
+  IN_COMBAT = true
+  s.combat = "show"
+  run(1)
+  if not near(f:GetAlpha(), 1) or not f:IsShown() then
+    error("the default mode changed the meter in combat")
+  end
+
+  -- Faded: dims in a fight, lights up when pointed at, back after.
+  s.combat = "fade"
+  run(1)
+  if not near(f:GetAlpha(), 0.3) then error("fade did not dim the meter: " .. f:GetAlpha()) end
+  if not f:IsShown() then error("fade should leave the meter on screen") end
+  local hover = false
+  MouseIsOver = function(frame) return hover and frame == f end
+  hover = true
+  run(1)
+  if not near(f:GetAlpha(), 1) then error("pointing at the faded meter did not bring it back") end
+  hover = false
+  run(1)
+  if not near(f:GetAlpha(), 0.3) then error("moving away did not fade it again") end
+  IN_COMBAT = false
+  run(1)
+  if not near(f:GetAlpha(), 1) then error("the meter did not come back after the fight") end
+
+  -- Hidden: gone for the fight, back after it, and the saved choice untouched.
+  s.combat = "hide"
+  IN_COMBAT = true
+  run(1)
+  if f:IsShown() then error("hide left the meter on screen in combat") end
+  if s.shown ~= true then error("hiding for a fight overwrote the saved shown setting") end
+  IN_COMBAT = false
+  run(1)
+  if not f:IsShown() or not near(f:GetAlpha(), 1) then
+    error("the meter did not return after the fight")
+  end
+
+  -- /wrek in the middle of a fight shows it anyway, until the fight ends.
+  IN_COMBAT = true
+  run(1)
+  m:Toggle()
+  run(1)
+  if not f:IsShown() or not near(f:GetAlpha(), 1) then
+    error("showing it by hand during a fight did not win")
+  end
+  IN_COMBAT = false
+  run(1)
+  IN_COMBAT = true
+  run(1)
+  if f:IsShown() then error("the next fight should hide it again") end
+
+  -- Closed by hand before a fight: stays closed after it.
+  IN_COMBAT = false
+  run(1)
+  m:Hide()
+  IN_COMBAT = true
+  run(1)
+  IN_COMBAT = false
+  run(1)
+  if f:IsShown() then error("a meter closed by hand came back after a fight") end
+
+  -- Closed by hand WHILE faded: stays closed, and its alpha is put back so
+  -- opening it later does not open it faded.
+  m:Show()
+  s.combat = "fade"
+  IN_COMBAT = true
+  run(1)
+  if not near(f:GetAlpha(), 0.3) then error("expected the meter faded before closing it") end
+  m:Hide()
+  run(1)
+  IN_COMBAT = false
+  run(1)
+  if f:IsShown() then error("a meter closed mid-fade came back after the fight") end
+  if not near(f:GetAlpha(), 1) then error("a meter closed mid-fade was left faded for next time") end
+
+  if Wrekkit.lastError and Wrekkit.lastError.label == "meter combat fade" then
+    error("the watcher raised: " .. tostring(Wrekkit.lastError.err))
+  end
+
+  s.combat = "show"
+  MouseIsOver = nil
+  IN_COMBAT = true
+  m:Show()
+  run(1)
 end)
 
 step("compact mode and text size reshape the meter", function()

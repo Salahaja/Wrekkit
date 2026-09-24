@@ -235,6 +235,22 @@ function S:Create()
     20, 100, 5,
     function(v) return v .. "%" end)
 
+  choice(self, "In combat",
+    {
+      { value = "show", label = "shown" },
+      { value = "fade", label = "faded" },
+      { value = "hide", label = "hidden" },
+    },
+    function() return meter:CombatMode() end,
+    function(v)
+      meter:Settings().combat = v
+      meter:UpdateCombatState()
+    end,
+    { "Faded dims the meter while you fight, and",
+      "pointing at it brings it back. Hidden takes",
+      "it away until the fight ends. /wrek shows it",
+      "anyway, and closing it yourself always wins." })
+
   check(self, "Show meter toolbar",
     function() return meter:Settings().showToolbar ~= false end,
     function(v)

@@ -35,6 +35,8 @@ M.defaults = {
   -- Chrome opacity, 0-1. Only the panel, title bar and border fade; the
   -- text and bars stay fully opaque so the meter is readable at any value.
   opacity = 1.0,
+  -- "show", "fade" or "hide": what the meter does while you are fighting.
+  combat = "show",
   locked = false,
   window = { point = "CENTER", x = -320, y = 0, w = 260, h = 200 },
 }
@@ -363,6 +365,7 @@ function M:Create()
   self:UpdatePetButton()
   self:UpdateToggles()
   self:ApplyLayout()
+  self:StartCombatWatch()
   return f
 end
 
@@ -795,6 +798,132 @@ function M:StartTicker()
 end
 
 ----------------------------------------------------------------------
+-- combat visibility
+----------------------------------------------------------------------
+
+--[[ Fade or hide the meter while fighting, if the player asks for it.
+
+     Polled, not driven by the combat events. PLAYER_REGEN_ENABLED can be
+     missed -- zoning, dying, a reconnect -- and a meter that hid on the way
+     into a fight and never heard the way out would simply be gone.
+     UnitAffectingCombat is the client's own answer, and cannot stick.
+
+     The watcher is a frame of its own: the refresh ticker stops whenever
+     the meter is hidden, so it could never notice the fight ending.
+
+     Unlike the window opacity, this fades the WHOLE meter, text included.
+     Opacity keeps a meter readable while you see the game through it; this
+     is for getting it out of the way altogether.
+
+     "Hide" ends in a real Hide(), not an alpha of zero: an invisible window
+     still catches clicks, and hiding it has to mean you can click what is
+     behind it. Neither mode touches the saved shown/hidden choice. A meter
+     you closed yourself stays closed after the fight, one hidden for the
+     fight comes back, and /wrek during a fight shows it until it ends. ]]
+
+local COMBAT_POLL = 0.2    -- seconds between asking the client about combat
+local FADE_TIME = 0.4      -- seconds for a full fade in or out
+local FADED_ALPHA = 0.3    -- how far "fade" goes; pointing at it restores it
+
+function M:CombatMode()
+  local mode = self:Settings().combat
+  if mode == "fade" or mode == "hide" then return mode end
+  return "show"
+end
+
+--- Where the meter's alpha should be heading right now.
+function M:CombatTarget()
+  if not self.inCombat or self.peek then return 1 end
+  local mode = self:CombatMode()
+  if mode == "fade" then
+    -- Pointing at it brings it back, so it can still be read and used.
+    if self.frame and MouseIsOver and MouseIsOver(self.frame) then return 1 end
+    return FADED_ALPHA
+  elseif mode == "hide" then
+    return 0
+  end
+  return 1
+end
+
+--- Ask the client whether we are fighting. Leaving combat ends a peek.
+function M:UpdateCombatState()
+  self.inCombat = W.encounter:ReallyInCombat() and true or false
+  if not self.inCombat then self.peek = nil end
+end
+
+--- Move one step toward the target alpha, hiding or showing at the ends.
+function M:StepFade(dt)
+  local f = self.frame
+  if not f then return end
+  -- The usual state costs a few comparisons: out of combat, fully shown.
+  if not self.inCombat and (self.combatAlpha or 1) == 1
+     and not self.combatHidden then return end
+
+  -- A meter the player closed takes no part. Its alpha is put back, so
+  -- opening it again later does not open it faded.
+  if self:Settings().shown == false then
+    if (self.combatAlpha or 1) ~= 1 then
+      self.combatAlpha = 1
+      f:SetAlpha(1)
+    end
+    self.combatHidden = nil
+    return
+  end
+
+  local target = self:CombatTarget()
+  local a = self.combatAlpha or 1
+
+  -- Coming back from hidden: on screen at nothing, then fade up.
+  if target > 0 and self.combatHidden then
+    self.combatHidden = nil
+    a = 0
+    f:SetAlpha(0)
+    f:Show()
+  end
+
+  if a ~= target then
+    local step = (dt or 0) / FADE_TIME
+    if a < target then
+      a = a + step
+      if a > target then a = target end
+    else
+      a = a - step
+      if a < target then a = target end
+    end
+    self.combatAlpha = a
+    f:SetAlpha(a)
+  end
+
+  -- Faded all the way out: take it off the screen for real.
+  if target == 0 and a <= 0 and f:IsShown() then
+    self.combatHidden = true
+    f:Hide()
+  end
+end
+
+--- One frame of the watcher. A named function rather than a closure, so the
+--- per-frame call allocates nothing.
+local function combatTick()
+  local now = GetTime()
+  local dt = now - (M.lastFadeT or now)
+  M.lastFadeT = now
+  if now - (M.lastCombatPoll or 0) >= COMBAT_POLL then
+    M.lastCombatPoll = now
+    M:UpdateCombatState()
+  end
+  M:StepFade(dt)
+end
+
+function M:StartCombatWatch()
+  if self.watcher then return end
+  local w = CreateFrame("Frame", "WrekkitMeterCombat")
+  self.watcher = w
+  -- Guarded: this runs every frame, and Guard reports an error once rather
+  -- than burying it under a copy per frame.
+  w:SetScript("OnUpdate", function() W.Guard("meter combat fade", combatTick) end)
+end
+
+----------------------------------------------------------------------
 -- public
 ----------------------------------------------------------------------
 
@@ -811,6 +940,10 @@ end
 function M:Show()
   local f = self:Create()
   self:Settings().shown = true
+  -- Asked for in the middle of a fight it is faded or hidden for: that is
+  -- a request to see it now, so it stays up until the fight ends.
+  self:UpdateCombatState()
+  if self.inCombat and self:CombatMode() ~= "show" then self.peek = true end
   f:Show()
   self:Refresh()
 end
