@@ -30,7 +30,7 @@ R.tabs = {
 
 R.state = { tab = "summary", selected = {}, sessionIndex = 1, search = "",
             petMode = "merge", sortKey = nil, drill = nil, drillAbility = nil,
-            groupOnly = false }
+            groupOnly = false, pickedOnly = false }
 
 ----------------------------------------------------------------------
 -- data helpers
@@ -63,6 +63,23 @@ function R:SelectedEncounters()
   -- the window is first opened.
   if table.getn(out) == 0 then return session.encounters, true end
   return out, false
+end
+
+--- The rows the report shows. One filter for ranking and for announcing,
+--- so what gets posted is always what is on screen.
+function R:Filter()
+  return {
+    search = self.state.search,
+    groupOnly = self.state.groupOnly,
+    only = self.state.pickedOnly and W.report:Picked() or nil,
+  }
+end
+
+--- Lit only while it is actually filtering: on, with somebody picked.
+function R:UpdatePickButton()
+  if self.pickBtn then
+    self.pickBtn:SetLit(self.state.pickedOnly == true and W.report:AnyPicked())
+  end
 end
 
 function R:SelectAll()
@@ -248,7 +265,7 @@ function R:AnnounceContext()
     metric = metrics[1],
     encounters = encounters,
     label = label,
-    filter = { search = self.state.search, groupOnly = self.state.groupOnly },
+    filter = self:Filter(),
     petMode = self.state.petMode,
     drill = self.state.drill,
     drillAbility = self.state.drillAbility,
@@ -389,6 +406,23 @@ function R:Create()
   groupBtn:SetPoint("RIGHT", petBtn, "LEFT", -4, 0)
   self.groupBtn = groupBtn
 
+  -- Show only the players picked, as in the meter; the picks are shared.
+  local pickBtn = UI.IconButton(header, UI.media.pick, 18, function()
+    if arg1 == "RightButton" then
+      UI.PickMenu(R.frame, R.pickBtn)
+      return
+    end
+    if not R.state.pickedOnly and not W.report:AnyPicked() then
+      W.Print("nobody is picked yet: shift-click a player to pick them.")
+      return
+    end
+    R.state.pickedOnly = not R.state.pickedOnly
+    R:UpdatePickButton()
+    R:Refresh()
+  end, UI.PICK_TIP)
+  pickBtn:SetPoint("RIGHT", groupBtn, "LEFT", -4, 0)
+  self.pickBtn = pickBtn
+
   local cogBtn = UI.IconButton(f.bar, UI.media.cog, 16, function()
     W.Guard("open settings", function() UI.settings:Toggle() end)
   end, { title = "Settings", lines = { "Appearance, recording and history." } })
@@ -398,7 +432,7 @@ function R:Create()
   -- Posts whatever tab is open. Always via the channel picker and the
   -- confirmation; there is no one-click path to chat.
   local announceBtn = UI.Button(header, "Announce", 64, 18, nil)
-  announceBtn:SetPoint("RIGHT", groupBtn, "LEFT", -4, 0)
+  announceBtn:SetPoint("RIGHT", pickBtn, "LEFT", -4, 0)
   announceBtn:SetScript("OnClick", function()
     W.Guard("announce click", function()
       UI.AnnounceMenu(R.frame, announceBtn, R:AnnounceContext())
@@ -558,13 +592,15 @@ end
 
 local function paintRow(row, item, index)
   local color = item._color or W.ClassColor(item.class)
-  -- Filled from the player's own report rather than measured here; the
-  -- pane's total line says what the mark means.
-  local name = item.remote and ((item.name or "?") .. "|cff9d9d9d*|r") or item.name
-  row:SetData(item._rank, name, item._text, item._sub, item._frac, color, 72)
+  -- Marks for picked players and reported numbers; see UI.RowName. The
+  -- pane's total line says what the * means.
+  row:SetData(item._rank, UI.RowName(item, R.state.pickedOnly),
+    item._text, item._sub, item._frac, color, 72)
   row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
   row:SetScript("OnClick", function()
     W.Guard("row click", function()
+      -- Shift-click picks or unpicks the player, rather than opening them.
+      if UI.ShiftPick(item) then return end
       if arg1 == "RightButton" then
         R.state.drill = nil R.state.deathDrill = nil
       elseif R.state.drill == item.key then
@@ -617,8 +653,7 @@ end
 
 --- Fill one table pane from a metric.
 function R:FillTable(pane, list, view, metricKey, title)
-  local rows, metric, total = W.report:Rank(view, metricKey,
-    { search = self.state.search, groupOnly = self.state.groupOnly })
+  local rows, metric, total = W.report:Rank(view, metricKey, self:Filter())
 
   pane.titleText:SetText(title or W.metrics.Label(metric))
 
@@ -771,6 +806,8 @@ end
 --- See the note on the meter's Refresh: a failure in here must not repeat
 --- forever, and must name itself clearly enough to act on.
 function R:Refresh()
+  -- Picks can change from the meter while this window is shut.
+  self:UpdatePickButton()
   W.Guard("report refresh", function() R:RefreshInner() end)
 end
 

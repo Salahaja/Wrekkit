@@ -28,6 +28,8 @@ M.defaults = {
   segment = "current",
   petMode = "merge",
   groupOnly = false,
+  -- Show only the players picked with shift-click (see W.report:Picked).
+  pickedOnly = false,
   search = "",
   showToolbar = true,
   compact = false,
@@ -135,7 +137,7 @@ function M:AnnounceContext()
     metric = s.metric,
     encounters = encounters,
     label = segLabel,
-    filter = { search = s.search, groupOnly = s.groupOnly },
+    filter = self:Filter(),
     petMode = s.petMode,
     -- A drilldown IS what is on screen, so announcing has to know about it.
     drill = self.drill,
@@ -281,6 +283,26 @@ function M:Create()
   groupBtn:SetPoint("RIGHT", reportBtn, "LEFT", -4, 0)
   self.groupBtn = groupBtn
 
+  -- Show only the players picked. Next to group-only: both decide who is
+  -- counted. Picking itself is shift-click on a row.
+  local pickBtn = UI.IconButton(tb, UI.media.pick, 18, function()
+    if arg1 == "RightButton" then
+      UI.PickMenu(M.frame, M.pickBtn)
+      return
+    end
+    local st = M:Settings()
+    if not st.pickedOnly and not W.report:AnyPicked() then
+      -- Filtering to nobody would only empty the meter; say how to pick.
+      W.Print("nobody is picked yet: shift-click a player to pick them.")
+      return
+    end
+    st.pickedOnly = not st.pickedOnly
+    M:UpdateToggles()
+    M:Refresh()
+  end, UI.PICK_TIP)
+  pickBtn:SetPoint("RIGHT", groupBtn, "LEFT", -2, 0)
+  self.pickBtn = pickBtn
+
   -- Record combat outside instances.
   local worldBtn = UI.IconButton(tb, UI.media.globe, 18, function()
     W.db.trackOpenWorld = not W.db.trackOpenWorld
@@ -294,7 +316,7 @@ function M:Create()
       "Dim: only inside dungeons and raids.",
     },
   })
-  worldBtn:SetPoint("RIGHT", groupBtn, "LEFT", -2, 0)
+  worldBtn:SetPoint("RIGHT", pickBtn, "LEFT", -2, 0)
   self.worldBtn = worldBtn
 
   -- Reset. Left-click closes the current log and starts a fresh one, keeping
@@ -320,6 +342,16 @@ function M:Create()
   })
   resetBtn:SetPoint("RIGHT", worldBtn, "LEFT", -2, 0)
   self.resetBtn = resetBtn
+
+  --[[ The search box takes whatever width is left. At a fixed 110 it
+       already met the icons at the meter's narrowest, and one more icon
+       would have run them together; anchored between the edge and the Pets
+       button it gives way instead of overlapping. ]]
+  petBtn:ClearAllPoints()
+  petBtn:SetPoint("RIGHT", resetBtn, "LEFT", -4, 0)
+  search:ClearAllPoints()
+  search:SetPoint("LEFT", tb, "LEFT", 4, 0)
+  search:SetPoint("RIGHT", petBtn, "LEFT", -4, 0)
 
   ------------------------------------------------------------------
   -- list
@@ -380,6 +412,9 @@ end
 --- with the setting.
 function M:UpdateToggles()
   if self.groupBtn then self.groupBtn:SetLit(self:Settings().groupOnly == true) end
+  if self.pickBtn then
+    self.pickBtn:SetLit(self:Settings().pickedOnly == true and W.report:AnyPicked())
+  end
   if self.worldBtn then self.worldBtn:SetLit(W.db.trackOpenWorld == true) end
   if self.resetBtn then self.resetBtn:SetLit(false) end
 end
@@ -614,10 +649,8 @@ end
 
 local function paintActor(row, item, index)
   local color = item._color or W.ClassColor(item.class)
-  -- Filled in from the player's own report rather than measured here:
-  -- marked, so a report is never mistaken for a measurement.
-  local name = item.remote and ((item.name or "?") .. "|cff9d9d9d*|r") or item.name
-  row:SetData(item._rank, name, item._text, item._sub, item._frac, color, 58)
+  row:SetData(item._rank, UI.RowName(item, M:Settings().pickedOnly),
+    item._text, item._sub, item._frac, color, 58)
   row.tip = function(self) actorTooltip(self, item) end
   --[[ The meter repaints twice a second. Without this the numbers under the
        cursor are frozen at whatever they were when the tooltip opened, which
@@ -627,12 +660,13 @@ local function paintActor(row, item, index)
   end
   row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
   row:SetScript("OnClick", function()
+    -- Shift-click picks or unpicks the player, rather than opening them.
+    if UI.ShiftPick(item) then return end
     if arg1 == "RightButton" then
       UI.meter.drill = nil
       UI.meter.drillAbility = nil
     else
       UI.meter.drill = item.key
-      UI.meter.drillAbility = nil
       UI.meter.drillAbility = nil
     end
     UI.meter:Refresh()
@@ -702,8 +736,7 @@ function M:RefreshInner()
   local view = W.report:View(encounters, { petMode = s.petMode })
   -- Kept for the hover tooltip, which needs it to explain an empty detail.
   self.lastView = view
-  local rows, _, total = W.report:Rank(view, s.metric,
-    { search = s.search, groupOnly = s.groupOnly })
+  local rows, _, total = W.report:Rank(view, s.metric, self:Filter())
 
   f.title:SetText(W.metrics.Label(metric))
   self:SetSegmentLabel(segLabel)
@@ -777,6 +810,12 @@ function M:RefreshInner()
   else
     self.footR:SetText(totalText .. " total")
   end
+
+  -- Only picked players, and none of them in this segment: say so, rather
+  -- than show an empty meter that looks broken.
+  if table.getn(rows) == 0 and s.pickedOnly and W.report:AnyPicked() then
+    self.footR:SetText("no picked players here")
+  end
 end
 
 ----------------------------------------------------------------------
@@ -795,6 +834,103 @@ function M:StartTicker()
     W.After(REFRESH, tick, "meterTick")
   end
   tick()
+end
+
+----------------------------------------------------------------------
+-- picked players
+----------------------------------------------------------------------
+
+-- Shared by the meter and the report: the same picks, the same gesture and
+-- the same marks, so the two windows never disagree about who is picked.
+
+UI.PICK_TIP = {
+  title = "Picked players",
+  lines = {
+    "Shift-click a player to pick or unpick them.",
+    "Lit: only picked players are shown.",
+    "Right-click: see the picks, or clear them.",
+  },
+}
+
+--- A player row's name as drawn. Marked if picked -- unless only picked
+--- players are showing, when every row is one and the mark is noise -- and
+--- marked * when filled from that player's own report, not measured here.
+function UI.RowName(item, pickedOnly)
+  local name = item.name or "?"
+  if not pickedOnly and (item.isPlayer or item.class == "PET")
+     and W.report:IsPicked(item.ownerName or item.name) then
+    name = "|cffe0a22c>|r " .. name
+  end
+  if item.remote then name = name .. "|cff9d9d9d*|r" end
+  return name
+end
+
+--- Shift-click on a row picks or unpicks that player; a pet picks its
+--- owner. Returns true when it handled the click.
+function UI.ShiftPick(item)
+  if arg1 ~= "LeftButton" then return false end
+  if not (IsShiftKeyDown and IsShiftKeyDown()) then return false end
+  if not (item.isPlayer or item.class == "PET") then return false end
+  W.report:TogglePick(item.ownerName or item.name)
+  UI.PicksChanged()
+  return true
+end
+
+--- After the picks change. With nobody left picked, "only picked" turns
+--- itself off in both windows -- otherwise the next pick would silently
+--- start filtering again -- and both windows redraw.
+function UI.PicksChanged()
+  if not W.report:AnyPicked() then
+    M:Settings().pickedOnly = false
+    if UI.report and UI.report.state then UI.report.state.pickedOnly = false end
+  end
+  M:UpdateToggles()
+  M:Refresh()
+  if UI.report and UI.report.frame and UI.report.frame:IsShown() then
+    UI.report:UpdatePickButton()
+    UI.report:Refresh()
+  end
+end
+
+--- Right-click on either window's pick button: the picks, to take one off
+--- or clear them all. It reopens after each, so several can go in a row.
+function UI.PickMenu(parent, anchor)
+  local names = {}
+  for name in pairs(W.report:Picked()) do table.insert(names, name) end
+  table.sort(names)
+
+  local items = {}
+  if table.getn(names) == 0 then
+    table.insert(items, { text = "Nobody is picked yet.", disabled = true })
+    table.insert(items, { text = "Shift-click a player to pick them.", disabled = true })
+  else
+    for i = 1, table.getn(names) do
+      table.insert(items, { text = names[i], value = "unpick:" .. names[i], checked = true })
+    end
+    table.insert(items, { text = "Clear all picks", value = "clear" })
+  end
+
+  return UI.Menu(parent, anchor, items, function(value)
+    if value == "clear" then
+      W.report:ClearPicks()
+    else
+      local _, _, name = string.find(value or "", "^unpick:(.*)$")
+      if name then W.report:TogglePick(name) end
+    end
+    UI.PicksChanged()
+    if value ~= "clear" and W.report:AnyPicked() then UI.PickMenu(parent, anchor) end
+  end, 200)
+end
+
+--- The rows the meter shows. One filter for ranking and for announcing, so
+--- what gets posted is always what is on screen.
+function M:Filter()
+  local s = self:Settings()
+  return {
+    search = s.search,
+    groupOnly = s.groupOnly,
+    only = s.pickedOnly and W.report:Picked() or nil,
+  }
 end
 
 ----------------------------------------------------------------------

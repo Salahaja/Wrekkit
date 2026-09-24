@@ -1609,6 +1609,109 @@ step("hovering still highlights the row", function()
   if GameTooltip.shown then error("the tooltip stayed up after leaving") end
 end)
 
+step("picking players filters the meter and the report", function()
+  local m = UI.meter
+  local s = m:Settings()
+  Wrekkit.report:ClearPicks()
+  s.pickedOnly = false
+  m.drill = nil
+  m:SetMetric("damage")
+  local rows = meterRows()
+  if table.getn(m.list.data) < 2 then error("need two players on the meter to pick from") end
+
+  local function shiftClick(row)
+    IsShiftKeyDown = function() return true end
+    arg1 = "LeftButton"
+    row:GetScript("OnClick")()
+    IsShiftKeyDown = nil
+  end
+  local function menuRow(menu, text)
+    for _, r in ipairs(menu.rows or {}) do
+      if r:IsShown() and r.label:GetText() == text then return r end
+    end
+    return nil
+  end
+
+  -- Nobody picked: the toggle refuses to filter to nobody.
+  arg1 = "LeftButton"
+  m.pickBtn:GetScript("OnClick")()
+  if s.pickedOnly then error("the toggle switched on with nobody picked") end
+
+  -- Shift-click picks, and does not open the player.
+  local target = m.list.data[1]
+  local who = target.ownerName or target.name
+  shiftClick(rows[1])
+  if not Wrekkit.report:IsPicked(who) then error("shift-click did not pick " .. tostring(who)) end
+  if m.drill then error("shift-click opened the player instead of picking them") end
+  rows = meterRows()
+  if not string.find(rows[1].name:GetText() or "", ">", 1, true) then
+    error("a picked player is not marked in the list")
+  end
+
+  -- On: only the picked player shows, and the mark goes (every row is one).
+  arg1 = "LeftButton"
+  m.pickBtn:GetScript("OnClick")()
+  if not s.pickedOnly or not m.pickBtn._lit then error("the toggle did not switch on and light") end
+  rows = meterRows()
+  if table.getn(m.list.data) ~= 1 then
+    error("filtering kept " .. table.getn(m.list.data) .. " rows, want 1")
+  end
+  if string.find(rows[1].name:GetText() or "", ">", 1, true) then
+    error("rows are still marked while only picks are shown")
+  end
+
+  -- The report shares the picks; its own switch filters its tables.
+  UI.report:Show()
+  UI.report.state.tab = "damage"
+  UI.report.state.drill = nil
+  UI.report:Refresh()
+  local everyone = table.getn(UI.report.mainList.data)
+  arg1 = "LeftButton"
+  UI.report.pickBtn:GetScript("OnClick")()
+  if not UI.report.state.pickedOnly then error("the report's toggle did not switch on") end
+  if table.getn(UI.report.mainList.data) ~= 1 then
+    error("the report kept " .. table.getn(UI.report.mainList.data) .. " of " .. everyone .. " rows")
+  end
+
+  -- Right-click lists the picks. Unpicking one of two keeps the menu open;
+  -- clearing switches both windows' filters off.
+  local second = nil
+  for _, r in ipairs(UI.report.mainList.data) do second = r end
+  Wrekkit.report:TogglePick("Elfpriest")
+  UI.PicksChanged()
+  arg1 = "RightButton"
+  m.pickBtn:GetScript("OnClick")()
+  local menu = UI.PickMenu(m.frame, m.pickBtn)
+  local elf = menuRow(menu, "Elfpriest")
+  if not elf then error("the pick menu does not list a picked player") end
+  elf:GetScript("OnClick")()
+  if Wrekkit.report:IsPicked("Elfpriest") then error("unpicking from the menu did not unpick") end
+  menu = UI.PickMenu(m.frame, m.pickBtn)
+  local clear = menuRow(menu, "Clear all picks")
+  if not clear then error("the pick menu has no Clear all picks") end
+  clear:GetScript("OnClick")()
+  if Wrekkit.report:AnyPicked() then error("Clear all picks left someone picked") end
+  if s.pickedOnly or UI.report.state.pickedOnly then
+    error("with nobody picked, the filters should have switched off")
+  end
+  if m.pickBtn._lit then error("the toggle stayed lit with nobody picked") end
+  meterRows()
+  if table.getn(m.list.data) < 2 then error("the meter did not go back to everyone") end
+
+  -- Enemies cannot be picked: shift-click on one is an ordinary click.
+  m:SetMetric("enemy")
+  rows = meterRows()
+  if rows[1] then shiftClick(rows[1]) end
+  if Wrekkit.report:AnyPicked() then error("an enemy was picked") end
+
+  m.drill = nil
+  m:SetMetric("damage")
+  UI.report.state.tab = "summary"
+  if UI.report.frame then UI.report.frame:Hide() end
+  UI.CloseMenu()
+  arg1 = nil
+end)
+
 --[[ Rows are reused between modes. A drilled row still carrying the actor
      tooltip would describe someone who is not in the list any more. ]]
 step("drilling in clears the actor tooltip from reused rows", function()

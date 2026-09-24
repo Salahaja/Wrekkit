@@ -28,6 +28,7 @@ UI.media = {
   globe  = MEDIA .. "globe",
   reset  = MEDIA .. "reset",
   group  = MEDIA .. "group",
+  pick   = MEDIA .. "pick",
   lock   = MEDIA .. "lock",
   cog    = MEDIA .. "cog",
 }
@@ -381,6 +382,9 @@ function UI.Menu(parent, anchorTo, items, onPick, width)
 
   -- Hide any rows left over from a longer menu.
   for i = n + 1, table.getn(menuRows) do menuRows[i]:Hide() end
+
+  -- Exposed so a test can click an item, as UI.Check exposes its tick.
+  f.rows = menuRows
 
   menuCatcher:Show()
   f:Show()

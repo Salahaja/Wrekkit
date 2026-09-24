@@ -426,6 +426,38 @@ gen["cog"] = function()
   end)
 end
 
+-- Five-point star: "picked", the players someone chose to follow. Coverage
+-- is an exact inside test; write_tga's 4x4 supersampling does the edges.
+gen["pick"] = function()
+  local vx, vy = {}, {}
+  write_tga(OUT .. "pick.tga", 32, 32, function(x, y, w, h)
+    if not vx[1] then
+      -- Outer and inner radii alternate; the first vertex points straight
+      -- up, and the centre sits a touch low so the star looks centred.
+      local cx, cy = w * 0.5, h * 0.54
+      local outer = w * 0.46
+      local inner = outer * 0.42
+      for k = 0, 9 do
+        local ang = -math.pi / 2 + k * math.pi / 5
+        local rad = (k % 2 == 0) and outer or inner
+        vx[k + 1] = cx + rad * math.cos(ang)
+        vy[k + 1] = cy + rad * math.sin(ang)
+      end
+    end
+    -- Even-odd ray cast to the right.
+    local inside = false
+    local j = 10
+    for i = 1, 10 do
+      if ((vy[i] > y) ~= (vy[j] > y)) and
+         (x < (vx[j] - vx[i]) * (y - vy[i]) / (vy[j] - vy[i]) + vx[i]) then
+        inside = not inside
+      end
+      j = i
+    end
+    return 1, 1, 1, inside and 1 or 0
+  end)
+end
+
 -- 1px hairline border as a 9-slice-able rounded frame outline.
 gen["frame-border"] = function()
   write_tga(OUT .. "frame-border.tga", 64, 64, function(x, y, w, h)

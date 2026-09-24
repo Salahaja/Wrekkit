@@ -160,7 +160,7 @@ os.execute('mkdir "' .. outDir:gsub("/", "\\") .. '" 2>nul')
 local names = {
   "white", "bar-fill", "chart-area", "panel-bg", "corner",
   "glow", "header-sheen", "emblem", "minimap", "frame-border",
-  "globe", "reset", "group", "lock", "cog",
+  "globe", "reset", "group", "pick", "lock", "cog",
 }
 
 for _, n in ipairs(names) do

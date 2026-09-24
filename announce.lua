@@ -76,6 +76,7 @@ local function filterNote(ctx)
   local bits = {}
   local f = ctx.filter or {}
   if f.groupOnly then table.insert(bits, "group only") end
+  if f.only and next(f.only) ~= nil then table.insert(bits, "picked players") end
   if f.search and f.search ~= "" then
     table.insert(bits, "name: " .. f.search)
   end

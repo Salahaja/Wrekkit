@@ -105,17 +105,19 @@ Deliberately spare, so it can sit on screen during a pull.
 | left-click title | metric menu — damage, dps, healing, hps, overheal, taken, deaths, dispels, interrupts, consumables, buff uptime, crit %, enemy damage |
 | right-click title | segment menu — current pull, last pull, all session |
 | left-click a row | that player's ability breakdown |
+| shift-click a row | pick or unpick that player (see ★ below) |
 | left-click an ability | full detail for it (see below) |
 | right-click a row | back out |
 | drag the corner | resize; row count follows the height |
 | `Pets+` button | fold pets into their owner, or split them out |
 | search box | filter by name |
 
-Three icon toggles sit on the toolbar, lit when active:
+Four icon toggles sit on the toolbar, lit when active:
 
 | Icon | Does |
 | --- | --- |
 | 👥 | count only your party or raid, ignoring everyone else nearby |
+| ★ | show only the players you picked; right-click to see or clear the picks |
 | 🌐 | record combat outside instances too (off by default) |
 | ↺ | left-click starts a new log; right-click deletes the history, behind a confirmation |
 
@@ -310,6 +312,12 @@ Tabs: **Summary** (timeline chart plus damage and healing side by side),
 
 Clicking a death shows what killed them: the last eight hits before it, with
 the health left after each — lava and falling included.
+
+**Picking players** works here too. Shift-click players to pick them, and
+the ★ toggle narrows every table to just them; percentages become shares of
+the picked players. The picks are shared with the meter and kept between
+sessions, while each window has its own ★ switch. Pets follow their owner,
+and enemies are never hidden.
 
 The timeline is a rolling average of damage done, damage taken and effective
 healing, with a red tick at every player death. Click a legend entry to hide

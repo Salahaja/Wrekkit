@@ -2509,6 +2509,80 @@ CVARS = {}
 Wrekkit.db.combatLogRangeSaved = nil
 end
 
+----------------------------------------------------------------------
+print("\n-- picked players --")
+----------------------------------------------------------------------
+do
+-- Show only chosen characters. One shared list, a switch per window. The
+-- filter reaches players and their pets (a pet follows its owner), never
+-- enemies, and an empty list filters nothing.
+
+Wrekkit.ResetData("all")
+Wrekkit.report:ClearPicks()
+IN_COMBAT = true
+fire("PLAYER_REGEN_DISABLED")
+Wrekkit.encounter:Damage("0xP1", "0xBoss", 11267, 500, {})
+Wrekkit.encounter:Damage("0xP2", "0xBoss", 25304, 400, {})
+Wrekkit.encounter:Damage("0xP3", "0xBoss", 75, 300, {})
+Wrekkit.encounter:Damage("0xPet1", "0xBoss", 16827, 200, {})
+Wrekkit.encounter:Damage("0xBoss", "0xP1", 11605, 900, {})
+advance(10)
+IN_COMBAT = false
+fire("PLAYER_REGEN_ENABLED")
+Wrekkit.encounter:Finish()
+local enc = TH.lastStored()
+
+local function shown(view, metric, filter)
+  local out = {}
+  for _, r in ipairs(Wrekkit.report:Rank(view, metric, filter)) do
+    table.insert(out, r.name)
+  end
+  table.sort(out)
+  return table.concat(out, ",")
+end
+local function picks() return { only = Wrekkit.report:Picked() } end
+
+local merged = Wrekkit.report:View({ enc }, { petMode = "merge" })
+check("nobody picked: the filter shows everyone",
+  shown(merged, "damage", picks()), "Elfpriest,Fuff,Moorhunt")
+
+Wrekkit.report:TogglePick("Fuff")
+Wrekkit.report:TogglePick("Moorhunt")
+check("picks are kept with the saved settings", Wrekkit.db.picked["Fuff"], true)
+check("only the picked players", shown(merged, "damage", picks()), "Fuff,Moorhunt")
+
+local byName = {}
+for _, r in ipairs(Wrekkit.report:Rank(merged, "damage", picks())) do byName[r.name] = r end
+check("a merged pet still counts for its picked owner", byName["Moorhunt"].damage, 500)
+check("shares are of the picked players, not the raid", byName["Fuff"]._pct, 50, 0.01)
+
+local split = Wrekkit.report:View({ enc }, { petMode = "separate" })
+check("a split pet follows its picked owner",
+  shown(split, "damage", picks()), "Fuff,Moorhunt,Raptor (Moorhunt)")
+check("enemies are never filtered by picks", shown(merged, "enemy", picks()), "Onyxia")
+
+-- A filtered post has to say so, or two names read as the whole raid.
+local posted = Wrekkit.announce:Lines(
+  { metric = "damage", encounters = { enc }, label = "Onyxia",
+    filter = picks(), petMode = "merge" }, 5)
+check("an announcement says it is picked players only",
+  string.find(posted[1], "picked players", 1, true) ~= nil, true)
+local mentionsPriest = false
+for _, l in ipairs(posted) do
+  if string.find(l, "Elfpriest", 1, true) then mentionsPriest = true end
+end
+check("and posts only the picked players", mentionsPriest, false)
+
+Wrekkit.report:TogglePick("Fuff")
+check("picking again unpicks", Wrekkit.report:IsPicked("Fuff"), false)
+Wrekkit.report:TogglePick("?")
+check("a name still resolving cannot be picked", Wrekkit.report:IsPicked("?"), false)
+Wrekkit.report:ClearPicks()
+check("clearing leaves nobody picked", Wrekkit.report:AnyPicked(), false)
+
+Wrekkit.ResetData("all")
+end
+
 print(string.format("\n%d passed, %d failed\n", pass, fail))
 
 if fail > 0 then os.exit(1) end

@@ -421,6 +421,35 @@ end
 -- ranking
 ----------------------------------------------------------------------
 
+--[[ Picked players: the characters someone chose to follow.
+
+     One list, shared by the meter and the report and kept across sessions:
+     "the people I care about" is the same question in both windows and on
+     the next raid night. Whether a window shows ONLY them is that window's
+     own switch, the way group-only is. ]]
+function R:Picked()
+  if not W.db.picked then W.db.picked = {} end
+  return W.db.picked
+end
+
+function R:IsPicked(name)
+  return name ~= nil and self:Picked()[name] == true
+end
+
+function R:AnyPicked()
+  return next(self:Picked()) ~= nil
+end
+
+function R:TogglePick(name)
+  if not name or name == "" or name == "?" then return end
+  local picked = self:Picked()
+  if picked[name] then picked[name] = nil else picked[name] = true end
+end
+
+function R:ClearPicks()
+  W.db.picked = {}
+end
+
 local function matches(row, filter)
   if not filter then return true end
 
@@ -449,6 +478,18 @@ local function matches(row, filter)
   if filter.groupOnly then
     local who = row.ownerName or row.name
     if (row.isPlayer or row.class == "PET") and not W.capture:InGroup(who) then
+      return false
+    end
+  end
+
+  --[[ Only the players someone picked. The same reach as group-only:
+       players and their pets, never enemies, since picking characters is a
+       choice about your own side and applying it to enemies would empty the
+       Enemies tab. A pet follows its owner. An empty list filters nothing:
+       a filter that hides everyone is never what was meant. ]]
+  if filter.only and next(filter.only) ~= nil then
+    local who = row.ownerName or row.name
+    if (row.isPlayer or row.class == "PET") and not filter.only[who] then
       return false
     end
   end

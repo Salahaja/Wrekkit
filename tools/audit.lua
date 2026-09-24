@@ -64,7 +64,7 @@ declare(WOW, [[
   UnitExists UnitIsPlayer UnitIsUnit UnitCanCooperate UnitAffectingCombat
   SetCVar GetCVar SendChatMessage SendAddonMessage GetAddOnMetadata
   GetNumSavedInstances GetSavedInstanceInfo UnitIsGhost
-  GetItemInfo IsInGuild GetCursorPosition Minimap
+  GetItemInfo IsInGuild GetCursorPosition Minimap IsShiftKeyDown
   this event arg1 arg2 arg3 arg4 arg5 arg6 arg7 arg8 arg9
 ]])
 
@@ -193,7 +193,10 @@ local function region(kind)
     table.insert(self._points, args)
   end
   m.SetAllPoints = function() end
-  m.ClearAllPoints = function(self) self._points = {} end
+  -- Drops the frame's anchor EDGES too, as the client does. Keeping them
+  -- reported a cycle for code that re-anchors: clear A, point A at C, then
+  -- point B at A reads as B -> A -> B although A no longer looks at B.
+  m.ClearAllPoints = function(self) self._points = {} self._anchors = nil end
   m.GetPoint = function(self)
     local p = self._points[1]
     if not p then return "CENTER", nil, "CENTER", 0, 0 end
@@ -1023,6 +1026,38 @@ step("widget interactions", function()
       IN_COMBAT = wasInCombat
       s.combat = "show"
       m:Show()
+    end
+
+    -- Picked players: shift-click a row, filter to the picks in both
+    -- windows, open the pick list, unpick from it, clear.
+    do
+      local m = W.ui.meter
+      m:Show()
+      m:Refresh()
+      local row = m.list and m.list.rows and m.list.rows[1]
+      STUB.IsShiftKeyDown = function() return true end
+      arg1 = "LeftButton"
+      if row and row._scripts and row._scripts.OnClick then row._scripts.OnClick() end
+      STUB.IsShiftKeyDown = nil
+      W.report:TogglePick("Fuff")
+      if m.pickBtn then m.pickBtn._scripts.OnClick() end
+      if W.ui.report.pickBtn then
+        W.ui.report:Show()
+        W.ui.report.pickBtn._scripts.OnClick()
+      end
+      arg1 = "RightButton"
+      if m.pickBtn then m.pickBtn._scripts.OnClick() end
+      local menu = W.ui.PickMenu(m.frame, m.pickBtn)
+      for _, r in ipairs((menu and menu.rows) or {}) do
+        if r:IsShown() and r._scripts and r._scripts.OnClick then
+          r._scripts.OnClick()
+          break
+        end
+      end
+      W.report:ClearPicks()
+      W.ui.PicksChanged()
+      W.ui.CloseMenu()
+      arg1 = nil
     end
 
     -- death recap rendering
