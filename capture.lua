@@ -68,12 +68,12 @@ C.events = {
   "SPELL_GO_SELF", "SPELL_GO_OTHER",
   "UNIT_DIED",
 
-  -- Auras. Edge-triggered by nampower: these fire when something is gained
-  -- or lost, never on a timer, so uptime costs nothing to follow.
+  -- Buffs. Edge-triggered by nampower: these fire when something is gained
+  -- or lost, never on a timer, so uptime costs nothing to follow. Debuffs
+  -- are not followed: nothing in the addon shows them, and recording data
+  -- no view reads is storage spent for nothing.
   "BUFF_ADDED_SELF", "BUFF_REMOVED_SELF",
   "BUFF_ADDED_OTHER", "BUFF_REMOVED_OTHER",
-  "DEBUFF_ADDED_SELF", "DEBUFF_REMOVED_SELF",
-  "DEBUFF_ADDED_OTHER", "DEBUFF_REMOVED_OTHER",
 }
 
 -- CVars nampower gates the richer events behind. Enabling them is cheap and
@@ -83,7 +83,8 @@ C.cvars = {
   "NP_EnableSpellHealEvents",
   "NP_EnableSpellEnergizeEvents",
   "NP_EnableSpellGoEvents",     -- carries the itemId behind a cast
-  "NP_EnableAuraCastEvents",    -- buff and debuff add/remove
+  -- Not NP_EnableAuraCastEvents: that gates AURA_CAST_ON_*, a different
+  -- family. BUFF_ADDED/REMOVED need no CVar at all.
 }
 
 ----------------------------------------------------------------------
@@ -151,6 +152,7 @@ function C:ScanRoster()
   end
 
   self.groupMembers = fresh
+  self:PruneBuffs()
 end
 
 --- Is this player in the current party or raid? Solo, only you are.
@@ -567,11 +569,171 @@ function C:SPELL_HEAL(target, caster, spellId, amount, critical, periodic)
   })
 end
 
---- An aura went on or came off a unit. Both directions land here so the
---- encounter only has one entry point to reason about.
-function C:Aura(guid, spellId, gained)
-  if not spellId or spellId == 0 then return end
-  W.encounter:Aura(guid, spellId, gained)
+----------------------------------------------------------------------
+-- buffs
+----------------------------------------------------------------------
+
+--[[ Which buffs are up on the group -- all the time, not only in combat.
+
+     Uptime has to know what was ALREADY up when a pull began. A flask is
+     drunk before the pull, not during it, so an encounter that only
+     listened while it was running would never hear about the one buff
+     anybody asks about. The state therefore lives here, independent of any
+     encounter, and an encounter reads it when a player first appears.
+
+     Only the group and their pets. Every unit inside the combat log range
+     raises these events, and at 200 yards that is a great many units no
+     view shows -- keeping them would grow without bound for nothing.
+
+     Per spell, the set of aura SLOTS holding it rather than a flag. Two
+     priests' Renews are two slots of one spell, and the first expiring
+     must not end the uptime of the second. ]]
+C.buffs = {}   -- guid -> spellId -> { slots = { [slot] = true }, since, scanned }
+
+--- The player, someone in the group, or one of their pets?
+function C:IsGroupUnit(guid)
+  if not guid then return false end
+  local u = self.units[guid] or self:Unit(guid)
+  if not u then return false end
+  if u.isPlayer then return self:InGroup(u.name) end
+  if u.class == "PET" then return self:InGroup(u.ownerName) end
+  return false
+end
+
+--- Buffs a unit has RIGHT NOW, by spell id, asked of the client directly.
+--- SuperWoW extends UnitBuff with the spell id as its third return; without
+--- it the id is absent and this finds nothing, which is the honest answer.
+function C:ScanBuffs(guid)
+  if not UnitBuff or not guid then return nil end
+  local found, any = {}, false
+  local ok = pcall(function()
+    for i = 1, 32 do
+      local tex, _, spellId = UnitBuff(guid, i)
+      if not tex then break end
+      local id = tonumber(spellId)
+      if id and id > 0 then
+        found[id] = true
+        any = true
+      end
+    end
+  end)
+  if ok and any then return found end
+  return nil
+end
+
+--[[ Fill in buffs that were up before we could have heard about them.
+
+     The events only describe changes. Anything gained before a /reload, or
+     while the unit was out of range, never produced one we saw -- which is
+     exactly how a flask drunk before a reload would read as never drunk.
+
+     Add-only. A unit too far away to inspect returns nothing, and taking
+     that as "no buffs" would erase state the events got right. ]]
+function C:SeedBuffs(guid)
+  local found = self:ScanBuffs(guid)
+  if not found then return end
+  local set = self.buffs[guid]
+  if not set then
+    set = {}
+    self.buffs[guid] = set
+  end
+  local now = GetTime()
+  for id in pairs(found) do
+    if not set[id] then
+      -- When it came up is unknown; `scanned` says so, and the encounter
+      -- takes it as up since the pull began rather than inventing a time.
+      set[id] = { slots = { scan = true }, since = now, scanned = true }
+    end
+  end
+end
+
+--- Take one instance of a buff off. An instance we never saw arrive -- it
+--- predates us, or came from a scan -- has no known slot, so a removal we
+--- cannot match consumes that rather than a real slot someone else holds.
+local function dropInstance(b, slot)
+  if slot and b.slots[slot] then
+    b.slots[slot] = nil
+    return
+  end
+  -- Searched for rather than taken from next(): next() returns whichever
+  -- key it likes, and a real slot that another caster holds must survive.
+  for k in pairs(b.slots) do
+    if slot == nil or type(k) ~= "number" then
+      b.slots[k] = nil
+      return
+    end
+  end
+end
+
+--[[ A buff changed on a unit.
+
+     state is nampower's own account of what happened:
+       0  newly added              1  removed
+       2  a stack moved up or down on an aura that STAYS on
+     State 2 matters. Spending a charge fires a removal with state 2 while
+     the buff remains, so taking every removal as "gone" stopped charge
+     buffs such as Flurry at their first charge. A refresh fires neither:
+     it arrives as BUFF_UPDATE_DURATION, which is not a change of state.
+
+     Only a spell going from down to up, or up to down, is passed on --
+     that edge is all uptime needs. ]]
+function C:Buff(guid, slot, spellId, gained, state)
+  spellId = tonumber(spellId)
+  if not spellId or spellId == 0 or not guid then return end
+  if W.db and W.db.trackAuras == false then return end
+  state = tonumber(state)
+
+  slot = tonumber(slot)
+
+  local set = self.buffs[guid]
+  local b = set and set[spellId]
+  local now = GetTime()
+
+  if not gained then
+    -- Nothing to take off, or a stack spent on a buff that stays on.
+    -- Checked before anything else: removals for units nobody tracks are
+    -- most of the traffic, and they should cost a table lookup, no more.
+    if not b or state == 2 then return end
+    dropInstance(b, slot)
+    if next(b.slots) == nil then
+      set[spellId] = nil
+      if next(set) == nil then self.buffs[guid] = nil end
+      W.encounter:BuffEdge(guid, spellId, false, now)
+    end
+    return
+  end
+
+  -- A stack added to something already known changes nothing. A stack on
+  -- something NOT known still says it is on, so it is taken as an arrival.
+  if b then
+    if state ~= 2 then b.slots[slot or "anon"] = true end
+    return
+  end
+  if not self:IsGroupUnit(guid) then return end
+
+  if not set then
+    set = {}
+    self.buffs[guid] = set
+  end
+  b = { slots = {}, since = now }
+  b.slots[slot or "anon"] = true
+  set[spellId] = b
+  W.encounter:BuffEdge(guid, spellId, true, now)
+end
+
+--- A unit died: every buff it had is gone, whether or not the removals
+--- arrive. Some do not, and a dead player still "holding" a flask would
+--- read as full uptime.
+function C:ClearBuffs(guid)
+  if guid then self.buffs[guid] = nil end
+end
+
+--- Forget units that have left the group, so this stays the size of the
+--- group rather than the size of the night.
+function C:PruneBuffs()
+  for guid in pairs(self.buffs) do
+    if not self:IsGroupUnit(guid) then self.buffs[guid] = nil end
+  end
 end
 
 function C:SPELL_MISS(caster, target, spellId, missInfo)
@@ -634,24 +796,22 @@ dispatch.SPELL_HEAL_BY_OTHER = dispatch.SPELL_HEAL_BY_SELF
 -- aggregator de-dupes on (caster, target, spell, amount) within a tick.
 dispatch.SPELL_HEAL_ON_SELF = dispatch.SPELL_HEAL_BY_SELF
 
--- BUFF/DEBUFF_ADDED/REMOVED(guid, slot, spellId, ...). The slot is the
--- client's aura index and is not stable across a fight, so only the guid
--- and the spell id are used.
-local function auraOn(a1, a2, a3)
-  C:Aura(a1, num(a3), true)
+-- BUFF_ADDED/REMOVED_*(guid, luaSlot, spellId, stackCount, auraLevel,
+-- auraSlot, state), as ChronicleCompanion documents them. luaSlot follows
+-- UnitBuff ordering and shifts as other buffs come and go; auraSlot is the
+-- raw slot and stays put for as long as the aura does, so instances are
+-- keyed by that.
+local function buffOn(a1, a2, a3, a4, a5, a6, a7)
+  C:Buff(a1, a6, a3, true, a7)
 end
-local function auraOff(a1, a2, a3)
-  C:Aura(a1, num(a3), false)
+local function buffOff(a1, a2, a3, a4, a5, a6, a7)
+  C:Buff(a1, a6, a3, false, a7)
 end
 
-dispatch.BUFF_ADDED_SELF = auraOn
-dispatch.BUFF_ADDED_OTHER = auraOn
-dispatch.DEBUFF_ADDED_SELF = auraOn
-dispatch.DEBUFF_ADDED_OTHER = auraOn
-dispatch.BUFF_REMOVED_SELF = auraOff
-dispatch.BUFF_REMOVED_OTHER = auraOff
-dispatch.DEBUFF_REMOVED_SELF = auraOff
-dispatch.DEBUFF_REMOVED_OTHER = auraOff
+dispatch.BUFF_ADDED_SELF = buffOn
+dispatch.BUFF_ADDED_OTHER = buffOn
+dispatch.BUFF_REMOVED_SELF = buffOff
+dispatch.BUFF_REMOVED_OTHER = buffOff
 
 dispatch.SPELL_MISS_SELF = function(a1, a2, a3, a4) C:SPELL_MISS(a1, a2, a3, a4) end
 dispatch.SPELL_MISS_OTHER = dispatch.SPELL_MISS_SELF
@@ -684,7 +844,10 @@ dispatch.SPELL_GO_SELF = function(a1, a2, a3, a4)
 end
 dispatch.SPELL_GO_OTHER = dispatch.SPELL_GO_SELF
 
-dispatch.UNIT_DIED = function(a1) W.encounter:Death(a1) end
+dispatch.UNIT_DIED = function(a1)
+  W.encounter:Death(a1)
+  C:ClearBuffs(a1)
+end
 
 C.dispatch = dispatch
 
@@ -786,9 +949,42 @@ function C:ApplyCombatLogRange()
   if W.db and W.db.combatLogRange == false then return end
 
   local want = (W.db and W.db.combatLogRangeYards) or self.RANGE_DEFAULT
+
+  --[[ Remember what the client had before we first changed it, so turning
+       this off puts it back instead of leaving the raised range in place.
+
+       A value already at our target is not recorded: it was almost
+       certainly set by an earlier Wrekkit that remembered nothing, and
+       "restoring" it would restore nothing. ]]
+  if W.db and not W.db.combatLogRangeSaved and GetCVar then
+    local saved = {}
+    for _, cv in ipairs(self.rangeCvars) do
+      local ok, v = pcall(GetCVar, cv)
+      if ok and v and tonumber(v) ~= tonumber(want) then saved[cv] = v end
+    end
+    W.db.combatLogRangeSaved = saved
+  end
+
   for _, cv in ipairs(self.rangeCvars) do
     pcall(SetCVar, cv, want)
   end
+end
+
+--- Put the range back the way it was. Returns how many values were
+--- restored and how many could not be, because none was ever recorded.
+function C:RestoreCombatLogRange()
+  if not SetCVar or not W.db then return 0, 0 end
+  local saved = W.db.combatLogRangeSaved or {}
+  local restored, unknown = 0, 0
+  for _, cv in ipairs(self.rangeCvars) do
+    if saved[cv] then
+      if pcall(SetCVar, cv, saved[cv]) then restored = restored + 1 end
+    else
+      unknown = unknown + 1
+    end
+  end
+  W.db.combatLogRangeSaved = nil
+  return restored, unknown
 end
 
 function C:EnableCVars()

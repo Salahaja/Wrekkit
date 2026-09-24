@@ -251,16 +251,24 @@ function S:Create()
   ------------------------------------------------------------------
   heading(self, "Recording")
 
+  --[[ These three store "on" as nil, the default, and only an explicit
+       false as off. Written out as if/else on purpose: the and/or shorthand
+       for it cannot produce nil, so it stored false both ways, and one
+       click in either direction switched the feature off for good. ]]
   check(self, "Track buff uptime",
     function() return W.db.trackAuras ~= false end,
-    function(v) W.db.trackAuras = v and nil or false end,
-    { "Follows buffs and debuffs as they come and",
+    function(v)
+      if v then W.db.trackAuras = nil else W.db.trackAuras = false end
+    end,
+    { "Follows your group's buffs as they come and",
       "go, so uptime is answerable: was the flask",
-      "actually up, was the debuff kept on." })
+      "actually up, and did it drop mid-fight." })
 
   check(self, "Timeline detail",
     function() return W.db.timelineDetail ~= false end,
-    function(v) W.db.timelineDetail = v and nil or false end,
+    function(v)
+      if v then W.db.timelineDetail = nil else W.db.timelineDetail = false end
+    end,
     { "Hovering the timeline says who did what,",
       "with which spell, to whom. Costs storage:",
       "the busiest 60 seconds of each fight." })
@@ -284,8 +292,20 @@ function S:Create()
   check(self, "Raise the combat log range",
     function() return W.db.combatLogRange ~= false end,
     function(v)
-      W.db.combatLogRange = v and nil or false
-      if v then W.capture:ApplyCombatLogRange() end
+      if v then
+        W.db.combatLogRange = nil
+        W.capture:ApplyCombatLogRange()
+      else
+        W.db.combatLogRange = false
+        -- Off means off: put back what the client had, rather than leave
+        -- the raised range in place behind a box that says otherwise.
+        local restored, unknown = W.capture:RestoreCombatLogRange()
+        if unknown > 0 then
+          W.Print(string.format("log range: %d restored; %d were raised before " ..
+            "Wrekkit kept their old values, so they are left as they are.",
+            restored, unknown))
+        end
+      end
     end,
     { "The client only reports combat within this",
       "range. Its 30 yard default leaves most of a",
@@ -375,7 +395,11 @@ function S:Create()
     function() return W.db.liveSync == true end,
     function(v)
       W.db.liveSync = v or nil
-      if v then W.sync:StartLive() end
+      if not v then
+        W.sync:StopLive()
+      elseif W.encounter.inCombat then
+        W.sync:StartLive()
+      end
     end,
     { "Each player reports only their OWN totals,",
       "which fills in anyone the client cannot see",

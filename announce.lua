@@ -114,7 +114,7 @@ function A:DrillLines(ctx, view, count)
     if ability then
       local out = {
         string.format("Wrekkit  %s - %s, %s (%s)%s",
-          target.name or "?", ability.name or "?", metric.label,
+          target.name or "?", ability.name or "?", W.metrics.Label(metric),
           W.Duration(view.rateBase), filterNote(ctx)),
       }
       for _, st in ipairs(W.report:AbilityStats(ability, metricKey)) do
@@ -129,7 +129,7 @@ function A:DrillLines(ctx, view, count)
   -- Level one: the abilities behind that player's number.
   local out = {
     string.format("Wrekkit  %s - %s (%s)%s",
-      target.name or "?", metric.label, W.Duration(view.rateBase),
+      target.name or "?", W.metrics.Label(metric), W.Duration(view.rateBase),
       filterNote(ctx)),
   }
   if table.getn(abilities) == 0 then
@@ -178,7 +178,7 @@ function A:Lines(ctx, count)
     local rows, metric, total = W.report:Rank(view, key, ctx.filter)
 
     table.insert(out, string.format("Wrekkit  %s - %s (%s)%s",
-      metric.label, ctx.label or "?", W.Duration(view.rateBase), filterNote(ctx)))
+      W.metrics.Label(metric), ctx.label or "?", W.Duration(view.rateBase), filterNote(ctx)))
 
     if table.getn(rows) == 0 then
       table.insert(out, "  nothing recorded")

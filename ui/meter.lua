@@ -478,7 +478,7 @@ function M:MetricMenu(anchor)
   local s = self:Settings()
   local items = {}
   for _, m in ipairs(W.metrics.list) do
-    table.insert(items, { text = m.label, value = m.key, checked = (m.key == s.metric) })
+    table.insert(items, { text = W.metrics.Label(m), value = m.key, checked = (m.key == s.metric) })
   end
   UI.Menu(self.frame, anchor, items, function(value)
     s.metric = value
@@ -568,7 +568,7 @@ local function actorTooltip(row, item)
 
   GameTooltip:SetOwner(row, "ANCHOR_RIGHT")
   GameTooltip:AddLine(item.name or "?", c[1], c[2], c[3])
-  GameTooltip:AddDoubleLine(metric.label, item._text or "",
+  GameTooltip:AddDoubleLine(W.metrics.Label(metric), item._text or "",
     0.78, 0.80, 0.85, 1, 1, 1)
   if item._sub and item._sub ~= "" then
     GameTooltip:AddDoubleLine(" ", item._sub, 1, 1, 1, 0.62, 0.65, 0.72)
@@ -586,8 +586,11 @@ local function actorTooltip(row, item)
         break
       end
       local a = abilities[i]
-      GameTooltip:AddDoubleLine(a.label or a.name,
-        W.Short(a.amount) .. string.format(" (%.1f%%)", a._pct or 0),
+      -- Buff rows arrive with their value already written (a share of the
+      -- fight); abilities are an amount and a share of the total.
+      local value = a._value or
+        (W.Short(a.amount) .. string.format(" (%.1f%%)", a._pct or 0))
+      GameTooltip:AddDoubleLine(a.label or a.name, value,
         0.78, 0.80, 0.85, 1, 1, 1)
     end
   else
@@ -595,12 +598,23 @@ local function actorTooltip(row, item)
     GameTooltip:AddLine(W.report:EmptyDetailNote(M.lastView), 0.62, 0.65, 0.72, 1)
   end
 
+  if item.remote then
+    GameTooltip:AddLine(" ")
+    GameTooltip:AddLine("* includes this player's own report of their numbers:",
+      0.62, 0.65, 0.72)
+    GameTooltip:AddLine("  they were out of range, so their client filled the gap.",
+      0.62, 0.65, 0.72)
+  end
+
   GameTooltip:Show()
 end
 
 local function paintActor(row, item, index)
   local color = item._color or W.ClassColor(item.class)
-  row:SetData(item._rank, item.name, item._text, item._sub, item._frac, color, 58)
+  -- Filled in from the player's own report rather than measured here:
+  -- marked, so a report is never mistaken for a measurement.
+  local name = item.remote and ((item.name or "?") .. "|cff9d9d9d*|r") or item.name
+  row:SetData(item._rank, name, item._text, item._sub, item._frac, color, 58)
   row.tip = function(self) actorTooltip(self, item) end
   --[[ The meter repaints twice a second. Without this the numbers under the
        cursor are frozen at whatever they were when the tooltip opened, which
@@ -624,18 +638,30 @@ end
 
 local function paintAbility(row, item, index)
   local color = item._color or W.color.accent
-  row:SetData(index, item.label or item.name,
-    W.Short(item.amount), string.format("%.0f%%", item._pct),
+  local label = item.label or item.name
+  -- The buff Buff Uptime is ranking by, so it can be found again to clear.
+  if item._selected then label = "|cffe0a22c>|r " .. (label or "?") end
+  row:SetData(index, label,
+    item._value or W.Short(item.amount),
+    item._note or string.format("%.0f%%", item._pct or 0),
     item._frac, color, 42)
   -- Rows are reused, so a row that carried the actor tooltip a moment ago
   -- would go on describing someone who is no longer in this list.
   row.tip = nil
   row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+  -- Stashed on the row, not captured, for the same reason: reuse.
   row.abilityId = item.id
+  row.abilityName = item.name
+  row.selectsBuff = item._select
   row:SetScript("OnClick", function()
     local btn = this or row
     if arg1 == "RightButton" then
       UI.meter.drill = nil
+    elseif btn.selectsBuff then
+      -- A buff: rank everybody by it, or stop if it already was.
+      W.metrics.SelectBuff(btn.abilityId, btn.abilityName)
+      UI.meter.drill = nil
+      UI.meter.drillAbility = nil
     else
       -- Second level: the spread for this one ability.
       UI.meter.drillAbility = btn.abilityId
@@ -676,7 +702,7 @@ function M:RefreshInner()
   local rows, _, total = W.report:Rank(view, s.metric,
     { search = s.search, groupOnly = s.groupOnly })
 
-  f.title:SetText(metric.label)
+  f.title:SetText(W.metrics.Label(metric))
   self:SetSegmentLabel(segLabel)
 
   if self.drill then
@@ -722,8 +748,13 @@ function M:RefreshInner()
       -- Level one: which abilities made up that number.
       self:SetSegmentLabel(target.name .. " - " .. segLabel)
       self.list:SetData(abilities, paintAbility)
-      self.footL:SetText(string.format("%d abilities", table.getn(abilities)))
-      self.footR:SetText(W.Short(target._v) .. "  (click one for detail)")
+      if metric.detail == "auras" then
+        self.footL:SetText(string.format("%d buffs", table.getn(abilities)))
+        self.footR:SetText("click one to rank everyone by it")
+      else
+        self.footL:SetText(string.format("%d abilities", table.getn(abilities)))
+        self.footR:SetText(W.Short(target._v) .. "  (click one for detail)")
+      end
       return
     end
   end

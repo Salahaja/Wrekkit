@@ -22,6 +22,10 @@ to a disconnect:
   D~to~xfer~seq~payload        one chunk
   E~to~xfer                    commits it
 
+  M~*~name~class~dmg~petDmg~heal~taken~petTaken~active~activeOwn~ago~dur~pid~foe
+                               live report: the sender's OWN totals for the
+                               pull they are in (see S:BroadcastMine)
+
 Every message carries an addressee as its first field -- "*" for everyone,
 or a player name. That is not decoration: THIS CLIENT'S SendAddonMessage
 REJECTS "WHISPER" OUTRIGHT ("Unknown addon chat type"), and passing it does
@@ -60,11 +64,15 @@ S.nextId = 1
 local REC, FLD = "~", ","
 
 local function esc(s)
-  return (string.gsub(tostring(s or ""), "[~,]", ""))
+  return W.WireText(s)
 end
 
 local function int(n)
   return string.format("%d", math.floor(tonumber(n) or 0))
+end
+
+local function dec(n)
+  return string.format("%.1f", tonumber(n) or 0)
 end
 
 -- Seconds between live reports. Thirty is what DPSMate settled on, and the
@@ -95,53 +103,75 @@ local LIVE_INTERVAL = 30
      What arrives is a gap-filler and never an override: a locally observed
      number always wins, because it was measured here rather than asserted
      by somebody else. ]]
-function S:BroadcastMine()
+function S:BroadcastMine(enc)
   if not self:Enabled() then return end
   if not (W.db and W.db.liveSync) then return end
 
-  local enc = W.encounter.live
+  enc = enc or W.encounter.live
   if not enc then return end
 
   local me = UnitName("player")
   if not me then return end
 
-  -- Our own row, plus our pet's, since that is ours too.
-  local damage, healing, taken, active = 0, 0, 0, 0
+  --[[ Our own numbers and our pets' kept apart. A merged view compares a
+       report against owner and pets together, a separated one against the
+       owner alone; one lump sum could only ever be right for one of them. ]]
+  local damage, petDamage, healing, taken, petTaken = 0, 0, 0, 0, 0
+  local activeOwn = 0
+  local foe, foeTaken = nil, 0
   for _, a in pairs(enc.actors or {}) do
-    local mine = (a.name == me)
-        or (a.class == "PET" and a.ownerName == me)
-    if mine then
+    if a.isPlayer and a.name == me then
       damage = damage + (a.damage or 0)
       healing = healing + (a.healing or 0)
       taken = taken + (a.taken or 0)
-      if (a.active or 0) > active then active = a.active end
+      activeOwn = W.encounter:ActiveSeconds(enc, a)
+    elseif a.class == "PET" and a.ownerName == me then
+      petDamage = petDamage + (a.damage or 0)
+      petTaken = petTaken + (a.taken or 0)
+    elseif not a.isPlayer and a.class ~= "PET" then
+      -- What this pull was about, as we saw it: the enemy that took the
+      -- most. Lets a receiver tell our pull apart from someone else's.
+      if (a.taken or 0) > foeTaken then foe, foeTaken = a.name, a.taken end
     end
   end
+  if damage + petDamage + healing + taken <= 0 then return end
 
-  if damage <= 0 and healing <= 0 and taken <= 0 then return end
+  local g = enc.activeGroup and enc.activeGroup[me]
+  local active = g and W.encounter:ActiveSeconds(enc, g) or activeOwn
 
+  --[[ When, as spans rather than times of day. "Began this long ago and
+       ran this long" means the same thing on every client, where two
+       clocks almost never agree. The pull id only has to tell our own
+       pulls apart, so our own clock is fine for that. ]]
+  local ago = GetTime() - (enc.startT or GetTime())
+  local dur = W.encounter:Elapsed(enc)
   local _, class = UnitClass("player")
-  self:Send("*", table.concat({
+
+  self:SendLatest(table.concat({
     "M", esc(me), esc(class or "UNKNOWN"),
-    int(damage), int(healing), int(taken), int(active),
+    int(damage), int(petDamage), int(healing), int(taken), int(petTaken),
+    dec(active), dec(activeOwn), dec(ago), dec(dur),
+    int((enc.startT or 0) * 10), esc(foe or ""),
   }, REC))
 end
 
---- Report on a timer while this is switched on.
+--- Report on a timer while a pull runs. Stopped when combat ends; the
+--- pull's final numbers then go out from E:Finish.
 function S:StartLive()
-  if self.liveTicking then return end
-  self.liveTicking = true
+  if not (W.db and W.db.liveSync) or not self:Enabled() then return end
 
   local function tick()
-    if not (W.db and W.db.liveSync) then
-      self.liveTicking = false
-      return
-    end
+    if not (W.db and W.db.liveSync) then return end
+    if not W.encounter.inCombat then return end
     W.Guard("live sync", function() S:BroadcastMine() end)
     W.After(W.db.liveSyncInterval or LIVE_INTERVAL, tick, "liveSync")
   end
 
   W.After(W.db.liveSyncInterval or LIVE_INTERVAL, tick, "liveSync")
+end
+
+function S:StopLive()
+  W.Cancel("liveSync")
 end
 
 --- Stable identity for one encounter; what the index lists and pulls ask for.
@@ -307,6 +337,25 @@ function S:Send(to, body, channel)
   table.insert(self.queue, {
     msg = string.sub(body, 1, 1) .. REC .. esc(to or "*") .. string.sub(body, 2),
     channel = channel,
+  })
+  self:StartPump()
+  return true
+end
+
+--[[ Queue a live report ahead of everything else, replacing any report not
+     yet sent. Its timings are measured when it is built, so it must not sit
+     behind a log transfer going stale; and a report superseded before it
+     left is only noise. ]]
+function S:SendLatest(body, channel)
+  channel = channel or self:ActiveChannel()
+  if not channel then return false end
+  for i = table.getn(self.queue), 1, -1 do
+    if self.queue[i].latest then table.remove(self.queue, i) end
+  end
+  table.insert(self.queue, 1, {
+    msg = string.sub(body, 1, 1) .. REC .. "*" .. string.sub(body, 2),
+    channel = channel,
+    latest = true,
   })
   self:StartPump()
   return true
@@ -516,12 +565,17 @@ function S:OnMessage(prefix, msg, channel, sender)
   ------------------------------------------------------------------
   -- live totals
   ------------------------------------------------------------------
-  -- M~to~name~class~damage~healing~taken~active
+  -- M~to~name~class~dmg~petDmg~heal~taken~petTaken~active~activeOwn~ago~dur~pid~foe
   -- Taken only while we are willing to, and never for ourselves: our own
   -- numbers are measured here and do not need telling.
   if kind == "M" then
     if not (W.db and W.db.liveSync) then return end
-    if W.db.acceptShared == false then return end
+    -- The same switch as shared logs. This once read a different key than
+    -- the checkbox writes, so switching it off did not stop these.
+    if W.db.acceptShares == false then return end
+    -- Short means a different version of the format; guessing which field
+    -- is which would fill rows with the wrong numbers.
+    if table.getn(f) < 15 then return end
 
     local name = f[3]
     if not name or name == "" then return end
@@ -531,9 +585,15 @@ function S:OnMessage(prefix, msg, channel, sender)
     -- double-counting this design exists to avoid.
     if sender and sender ~= name then return end
 
-    W.encounter:RemoteTotals(name, f[4],
-      tonumber(f[5]) or 0, tonumber(f[6]) or 0,
-      tonumber(f[7]) or 0, tonumber(f[8]) or 0)
+    W.encounter:RemoteReport({
+      name = name, class = f[4],
+      damage = tonumber(f[5]) or 0, petDamage = tonumber(f[6]) or 0,
+      healing = tonumber(f[7]) or 0, taken = tonumber(f[8]) or 0,
+      petTaken = tonumber(f[9]) or 0,
+      active = tonumber(f[10]) or 0, activeOwn = tonumber(f[11]) or 0,
+      ago = tonumber(f[12]) or 0, dur = tonumber(f[13]) or 0,
+      pid = f[14], foe = f[15],
+    })
     return
   end
 

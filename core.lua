@@ -287,6 +287,20 @@ function W.After(delay, fn, key)
   table.insert(pending, { at = GetTime() + delay, fn = fn, key = key })
 end
 
+--- Drop a keyed job scheduled with W.After, if one is pending.
+function W.Cancel(key)
+  for i = table.getn(pending), 1, -1 do
+    if pending[i].key == key then table.remove(pending, i) end
+  end
+end
+
+--- Text as it can travel inside an addon message: the sync format splits on
+--- "~" and ",", so those cannot appear in a field. One function, used by
+--- both ends, so a name cleaned for sending compares equal on arrival.
+function W.WireText(s)
+  return (string.gsub(tostring(s or ""), "[~,]", ""))
+end
+
 --- Close out the live encounter once combat has stayed dropped long enough
 --- that the next pull is clearly a separate one.
 function W.ScheduleFinish(delay)

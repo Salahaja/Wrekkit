@@ -173,6 +173,37 @@ local function addAbilities(dst, src)
   end)
 end
 
+--- Add what a report claims beyond what this client measured, if anything.
+local function fillGap(view, row, field, claimed, measured)
+  local gap = (claimed or 0) - (measured or 0)
+  if gap <= 0 then return false end
+  row[field] = (row[field] or 0) + gap
+  view.totals[field] = (view.totals[field] or 0) + gap
+  return true
+end
+
+--- Fold one pull's buff rows into a view row. The live pull keeps a buff
+--- still running open-ended, so it is measured to the pull's own "now";
+--- a stored pull has already closed every one.
+local function addAuras(row, auras, enc)
+  if not auras then return end
+  if not row.auras then row.auras = {} end
+  local function add(id, au)
+    local d = row.auras[id]
+    if not d then
+      d = { id = id, name = au.name, up = 0, applied = 0 }
+      row.auras[id] = d
+    end
+    d.up = d.up + W.encounter:AuraSeconds(enc, au)
+    d.applied = d.applied + (au.applied or 0)
+  end
+  if auras[1] ~= nil then
+    for _, au in ipairs(auras) do add(au.id, au) end
+  else
+    for id, au in pairs(auras) do add(id, au) end
+  end
+end
+
 --- Build one merged view over a set of encounter records.
 --- opts.petMode  "merge" folds pets into their owner (the site's default),
 ---               "separate" keeps them as their own rows.
@@ -220,8 +251,20 @@ function R:View(encounters, opts)
         -- Carried through, or clicking a death in the report finds nothing
         -- to show: the window reads the view, not the encounter behind it.
         recap = d.recap,
+        -- The death time within its own pull. t above is shifted onto the
+        -- session timeline, which is right for the chart and wrong for
+        -- measuring the recap lines against.
+        encT = d.t,
+        -- Restored and shared logs carry totals only, so no recap either;
+        -- the recap should say that rather than claim nothing happened.
+        noRecap = enc.imported or enc.sharedBy,
       })
     end
+
+    -- Per pull: what THIS client measured for each row, before anyone
+    -- else's report is considered. Active time and the remote fill are both
+    -- settled against these once every actor is in.
+    local encActive, encLocal = {}, {}
 
     for guid, a in pairs(enc.actors or {}) do
       -- Decide the merge key and which row this actor's numbers land on.
@@ -265,23 +308,28 @@ function R:View(encounters, opts)
       row.crits = row.crits + (a.crits or 0)
       row.misses = row.misses + (a.misses or 0)
       row.consumes = row.consumes + (a.consumes or 0)
-      -- Summed across encounters, like every other total. Merging a pet
-      -- into its owner adds the pet's seconds, which is right: the owner
-      -- was contributing through it.
-      row.active = (row.active or 0) + (a.active or 0)
 
-      -- Uptime sums across pulls the same way damage does, so "flask up for
-      -- 92% of the night" is answerable rather than only per pull.
-      if not row.auras then row.auras = {} end
-      W.report.eachAbility(a.auras, function(id, au)
-        local d = row.auras[id]
-        if not d then
-          d = { id = id, name = au.name, up = 0, applied = 0 }
-          row.auras[id] = d
-        end
-        d.up = d.up + (au.up or 0)
-        d.applied = d.applied + (au.applied or 0)
-      end)
+      --[[ Active time is NOT summed here. Two actors on one row -- an owner
+           and their pet, or two whelps of one name -- acting at the same
+           moment would count that moment twice, and a hunter whose pet
+           never stops would read as busier than the fight was long. The
+           largest single one is kept here as the fallback, and the proper
+           union is applied once the pull's actors are all in. ]]
+      local act = W.encounter:ActiveSeconds(enc, a)
+      if act > (encActive[key] or 0) then encActive[key] = act end
+
+      local mine = encLocal[key]
+      if not mine then
+        mine = { damage = 0, healing = 0, taken = 0 }
+        encLocal[key] = mine
+      end
+      mine.damage = mine.damage + (a.damage or 0)
+      mine.healing = mine.healing + (a.healing or 0)
+      mine.taken = mine.taken + (a.taken or 0)
+
+      -- Buff uptime sums across pulls the same way damage does, so "flask
+      -- up for 92% of the night" is answerable rather than only per pull.
+      addAuras(row, a.auras, enc)
 
       addAbilities(row.dmgAbility, a.dmgAbility)
       addAbilities(row.healAbility, a.healAbility)
@@ -294,44 +342,70 @@ function R:View(encounters, opts)
       end
     end
 
+    --[[ Active time, settled once per pull. Merged, a player's row takes
+         the union of them and their pets that the pull recorded; separated,
+         each row is a single actor anyway. Pulls stored before the union
+         existed fall back to the largest single actor, which can undercount
+         slightly but never counts a moment twice. ]]
+    local activeAdded = {}
+    for key, act in pairs(encActive) do
+      if petMode == "merge" and string.sub(key, 1, 2) == "p:" then
+        local g = enc.activeGroup and enc.activeGroup[string.sub(key, 3)]
+        if type(g) == "table" then
+          act = W.encounter:ActiveSeconds(enc, g)
+        elseif type(g) == "number" then
+          act = g
+        end
+      end
+      local row = view.index[key]
+      row.active = (row.active or 0) + act
+      activeAdded[key] = act
+    end
+
     --[[ Fill gaps from what other players reported about themselves.
 
          Strictly a gap-filler. A number measured here always wins, because
-         it was observed rather than asserted, and a raider sitting inside
-         our combat log range needs no help. Where we saw LESS than they
-         report -- the usual case for someone at the far end of a room --
-         their figure is used and the row is marked, so a report is never
-         mistaken for a measurement.
+         it was observed rather than asserted, and a raider inside our combat
+         log range needs no help. Where we saw LESS than they report -- the
+         usual case for someone at the far end of a room -- the difference
+         is added and the row is marked, so a report is never mistaken for a
+         measurement.
 
-         Taking the larger rather than summing matters: both numbers
-         describe the same damage, so adding them would double it. ]]
-    for name, rem in pairs(enc.remote or {}) do
+         Per pull, never against the row. The row is the running total of
+         every pull in the view; comparing one pull's report with that both
+         wiped out earlier pulls (a larger report REPLACED the total) and
+         missed real gaps (a smaller one was skipped). ]]
+    for name, who in pairs(enc.remote or {}) do
+      local rep = { damage = 0, petDamage = 0, healing = 0, taken = 0,
+                    petTaken = 0, active = 0, activeOwn = 0 }
+      for _, p in pairs(who.parts or {}) do
+        for k in pairs(rep) do rep[k] = rep[k] + (p[k] or 0) end
+      end
+
+      -- Merged, the row holds the pets too; separated, only the player.
+      local merged = (petMode == "merge")
       local key = "p:" .. name
+      local mine = encLocal[key] or { damage = 0, healing = 0, taken = 0 }
       local row = view.index[key]
       if not row then
-        row = blankRow({ name = name, class = rem.class, isPlayer = true }, key)
+        row = blankRow({ name = name, class = who.class, isPlayer = true }, key)
         view.index[key] = row
         table.insert(view.rows, row)
       end
 
-      local filled = false
-      if (rem.damage or 0) > (row.damage or 0) then
-        row.damage = rem.damage filled = true
-      end
-      if (rem.healing or 0) > (row.healing or 0) then
-        row.healing = rem.healing filled = true
-      end
-      if (rem.taken or 0) > (row.taken or 0) then
-        row.taken = rem.taken filled = true
-      end
-      if (rem.active or 0) > (row.active or 0) then
-        row.active = rem.active
-      end
-      if filled then
+      local d = fillGap(view, row, "damage",
+        merged and (rep.damage + rep.petDamage) or rep.damage, mine.damage)
+      local h = fillGap(view, row, "healing", rep.healing, mine.healing)
+      local t = fillGap(view, row, "taken",
+        merged and (rep.taken + rep.petTaken) or rep.taken, mine.taken)
+
+      local claimActive = merged and rep.active or rep.activeOwn
+      local gapActive = claimActive - (activeAdded[key] or 0)
+      if gapActive > 0 then row.active = (row.active or 0) + gapActive end
+
+      if d or h or t then
         row.remote = true
-        if row.class == "UNKNOWN" and rem.class ~= "UNKNOWN" then
-          row.class = rem.class
-        end
+        if row.class == "UNKNOWN" and who.class then row.class = who.class end
       end
     end
   end
@@ -395,7 +469,10 @@ function R:Rank(view, metricKey, filter)
     local isEnemy = (not row.isPlayer) and row.class ~= "PET"
     if wantEnemy == isEnemy then
       row._v = metric.value(row, ctx) or 0
-      if row._v > 0 and matches(row, filter) then
+      -- Zero rows are normally noise, but not always: when ranking one
+      -- buff, the players WITHOUT it are the answer to the question.
+      local keep = row._v > 0 or (metric.keepZero and metric.keepZero(row, ctx))
+      if keep and matches(row, filter) then
         table.insert(out, row)
       end
     end
@@ -418,6 +495,9 @@ function R:Rank(view, metricKey, filter)
     row._frac = top > 0 and (row._v / top) or 0
     row._text = W.metrics.Format(metric, row._v)
     row._sub = metric.sub and metric.sub(row, ctx) or ""
+    -- Kept on the row so a drilldown asked for later, with only the row in
+    -- hand, still measures against the same view.
+    row._ctx = ctx
   end
 
   return out, metric, total, ctx
@@ -427,9 +507,46 @@ end
 -- ability drilldown
 ----------------------------------------------------------------------
 
+--[[ A player's buffs, shaped like ability rows so the same lists can show
+     them -- but with the value written out, because seconds are not what
+     anyone wants to read. The share of the fight is. ]]
+function R:Auras(row, ctx)
+  local base = (ctx and ctx.view and ctx.view.duration) or 0
+  local out = {}
+  for id, au in pairs(row.auras or {}) do
+    local up = au.up or 0
+    if up > 0 then
+      local pct = base > 0 and (up / base * 100) or 0
+      if pct > 100 then pct = 100 end
+      local applied = au.applied or 0
+      table.insert(out, {
+        id = id, name = au.name or ("Spell " .. tostring(id)),
+        label = au.name or ("Spell " .. tostring(id)),
+        amount = up, up = up, applied = applied,
+        hits = 0, crits = 0, _critPct = 0,
+        _pct = pct,
+        _value = string.format("%.0f%%", pct),
+        _note = W.Duration(up) .. (applied > 1 and ("  " .. applied .. "x") or ""),
+        -- Clicking one ranks everybody by it; see W.metrics.SelectBuff.
+        _select = true,
+        _selected = (W.db and W.db.uptimeSpell == id) or false,
+      })
+    end
+  end
+  table.sort(out, W.ByField("amount"))
+  local top = out[1] and out[1].amount or 0
+  local total = 0
+  for _, a in ipairs(out) do
+    total = total + a.amount
+    a._frac = top > 0 and (a.amount / top) or 0
+  end
+  return out, total
+end
+
 --- Rows for one actor's ability breakdown under the given metric.
 function R:Abilities(row, metricKey, ctx)
   local metric = W.metrics.Get(metricKey)
+  if metric.detail == "auras" then return self:Auras(row, ctx or row._ctx) end
   local source = row[metric.detail or "dmgAbility"]
   if not source then return {} end
 
@@ -479,17 +596,6 @@ function R:Abilities(row, metricKey, ctx)
   return out, total
 end
 
---[[ Stat lines for a single ability -- the second level of drilldown.
-
-     Averages are split into normal and crit rather than reported as one
-     blended figure, because a blended average describes neither: a spell
-     that hits for 800 and crits for 1600 has a "1,040 average" that it never
-     once dealt. `critAmount` is tracked at capture time to make this
-     possible after the fact.
-
-     For healing, the spread is measured on raw output (effective plus
-     overheal), which is what the spell actually did; effective healing is
-     reported separately above it. ]]
 --[[ What killed someone, as lines.
 
      The question after a wipe is never "who died" -- the raid watched that
@@ -502,9 +608,13 @@ function R:DeathRecap(death)
   local rows = {}
   if not death then return rows end
 
-  local last = death.t or 0
+  -- Each line carries its distance from the death. Recaps from before that
+  -- only carry their time within the pull, and are measured against the
+  -- death's time in that same pull -- never its session timeline time,
+  -- which is off by however far into the night the pull was.
+  local last = death.encT or death.t or 0
   for _, e in ipairs(death.recap or {}) do
-    local ago = last - (e.t or 0)
+    local ago = e.ago or (last - (e.t or 0))
     local who = e.src or "?"
     if e.spell and e.spell ~= "" and e.spell ~= "Melee" then
       who = who .. "  " .. e.spell
@@ -517,17 +627,37 @@ function R:DeathRecap(death)
   end
 
   if table.getn(rows) == 0 then
+    local why = "nothing was recorded in the seconds before this"
+    if death.noRecap then why = "restored and shared logs keep totals, not recaps" end
     table.insert(rows, {
-      label = "nothing was recorded in the seconds before this",
+      label = why,
       value = "",
     })
   end
   return rows
 end
 
+--[[ Stat lines for a single ability -- the second level of drilldown.
+
+     Averages are split into normal and crit rather than reported as one
+     blended figure, because a blended average describes neither: a spell
+     that hits for 800 and crits for 1600 has a "1,040 average" that it never
+     once dealt. `critAmount` is tracked at capture time to make this
+     possible after the fact.
+
+     For healing, the spread is measured on raw output (effective plus
+     overheal), which is what the spell actually did; effective healing is
+     reported separately above it. ]]
 function R:AbilityStats(a, metricKey)
   if not a then return {} end
   local metric = W.metrics.Get(metricKey)
+  if metric.detail == "auras" then
+    return {
+      { label = "Uptime", value = a._value or "" },
+      { label = "Time up", value = W.Duration(a.up or 0) },
+      { label = "Applied", value = tostring(a.applied or 0) .. "x" },
+    }
+  end
   local isHeal = (metric.detail == "healAbility")
 
   local rows = {}

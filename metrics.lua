@@ -33,11 +33,18 @@ end
      Falls back to the fight length when an actor has no recorded active
      time, which covers rows merged from a log written before this existed. ]]
 local function basis(r, ctx)
+  local duration = ctx and ctx.duration
   if W.db and W.db.dpsBasis == "active" then
     local a = r and r.active
-    if a and a > 0 then return a end
+    if a and a > 0 then
+      -- Nobody acts for longer than the fight lasted. Active windows can
+      -- reach a moment past the edge of combat, and dividing by more than
+      -- the fight would put someone busy throughout BELOW their combat rate.
+      if duration and duration > 0 and a > duration then a = duration end
+      return a
+    end
   end
-  return ctx and ctx.duration
+  return duration
 end
 
 --[[ Each entry:
@@ -147,26 +154,50 @@ M.list = {
     integer = true,
   },
   {
-    -- Longest single aura this actor held. Ranked on the best one rather
-    -- than a sum, because "who kept their flask up" is a question about one
-    -- buff, and summing every buff in the game would rank whoever had the
-    -- most auras rather than whoever maintained the important one.
+    --[[ Uptime of ONE buff, across everybody.
+
+         The question is always about a particular buff -- was the flask up,
+         did the elixir drop -- and no single number over all of a player's
+         buffs answers it. The longest is some raid buff, so everyone read
+         100%; an average is dragged down by procs, so it would rank people
+         by how proc-heavy their class is.
+
+         So the buff is chosen: open anyone's buffs and click one. Until
+         then each row counts the buffs recorded for that player, which is
+         plainly a count and not a score. Measured against the length of
+         the pulls (view.duration), the same clock the buffs are timed on. ]]
     key = "uptime", label = "Buff Uptime", short = "UP", side = "player",
     value = function(r, ctx)
-      local best = 0
-      W.report.eachAbility(r.auras, function(_, au)
-        if (au.up or 0) > best then best = au.up end
-      end)
-      local base = ctx and ctx.duration
-      if not base or base <= 0 then return 0 end
-      local pct = best / base * 100
+      local id = M.SelectedBuff()
+      if not id then
+        local n = 0
+        for _ in pairs(r.auras or {}) do n = n + 1 end
+        return n
+      end
+      local au = r.auras and r.auras[id]
+      local base = ctx and ctx.view and ctx.view.duration
+      if not au or not base or base <= 0 then return 0 end
+      local pct = (au.up or 0) / base * 100
       if pct > 100 then pct = 100 end
       return pct
     end,
+    format = function(v)
+      if M.SelectedBuff() then return string.format("%.0f%%", v) end
+      return string.format("%d", math.floor(v + 0.5))
+    end,
     sub = function(r)
-      local n = 0
-      W.report.eachAbility(r.auras, function() n = n + 1 end)
-      return n > 0 and (n .. " tracked") or "-"
+      local id = M.SelectedBuff()
+      if not id then return "click for buffs" end
+      local au = r.auras and r.auras[id]
+      if not au or (au.up or 0) <= 0 then return "missing" end
+      return W.Duration(au.up)
+    end,
+    -- Ranking one buff, the players WITHOUT it are the answer.
+    keepZero = function(r) return M.SelectedBuff() ~= nil and r.isPlayer end,
+    labelFn = function()
+      local id, name = M.SelectedBuff()
+      if id then return "Uptime: " .. (name or ("Spell " .. tostring(id))) end
+      return "Buff Uptime"
     end,
     color = W.color.accent,
     percent = true,
@@ -205,9 +236,35 @@ end
 
 --- Format a metric's primary number for display.
 function M.Format(metric, value)
+  if metric.format then return metric.format(value) end
   if metric.percent then return string.format("%.1f%%", value) end
   if metric.integer then return string.format("%d", math.floor(value)) end
   return W.Short(value)
+end
+
+--- A metric's display name. Buff Uptime names the buff it is ranking, so
+--- a title, a menu or an announcement never shows a percentage without
+--- saying of what.
+function M.Label(metric)
+  if metric.labelFn then return metric.labelFn() end
+  return metric.label
+end
+
+--- The buff Buff Uptime ranks by, if one has been chosen.
+function M.SelectedBuff()
+  local id = W.db and W.db.uptimeSpell
+  if not id then return nil end
+  return id, W.db.uptimeSpellName
+end
+
+--- Rank Buff Uptime by this buff -- or stop, if it is the one already chosen.
+function M.SelectBuff(id, name)
+  if not W.db then return end
+  if W.db.uptimeSpell == id then
+    W.db.uptimeSpell, W.db.uptimeSpellName = nil, nil
+  else
+    W.db.uptimeSpell, W.db.uptimeSpellName = id, name
+  end
 end
 
 --- Ordered keys, for cycling with the meter's next/prev mode buttons.

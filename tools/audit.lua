@@ -54,7 +54,10 @@ declare(LUA, [[
   os io date time
 ]])
 
+-- UnitBuff is stock 1.12; SuperWoW extends it with the spell id, which is
+-- what Wrekkit reads (C:ScanBuffs) to find buffs older than a /reload.
 declare(WOW, [[
+  UnitBuff
   CreateFrame UIParent GetTime GetLocale GetBuildInfo GetRealZoneText
   GetRealmName IsInInstance GetNumRaidMembers GetNumPartyMembers
   GetRaidRosterInfo UnitName UnitClass UnitLevel UnitHealth UnitHealthMax UnitClassification
@@ -876,13 +879,14 @@ step("widget interactions", function()
   -- unexercised function reads no globals at all, which is how MouseIsOver
   -- once sat undeclared through a clean audit.
   do
-    -- the aura dispatch entries themselves, not just the handler
+    -- the buff dispatch entries, with the real payload:
+    -- (guid, luaSlot, spellId, stacks, level, auraSlot, state)
     do
       local D = W.capture.dispatch
-      D.BUFF_ADDED_OTHER("0xA", 1, 17628)
-      D.BUFF_REMOVED_OTHER("0xA", 1, 17628)
-      D.DEBUFF_ADDED_SELF("0xA", 2, 11722)
-      D.DEBUFF_REMOVED_SELF("0xA", 2, 11722)
+      D.BUFF_ADDED_SELF("0xA", 1, 17628, 1, 60, 3, 0)
+      D.BUFF_ADDED_OTHER("0xA", 2, 12970, 3, 60, 4, 0)
+      D.BUFF_REMOVED_OTHER("0xA", 2, 12970, 2, 60, 4, 2)
+      D.BUFF_REMOVED_SELF("0xA", 2, 12970, 0, 60, 4, 1)
     end
 
     -- the meter's row tooltip
@@ -895,19 +899,103 @@ step("widget interactions", function()
       end
     end
 
-    -- auras, both directions, through the real dispatch
-    W.capture:Aura("0xP1", 17628, true)
-    W.capture:Aura("0xP1", 17628, false)
-    W.encounter:Aura("0xP1", 11722, true)
-    W.encounter:Aura("0xP1", 11722, false)
+    --[[ Buffs and live sync. Both are group-only, and the audit's world has
+         no group, so without one every buff event is -- correctly -- thrown
+         away and none of this code runs at all. Give it a two-person raid
+         and a player-named actor for the duration. ]]
+    do
+      STUB.GetNumRaidMembers = function() return 2 end
+      STUB.GetRaidRosterInfo = function(i)
+        if i == 1 then return "Fuff", 0, 1, 60, "Rogue", "ROGUE" end
+        if i == 2 then return "Auditor", 0, 1, 60, "Warrior", "WARRIOR" end
+        return nil
+      end
+      -- SuperWoW's UnitBuff: texture, stacks, spell id.
+      STUB.UnitBuff = function(unit, i)
+        if unit == "0xA" and i == 1 then return "tex", 1, 17626 end
+        return nil
+      end
+      WORLD["0xMe"] = { name = "Auditor", class = "WARRIOR", isPlayer = true,
+                        maxHealth = 4000, health = 4000 }
+      W.capture:ScanRoster()
 
-    -- live sync, send and receive
-    W.db.shareEnabled = true
-    W.db.liveSync = true
-    W.sync:BroadcastMine()
-    W.encounter:RemoteTotals("Faraway", "MAGE", 100, 0, 0, 5)
-    W.db.liveSync = nil
-    W.db.shareEnabled = false
+      local D = W.capture.dispatch
+      D.BUFF_ADDED_SELF("0xA", 1, 17628, 1, 60, 3, 0)
+      W.encounter:CombatStart()
+      W.encounter:Damage("0xA", "0xBoss", 11267, 100, {})
+      W.encounter:Damage("0xMe", "0xBoss", 11267, 100, {})
+      D.BUFF_ADDED_OTHER("0xA", 2, 12970, 3, 60, 4, 0)
+      D.BUFF_REMOVED_OTHER("0xA", 2, 12970, 2, 60, 4, 2)
+      D.BUFF_REMOVED_OTHER("0xA", 2, 12970, 0, 60, 4, 1)
+      D.BUFF_REMOVED_SELF("0xA", 1, 17628, 0, 60, 99, 1)
+      W.capture:SeedBuffs("0xA")
+      W.capture:PruneBuffs()
+
+      local live = W.encounter.live
+      if live then
+        local view = W.report:View({ live }, {})
+        for _, r in ipairs(W.report:Rank(view, "uptime")) do
+          W.report:Abilities(r, "uptime")
+        end
+      end
+
+      W.db.shareEnabled = true
+      W.db.liveSync = true
+      W.sync:BroadcastMine(live)
+      W.sync:StartLive()
+      NOW = NOW + 31
+      local ticker = _G["WrekkitTicker"]
+      if ticker and ticker:GetScript("OnUpdate") then ticker:GetScript("OnUpdate")() end
+      W.sync:StopLive()
+      W.encounter:RemoteReport({ name = "Faraway", class = "MAGE", damage = 100,
+        ago = 1, dur = 1, pid = "1", foe = "Onyxia" })
+      W.db.liveSync = nil
+      W.db.shareEnabled = false
+
+      W.capture:ClearBuffs("0xA")
+      STUB.UnitBuff = nil
+      STUB.GetNumRaidMembers = function() return 0 end
+      STUB.GetRaidRosterInfo = function() return nil end
+      W.capture:ScanRoster()
+    end
+    W.Cancel("nothing")
+    W.WireText("a~b,c")
+
+    -- log range: raise, then put back
+    W.capture:ApplyCombatLogRange()
+    W.capture:RestoreCombatLogRange()
+
+    -- Buff Uptime: its drilldown, choosing a buff by clicking it there, and
+    -- the labels that then name it
+    do
+      local m = W.ui.meter
+      local s = m:Settings()
+      local before = s.metric
+      s.metric = "uptime"
+      m:Refresh()
+      local rows = m.list and m.list.rows
+      local first = rows and rows[1]
+      if first and first._scripts and first._scripts.OnClick then
+        arg1 = "LeftButton"
+        first._scripts.OnClick()
+        rows = m.list.rows
+        first = rows and rows[1]
+        if first and first._scripts and first._scripts.OnClick then
+          first._scripts.OnClick()
+        end
+      end
+      W.metrics.SelectBuff(17628, "Flask of Supreme Power")
+      m:Refresh()
+      W.metrics.Label(W.metrics.Get("uptime"))
+      W.metrics.SelectBuff(17628)
+      local view = W.report:View(W.db.encounters, {})
+      for _, r in ipairs(W.report:Rank(view, "uptime")) do
+        W.report:Abilities(r, "uptime")
+      end
+      s.metric = before
+      m.drill = nil
+      m:Refresh()
+    end
 
     -- death recap rendering
     W.report:DeathRecap({ t = 10, recap = {

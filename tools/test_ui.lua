@@ -936,13 +936,32 @@ step("settings window builds and every control works", function()
     error("settings window has no controls to refresh")
   end
 
-  -- Flip every checkbox twice: it must land back where it started, which
-  -- proves get and set are talking about the same setting.
-  for _, c in ipairs(UI.settings.controls) do
+  -- Flip every checkbox twice. The first click must CHANGE what is drawn,
+  -- and the second must put it back. This loop once flipped without
+  -- looking at anything, and three checkboxes that stored false whichever
+  -- way they went -- so any click turned the feature off for good -- passed.
+  local flipped = 0
+  for i, c in ipairs(UI.settings.controls) do
     local fn = c:GetScript("OnClick")
-    if fn then fn() fn() end
+    if fn and c.tick then
+      local before = c.tick:IsShown() and true or false
+      fn()
+      if (c.tick:IsShown() and true or false) == before then
+        error("checkbox #" .. i .. " did not change when clicked")
+      end
+      fn()
+      if (c.tick:IsShown() and true or false) ~= before then
+        error("checkbox #" .. i .. " did not come back when clicked again")
+      end
+      flipped = flipped + 1
+    elseif fn then
+      fn() fn()
+    end
     -- steppers have no OnClick of their own; nudge their buttons instead
     c:Refresh()
+  end
+  if flipped < 5 then
+    error("expected to flip every checkbox, flipped only " .. flipped)
   end
 
   UI.settings:Refresh()

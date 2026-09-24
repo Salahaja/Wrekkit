@@ -1843,26 +1843,70 @@ Wrekkit.ResetData("all")
 end
 
 ----------------------------------------------------------------------
-print("\n-- per-second basis --")
+print("\n-- shared helpers for the sections below --")
+----------------------------------------------------------------------
+-- Globals, not locals: this file's main chunk is at Lua's 200-local cap.
+TH = {}
+
+function TH.setRaid(names)
+  GetNumRaidMembers = function() return table.getn(names) end
+  GetRaidRosterInfo = function(i)
+    local n = names[i]
+    if not n then return nil end
+    local token
+    for _, d in pairs(WORLD) do
+      if d.name == n and d.isPlayer then token = d.class end
+    end
+    return n, 0, 1, 60, token, token
+  end
+  Wrekkit.capture:ScanRoster()
+end
+
+function TH.clearRaid()
+  GetNumRaidMembers = function() return 0 end
+  GetRaidRosterInfo = function() return nil end
+  Wrekkit.capture:ScanRoster()
+end
+
+function TH.runTimers()
+  local t = _G.WrekkitTicker
+  if t and t:GetScript("OnUpdate") then t:GetScript("OnUpdate")() end
+end
+
+function TH.lastStored()
+  return Wrekkit.db.encounters[table.getn(Wrekkit.db.encounters)]
+end
+
+function TH.rowOf(view, metric, name)
+  for _, r in ipairs(Wrekkit.report:Rank(view, metric)) do
+    if r.name == name then return r end
+  end
+  return nil
+end
+
+function TH.rate(view, name, basisName)
+  Wrekkit.db.dpsBasis = basisName
+  local r = TH.rowOf(view, "dps", name)
+  Wrekkit.db.dpsBasis = nil
+  return r and r._v
+end
+
+----------------------------------------------------------------------
+print("\n-- active time --")
 ----------------------------------------------------------------------
 do
-
---[[ Skada divides by the length of the fight, Recount by the seconds the
-     player actually acted. The two genuinely disagree, and a player who
-     stood around for half a pull is where you see it. ]]
+-- Recount divides by the time someone spent acting. Every action covers
+-- the next 3.5 seconds and active time is the union of those windows.
+-- Counting seconds-that-held-an-event read a busy caster at 2.5x their
+-- real rate; summing owner and pet counted a hunter as busier than the
+-- fight was long.
 
 Wrekkit.ResetData("all")
-Wrekkit.db.dpsBasis = nil
-
 IN_COMBAT = true
 fire("PLAYER_REGEN_DISABLED")
-
--- Ten seconds of fight. Fuff swings throughout; Elfpriest acts for two.
 for sec = 1, 10 do
   Wrekkit.encounter:Damage("0xP1", "0xBoss", 11267, 100, {})
-  if sec <= 2 then
-    Wrekkit.encounter:Damage("0xP2", "0xBoss", 11267, 100, {})
-  end
+  if sec <= 2 then Wrekkit.encounter:Damage("0xP2", "0xBoss", 11267, 100, {}) end
   advance(1)
 end
 Wrekkit.encounter:Damage("0xP1", "0xBoss", 11267, 100, {})
@@ -1870,295 +1914,599 @@ IN_COMBAT = false
 fire("PLAYER_REGEN_ENABLED")
 Wrekkit.encounter:Finish()
 
-local enc = Wrekkit.db.encounters[table.getn(Wrekkit.db.encounters)]
+local enc = TH.lastStored()
 local byName = {}
 for _, a in pairs(enc.actors or {}) do byName[a.name] = a end
-
-check("a full-fight actor banked ~one second each", byName["Fuff"].active >= 10, true)
-check("a brief actor banked only its own", byName["Elfpriest"].active, 2)
+check("busy all fight: active is the fight, no more", byName["Fuff"].active, 10, 0.01)
+check("two early actions: one window, first to last + 3.5s",
+  byName["Elfpriest"].active, 4.5, 0.01)
 
 local view = Wrekkit.report:View({ enc }, { petMode = "merge" })
-
-Wrekkit.db.dpsBasis = "combat"
-local combatRows = Wrekkit.report:Rank(view, "dps")
-local combatBy = {}
-for _, r in ipairs(combatRows) do combatBy[r.name] = r._v end
-
-Wrekkit.db.dpsBasis = "active"
-local activeRows = Wrekkit.report:Rank(view, "dps")
-local activeBy = {}
-for _, r in ipairs(activeRows) do activeBy[r.name] = r._v end
-
-Wrekkit.db.dpsBasis = nil
-
---[[ The player who acted throughout should read about the same either way;
-     the one who acted briefly should read much HIGHER on active time,
-     because the idle seconds stop counting against them. That difference
-     is the entire reason the setting exists. ]]
+check("busy all fight reads the same on both bases",
+  TH.rate(view, "Fuff", "active"), TH.rate(view, "Fuff", "combat"), 0.5)
 check("the brief actor rises on active time",
-  activeBy["Elfpriest"] > combatBy["Elfpriest"] * 2, true)
-check("the constant actor barely moves",
-  math.abs(activeBy["Fuff"] - combatBy["Fuff"]) < combatBy["Fuff"] * 0.5, true)
-check("and the two bases really differ",
-  activeBy["Elfpriest"] ~= combatBy["Elfpriest"], true)
+  TH.rate(view, "Elfpriest", "active") > TH.rate(view, "Elfpriest", "combat") * 2, true)
 
--- An old log with no recorded active time must not divide by zero.
-local stale = { name = "Old", damage = 1000, active = 0 }
+-- A caster landing 2.5s casts back to back is acting the whole pull.
+Wrekkit.ResetData("all")
+IN_COMBAT = true
+fire("PLAYER_REGEN_DISABLED")
+for i = 1, 8 do
+  advance(2.5)
+  Wrekkit.encounter:Damage("0xP2", "0xBoss", 25304, 1000, {})
+end
+IN_COMBAT = false
+fire("PLAYER_REGEN_ENABLED")
+Wrekkit.encounter:Finish()
+enc = TH.lastStored()
+view = Wrekkit.report:View({ enc }, {})
+local caster = TH.rowOf(view, "damage", "Elfpriest")
+-- The first cast lands 2.5s in, and nothing before it can be seen.
+check("a caster busy throughout is active from the first landing on",
+  caster.active, 17.5, 0.01)
+check("so their active rate is close to combat, not 2.5x it",
+  TH.rate(view, "Elfpriest", "active") < TH.rate(view, "Elfpriest", "combat") * 1.2, true)
+
+-- Hunter and pet, both busy every second: the union, not the sum.
+Wrekkit.ResetData("all")
+IN_COMBAT = true
+fire("PLAYER_REGEN_DISABLED")
+for sec = 1, 10 do
+  Wrekkit.encounter:Damage("0xP3", "0xBoss", 75, 100, {})
+  Wrekkit.encounter:Damage("0xPet1", "0xBoss", 16827, 100, {})
+  advance(1)
+end
+local live = Wrekkit.encounter.live
+local liveView = Wrekkit.report:View({ live }, { petMode = "merge" })
+check("live: hunter with pet is active for the fight, not twice it",
+  TH.rowOf(liveView, "damage", "Moorhunt").active, 10, 0.01)
+IN_COMBAT = false
+fire("PLAYER_REGEN_ENABLED")
+Wrekkit.encounter:Finish()
+enc = TH.lastStored()
+check("the union is stored per player", enc.activeGroup["Moorhunt"], 10, 0.01)
+
+local merged = Wrekkit.report:View({ enc }, { petMode = "merge" })
+check("merged: the pet does not halve the active rate",
+  TH.rate(merged, "Moorhunt", "active"), TH.rate(merged, "Moorhunt", "combat"), 0.5)
+local separate = Wrekkit.report:View({ enc }, { petMode = "separate" })
+check("separate: the owner row is the owner alone",
+  TH.rowOf(separate, "damage", "Moorhunt").active, 10, 0.01)
+
+-- A pull stored before the union existed falls back to the larger, not the sum.
+local old = {}
+for k, v in pairs(enc) do old[k] = v end
+old.activeGroup = nil
+local fallback = Wrekkit.report:View({ old }, { petMode = "merge" })
+check("an older record never counts a moment twice",
+  TH.rowOf(fallback, "damage", "Moorhunt").active, 10, 0.01)
+
+-- Owner and pet overlapping only in part tells the union apart from both
+-- wrong answers: the sum would be 9 and the larger 4.5.
+Wrekkit.ResetData("all")
+IN_COMBAT = true
+fire("PLAYER_REGEN_DISABLED")
+Wrekkit.encounter:Damage("0xP3", "0xBoss", 75, 100, {})
+advance(1)
+Wrekkit.encounter:Damage("0xP3", "0xBoss", 75, 100, {})
+advance(2)
+Wrekkit.encounter:Damage("0xPet1", "0xBoss", 16827, 100, {})
+advance(1)
+Wrekkit.encounter:Damage("0xPet1", "0xBoss", 16827, 100, {})
+advance(6)
+IN_COMBAT = false
+fire("PLAYER_REGEN_ENABLED")
+Wrekkit.encounter:Finish()
+enc = TH.lastStored()
+merged = Wrekkit.report:View({ enc }, { petMode = "merge" })
+check("owner and pet partly together: the union, not sum or larger",
+  TH.rowOf(merged, "damage", "Moorhunt").active, 7.5, 0.01)
+
+-- Dodged and parried swings are still swings.
+Wrekkit.ResetData("all")
+IN_COMBAT = true
+fire("PLAYER_REGEN_DISABLED")
+Wrekkit.encounter:Damage("0xP1", "0xBoss", 0, 100, {})
+for i = 1, 4 do
+  advance(2)
+  Wrekkit.encounter:Miss("0xP1", "0xBoss", 0, 3)
+end
+advance(2)
+Wrekkit.encounter:Damage("0xP1", "0xBoss", 0, 100, {})
+advance(1)
+live = Wrekkit.encounter.live
+check("a run of dodges still counts as acting",
+  Wrekkit.encounter:ActiveSeconds(live, live.actors["0xP1"]), 11, 0.01)
+IN_COMBAT = false
+fire("PLAYER_REGEN_ENABLED")
+Wrekkit.encounter:Finish()
+
+-- Dividing by more than the fight lasted is never right.
+local dps = Wrekkit.metrics.Get("dps")
 Wrekkit.db.dpsBasis = "active"
-local m = Wrekkit.metrics.Get("dps")
-local v = m.value(stale, { duration = 10 })
+check("active time is capped at the fight",
+  dps.value({ damage = 1000, active = 50 }, { duration = 10 }), 100)
+check("no active time falls back to the fight",
+  dps.value({ damage = 1000, active = 0 }, { duration = 10 }), 100)
 Wrekkit.db.dpsBasis = nil
-check("no active time falls back to the fight length", v, 100)
 
 Wrekkit.ResetData("all")
-
 end
 
 ----------------------------------------------------------------------
 print("\n-- death recap --")
 ----------------------------------------------------------------------
 do
-
--- The question after a wipe is not who died, it is what the last few
--- seconds looked like. The ring keeps being overwritten as the fight goes
--- on, so the snapshot has to be taken AT the death and copied, not
--- referenced -- otherwise it would describe whatever happened next.
+-- The question after a wipe is what the last few seconds looked like.
+-- Hits go through capture here, not straight to the encounter, because
+-- capture is what tracks health -- and the recap shows it.
 
 Wrekkit.ResetData("all")
+Wrekkit.capture:Unit("0xP1").health = 3000
 IN_COMBAT = true
 fire("PLAYER_REGEN_DISABLED")
 
-Wrekkit.encounter:Damage("0xBoss", "0xP1", 11605, 300, {})
+fire("AUTO_ATTACK_OTHER", "0xBoss", "0xP1", 300, 2, 0, 1, 0, 0, 0)
 advance(1)
-Wrekkit.encounter:Damage("0xBoss", "0xP1", 99001, 450, {})
+fire("SPELL_DAMAGE_EVENT_OTHER", "0xP1", "0xBoss", 99001, 450, "0,0,0", 0, 4)
 advance(1)
-Wrekkit.encounter:Damage("0xBoss", "0xP1", 11605, 900, {})
-Wrekkit.encounter:Death("0xP1")
+fire("AUTO_ATTACK_OTHER", "0xBoss", "0xP1", 900, 2, 0, 1, 0, 0, 0)
+fire("UNIT_DIED", "0xP1")
 
 local live = Wrekkit.encounter.live
 local death = live.deaths[1]
 check("the death was recorded", death ~= nil, true)
-check("with a recap attached", death.recap ~= nil, true)
-check("holding the hits before it", table.getn(death.recap) >= 3, true)
-
-local last = death.recap[table.getn(death.recap)]
+check("holding the hits before it", table.getn(death.recap), 3)
+local last = death.recap[3]
 check("the killing blow is last", last.a, 900)
-check("and names what did it", last.src, "Onyxia")
+check("naming what did it", last.src, "Onyxia")
+check("with the health left after each hit", last.hp, 1350)
+check("and each line knows how long before the death it was",
+  death.recap[1].ago, 2, 0.01)
 
--- Hits AFTER the death must not rewrite what killed them.
-local before = table.getn(death.recap)
+-- Hits after the death must not rewrite what killed them.
 for i = 1, 12 do
   advance(1)
   Wrekkit.encounter:Damage("0xBoss", "0xP1", 11605, 5, {})
 end
-check("the snapshot did not drift", table.getn(death.recap), before)
-check("and still ends on the killing blow",
-  death.recap[table.getn(death.recap)].a, 900)
+check("the snapshot did not drift", table.getn(death.recap), 3)
+check("and still ends on the killing blow", death.recap[3].a, 900)
 
--- The ring is bounded, however long the fight runs.
-local act = live.actors["0xP1"]
-local ringSize = 0
-for _ in pairs(act.recent or {}) do ringSize = ringSize + 1 end
-check("the ring stays bounded", ringSize <= 8, true)
+-- Rezzed, then killed again: only the hits of THIS life.
+fire("UNIT_DIED", "0xP1")
+advance(20)
+Wrekkit.encounter:Damage("0xBoss", "0xP1", 11605, 222, {})
+Wrekkit.encounter:Damage("0xBoss", "0xP1", 11605, 333, {})
+fire("UNIT_DIED", "0xP1")
+local second = live.deaths[table.getn(live.deaths)]
+check("a second death does not reach back past the first", table.getn(second.recap), 2)
+-- Same frame, same timestamp: the order they landed in is kept.
+check("the last hit in a frame is still the last line", second.recap[2].a, 333)
 
--- And it formats into something readable.
-local rows = Wrekkit.report:DeathRecap(death)
-check("the recap renders rows", table.getn(rows) >= 3, true)
-check("timed relative to the death",
-  string.find(rows[1].label, "^%-%d") ~= nil, true)
+-- Lava and falling kill people too.
+fire("ENVIRONMENTAL_DMG_OTHER", "0xP2", 3, 800, 0, 0)
+fire("UNIT_DIED", "0xP2")
+local lava = live.deaths[table.getn(live.deaths)]
+local line = lava.recap[table.getn(lava.recap)]
+check("environmental damage is in the recap", line and line.src, "Environment")
+check("named for what it was", line and line.spell, "Lava")
+local tookLava = false
+for _, row in pairs(live.actors["0xP2"].takenAbility) do
+  if row.name == "Environment (Lava)" then tookLava = true end
+end
+check("and named in the Taken table too, not as a number", tookLava, true)
 
--- A death with nothing recorded says so rather than showing an empty box.
+-- The ring stays bounded however long the fight runs.
+local ring = 0
+for _ in pairs(live.actors["0xP1"].recent or {}) do ring = ring + 1 end
+check("the ring stays bounded", ring <= 8, true)
+
+advance(3)
+IN_COMBAT = false
+fire("PLAYER_REGEN_ENABLED")
+Wrekkit.encounter:Finish()
+
+local stored = TH.lastStored()
+check("the recap survived persisting", stored.deaths[1].recap ~= nil, true)
 local empty = Wrekkit.report:DeathRecap({ t = 5, recap = {} })
 check("an empty recap explains itself", table.getn(empty), 1)
+local restoredDeath = Wrekkit.report:DeathRecap({ t = 5, noRecap = true })
+check("a restored log says it keeps no recap, not that nothing happened",
+  string.find(restoredDeath[1].label, "totals", 1, true) ~= nil, true)
 
-advance(8)
-Wrekkit.encounter:Damage("0xP1", "0xBoss", 11267, 100, {})
+--[[ A later pull. The view moves every death onto the session timeline,
+     and measuring the recap against THAT time put every line off by
+     however far into the night the pull was. ]]
+advance(60)
+IN_COMBAT = true
+fire("PLAYER_REGEN_DISABLED")
+Wrekkit.encounter:Damage("0xP2", "0xBoss", 25304, 100, {})
+advance(4)
+Wrekkit.encounter:Damage("0xBoss", "0xP2", 11605, 700, {})
+advance(1)
+fire("UNIT_DIED", "0xP2")
+advance(5)
 IN_COMBAT = false
 fire("PLAYER_REGEN_ENABLED")
 Wrekkit.encounter:Finish()
 
-local stored = Wrekkit.db.encounters[table.getn(Wrekkit.db.encounters)]
-local sd = stored and stored.deaths and stored.deaths[1]
-check("the recap survived persisting", sd and sd.recap and table.getn(sd.recap) >= 3, true)
-
-local view = Wrekkit.report:View({ stored }, { petMode = "merge" })
-check("and reached the view the window reads",
-  view.deaths[1] and view.deaths[1].recap ~= nil, true)
+local n = table.getn(Wrekkit.db.encounters)
+local night = Wrekkit.report:View({ Wrekkit.db.encounters[n - 1], Wrekkit.db.encounters[n] }, {})
+local lateDeath
+for _, d in ipairs(night.deaths) do
+  if d.name == "Elfpriest" and (not lateDeath or d.t > lateDeath.t) then
+    lateDeath = d
+  end
+end
+check("the later pull sits well into the night", lateDeath and lateDeath.t > 30, true)
+local rows = Wrekkit.report:DeathRecap(lateDeath)
+local _, _, secs = string.find(rows[1].label, "^%-(%d+%.%d)s")
+check("a later pull's recap is timed from its own death", tonumber(secs), 1, 0.01)
 
 Wrekkit.ResetData("all")
 end
 
 ----------------------------------------------------------------------
-print("\n-- aura uptime --")
+print("\n-- buff uptime --")
 ----------------------------------------------------------------------
 do
--- Nampower fires these on change, never on a timer, so uptime is intervals
--- rather than samples. The cases that matter: a refresh must not restart
--- the interval, and something still up at the end of the pull was up until
--- the end of the pull.
+-- Buff events carry (guid, luaSlot, spellId, stacks, level, auraSlot, state)
+-- where state is 0 added, 1 removed, 2 a stack moved on a buff that stays.
 
 Wrekkit.ResetData("all")
 Wrekkit.db.trackAuras = nil
+Wrekkit.capture.buffs = {}
+TH.setRaid({ "Fuff", "Elfpriest", "Moorhunt" })
+
+check("debuffs are not followed: nothing shows them",
+  Wrekkit.capture.dispatch.DEBUFF_ADDED_OTHER, nil)
+
+-- The flask goes on BEFORE the pull, as it always does.
+fire("BUFF_ADDED_SELF", "0xP1", 1, 17628, 1, 60, 3, 0)
+advance(30)
 IN_COMBAT = true
 fire("PLAYER_REGEN_DISABLED")
-
--- Flask on at t0, still on at the end.
-fire("BUFF_ADDED_SELF", "0xP1", 1, 17628)
-advance(5)
--- Re-applied while already up: a refresh, not a second application.
-fire("BUFF_ADDED_SELF", "0xP1", 1, 17628)
-advance(5)
-
--- A debuff that goes on and comes off.
-fire("DEBUFF_ADDED_OTHER", "0xBoss", 2, 11722)
-advance(4)
-fire("DEBUFF_REMOVED_OTHER", "0xBoss", 2, 11722)
-advance(2)
-
 local live = Wrekkit.encounter.live
-local me = live.actors["0xP1"]
-local flask = me.auras[17628]
+for i = 1, 10 do
+  Wrekkit.encounter:Damage("0xP1", "0xBoss", 11267, 100, {})
+  advance(1)
+end
 
-check("the aura was tracked", flask ~= nil, true)
-check("a refresh is not a second application", flask.applied, 1)
-check("and did not restart the interval", flask.since ~= nil, true)
+local view = Wrekkit.report:View({ live }, {})
+local fuff = TH.rowOf(view, "damage", "Fuff")
+check("a flask drunk before the pull is tracked", fuff.auras[17628] ~= nil, true)
+check("live, it counts from the pull start to now", fuff.auras[17628].up, 10, 0.01)
+local drill = Wrekkit.report:Abilities(fuff, "uptime", { view = view })
+check("the drilldown shows it as a share of the fight", drill[1] and drill[1]._value, "100%")
+check("with real seconds behind the row, not zero", drill[1] and drill[1].amount, 10, 0.01)
 
-local boss = live.actors["0xBoss"]
-local curse = boss.auras[11722]
-check("a removed debuff banked its uptime", math.floor(curse.up + 0.5), 4)
-check("and is no longer running", curse.since, nil)
+-- A charge buff: spending charges fires removals with state 2.
+fire("BUFF_ADDED_SELF", "0xP1", 2, 12970, 3, 60, 4, 0)
+advance(1)
+fire("BUFF_REMOVED_SELF", "0xP1", 2, 12970, 2, 60, 4, 2)
+advance(1)
+fire("BUFF_REMOVED_SELF", "0xP1", 2, 12970, 1, 60, 4, 2)
+advance(1)
+fire("BUFF_REMOVED_SELF", "0xP1", 2, 12970, 0, 60, 4, 1)
+advance(1)
+local flurry = live.actors["0xP1"].auras[12970]
+check("spending a charge does not end the buff", flurry.up, 3, 0.01)
+check("applied once, not once per charge", flurry.applied, 1)
 
--- Finishing closes whatever is still up.
-Wrekkit.encounter:Damage("0xP1", "0xBoss", 11267, 100, {})
+-- Two priests' Renews: two slots of one spell.
+fire("BUFF_ADDED_OTHER", "0xP1", 3, 10929, 1, 60, 5, 0)
+fire("BUFF_ADDED_OTHER", "0xP1", 4, 10929, 1, 60, 6, 0)
+advance(2)
+fire("BUFF_REMOVED_OTHER", "0xP1", 3, 10929, 0, 60, 5, 1)
+advance(2)
+local renew = live.actors["0xP1"].auras[10929]
+check("one of two copies ending leaves it up", renew.since ~= nil, true)
+fire("BUFF_REMOVED_OTHER", "0xP1", 3, 10929, 0, 60, 6, 1)
+check("the last copy ending takes it down", renew.since, nil)
+check("and it counted the whole time either was up", renew.up, 4, 0.01)
+
+-- An add for a slot already held is a repeat, not a new application.
+fire("BUFF_ADDED_SELF", "0xP1", 1, 17628, 1, 60, 3, 0)
+check("a repeat add changes nothing", live.actors["0xP1"].auras[17628].applied, 1)
+
+-- Units nobody is watching.
+fire("BUFF_ADDED_OTHER", "0xAdd", 1, 22222, 1, 60, 1, 0)
+check("a mob gaining a buff is not made an actor", live.actors["0xAdd"], nil)
+check("nor remembered", Wrekkit.capture.buffs["0xAdd"], nil)
+defPlayer("0xOut", "Stranger", "MAGE", 3000)
+fire("BUFF_ADDED_OTHER", "0xOut", 1, 17628, 1, 60, 1, 0)
+check("a player outside the group is not followed", Wrekkit.capture.buffs["0xOut"], nil)
+
+-- A buff alone does not put someone in the pull; acting does, and then
+-- the buff is there from when it went on.
+fire("BUFF_ADDED_OTHER", "0xP2", 1, 17627, 1, 60, 2, 0)
+check("a buff alone makes nobody an actor", live.actors["0xP2"], nil)
+advance(2)
+Wrekkit.encounter:Heal("0xP2", "0xP1", 2060, 500, 0, {})
+local priestFlask = live.actors["0xP2"].auras[17627]
+check("once they act it is there, from when it went on",
+  Wrekkit.encounter:AuraSeconds(live, priestFlask), 2, 0.01)
+
+-- Up since before a /reload: no event was ever seen for it, so the client
+-- is asked directly. SuperWoW's UnitBuff returns the spell id third.
+WORLD["0xP3"].buffs = { 17626 }
+UnitBuff = function(unit, i)
+  local d = WORLD[unit]
+  local id = d and d.buffs and d.buffs[i]
+  if id then return "tex", 1, id end
+  return nil
+end
+Wrekkit.encounter:Damage("0xP3", "0xBoss", 75, 100, {})
+local hunter = live.actors["0xP3"].auras[17626]
+check("a buff from before a reload is found by asking", hunter ~= nil, true)
+check("and counted from the pull start", hunter and hunter.since, live.startT)
+UnitBuff = nil
+WORLD["0xP3"].buffs = nil
+
+-- Dying ends every buff there and then.
+local flask = live.actors["0xP1"].auras[17628]
+fire("UNIT_DIED", "0xP1")
+check("dying ends the flask at that moment", flask.since, nil)
+check("and capture forgets the dead unit's buffs", Wrekkit.capture.buffs["0xP1"], nil)
+
+advance(1)
 IN_COMBAT = false
 fire("PLAYER_REGEN_ENABLED")
 Wrekkit.encounter:Finish()
 
-local stored = Wrekkit.db.encounters[table.getn(Wrekkit.db.encounters)]
-local savedAuras
-for _, a in pairs(stored.actors or {}) do
-  if a.name == "Fuff" then savedAuras = a.auras end
-end
-check("uptime persisted", savedAuras ~= nil and table.getn(savedAuras) > 0, true)
+local stored = TH.lastStored()
+local sv = Wrekkit.report:View({ stored }, {})
+local up = TH.rowOf(sv, "damage", "Fuff").auras[17628].up
+check("stored: up from the pull start until the death", up, 20, 0.01)
 
-local kept
-for _, au in ipairs(savedAuras or {}) do
-  if au.id == 17628 then kept = au end
-end
-check("the open aura was closed at the end", kept and kept.up > 9, true)
+-- Ranking one chosen buff across everybody.
+local metric = Wrekkit.metrics.Get("uptime")
+local counted = TH.rowOf(sv, "uptime", "Fuff")
+check("before a buff is chosen, rows count buffs", counted and counted._text, "3")
+Wrekkit.metrics.SelectBuff(17628, "Flask of Supreme Power")
+check("the title names the buff", Wrekkit.metrics.Label(metric), "Uptime: Flask of Supreme Power")
+local fuffUp = TH.rowOf(sv, "uptime", "Fuff")
+check("ranked by one buff, as a share of the pull", fuffUp and fuffUp._text, "95%")
+local priest = TH.rowOf(sv, "uptime", "Elfpriest")
+check("a player without it is listed, not hidden", priest ~= nil, true)
+check("and says so", priest and priest._sub, "missing")
+Wrekkit.metrics.SelectBuff(17628)
+check("choosing it again clears the choice", Wrekkit.metrics.SelectedBuff(), nil)
 
--- It reaches the view, and the metric reads it.
-local view = Wrekkit.report:View({ stored }, { petMode = "merge" })
-local rows = Wrekkit.report:Rank(view, "uptime")
-local found = false
-for _, r in ipairs(rows) do
-  if r.name == "Fuff" and r._v > 0 then found = true end
-end
-check("the uptime metric ranks on it", found, true)
-
--- Off means off.
-Wrekkit.ResetData("all")
+-- Switched off, nothing is followed.
 Wrekkit.db.trackAuras = false
-IN_COMBAT = true
-fire("PLAYER_REGEN_DISABLED")
-fire("BUFF_ADDED_SELF", "0xP1", 1, 17628)
-local off = Wrekkit.encounter.live.actors["0xP1"]
-local n = 0
-for _ in pairs((off and off.auras) or {}) do n = n + 1 end
-check("the setting can turn it off", n, 0)
-
+fire("BUFF_ADDED_SELF", "0xP1", 1, 17628, 1, 60, 3, 0)
+check("the setting can turn it off", Wrekkit.capture.buffs["0xP1"], nil)
 Wrekkit.db.trackAuras = nil
-IN_COMBAT = false
-fire("PLAYER_REGEN_ENABLED")
-Wrekkit.encounter:Finish()
+
+Wrekkit.capture.buffs = {}
+TH.clearRaid()
 Wrekkit.ResetData("all")
 end
-
 
 ----------------------------------------------------------------------
 print("\n-- live raid sync --")
 ----------------------------------------------------------------------
 do
--- The client only reports combat within range, so a distant raider is
--- absent rather than wrong. Each client reports only its OWN totals: that
--- cannot double-count, it is the authoritative copy, and it is one short
--- message per player.
+-- Each client reports only its own totals; a report only ever fills a gap,
+-- and has to be placed in the right pull -- including after that pull has
+-- already ended here, which is when the last report of a pull arrives.
 
 Wrekkit.ResetData("all")
 Wrekkit.db.shareEnabled = true
 Wrekkit.db.liveSync = true
-Wrekkit.db.acceptShared = nil
+Wrekkit.db.acceptShares = nil
 GetNumRaidMembers = function() return 25 end
-
-IN_COMBAT = true
-fire("PLAYER_REGEN_DISABLED")
-Wrekkit.encounter:Damage("0xP1", "0xBoss", 11267, 5000, {})
-advance(3)
-
--- We report ours.
 WIRE = {}
 Wrekkit.sync.queue = {}
 Wrekkit.sync.pumping = false
-Wrekkit.sync:BroadcastMine()
-local sent = table.getn(WIRE) + table.getn(Wrekkit.sync.queue)
-check("our own totals go out", sent > 0, true)
 
-local body = (WIRE[1] and WIRE[1].msg) or (Wrekkit.sync.queue[1] and Wrekkit.sync.queue[1].msg)
-check("addressed to everyone", string.find(body, "^M~%*~") ~= nil, true)
-check("and names us", string.find(body, "Fuff", 1, true) ~= nil, true)
-
--- Somebody out of range reports themselves.
-Wrekkit.sync:OnMessage("WREKKIT", "M~*~Faraway~MAGE~9000~0~120~40", "RAID", "Faraway")
-local live = Wrekkit.encounter.live
-check("their report was kept", live.remote and live.remote["Faraway"] ~= nil, true)
-
-local view = Wrekkit.report:View({ live }, { petMode = "merge" })
-local rows = Wrekkit.report:Rank(view, "damage")
-local byName = {}
-for _, r in ipairs(rows) do byName[r.name] = r end
-
-check("they appear in the meter", byName["Faraway"] ~= nil, true)
-check("with the damage they reported", byName["Faraway"].damage, 9000)
-check("and are marked as reported", byName["Faraway"].remote, true)
-
--- A measurement beats a report: we saw 5000 for ourselves, and a smaller
--- claim must not pull that down.
-Wrekkit.sync:OnMessage("WREKKIT", "M~*~Fuff~ROGUE~10~0~0~1", "RAID", "Fuff")
-local view2 = Wrekkit.report:View({ live }, { petMode = "merge" })
-local rows2 = Wrekkit.report:Rank(view2, "damage")
-local mine
-for _, r in ipairs(rows2) do if r.name == "Fuff" then mine = r end end
-check("our own measurement is not overwritten", mine.damage, 5000)
-
--- One player cannot report a third party: that is the double-count this
--- design exists to prevent.
-Wrekkit.sync:OnMessage("WREKKIT", "M~*~Someone~MAGE~99999~0~0~10", "RAID", "Liar")
-check("a third-party report is refused", live.remote["Someone"], nil)
-
--- Nor can anyone report us.
-Wrekkit.sync:OnMessage("WREKKIT", "M~*~Fuff~ROGUE~99999~0~0~10", "RAID", "Fuff")
-check("nobody can inflate a row we measured",
-  (live.remote and live.remote["Fuff"]) == nil or true, true)
-local view3 = Wrekkit.report:View({ live }, { petMode = "merge" })
-local rows3 = Wrekkit.report:Rank(view3, "damage")
-for _, r in ipairs(rows3) do
-  if r.name == "Fuff" then
-    check("and our number still stands", r.damage, 5000)
+-- M~*~name~class~dmg~petDmg~heal~taken~petTaken~active~activeOwn~ago~dur~pid~foe
+local function rep(name, class, dmg, ago, dur, pid, foe, x)
+  x = x or {}
+  return table.concat({ "M", "*", name, class, dmg, x.pet or 0, x.heal or 0,
+    x.taken or 0, x.petTaken or 0, x.active or 0, x.activeOwn or 0,
+    ago, dur, pid, foe or "" }, "~")
+end
+local function hear(msg, sender)
+  Wrekkit.sync:OnMessage("WREKKIT", msg, "RAID", sender)
+end
+local function reportsSent()
+  local out = {}
+  for _, m in ipairs(WIRE) do
+    if m.msg and string.sub(m.msg, 1, 2) == "M~" then table.insert(out, m.msg) end
   end
+  for _, q in ipairs(Wrekkit.sync.queue) do
+    if string.sub(q.msg, 1, 2) == "M~" then table.insert(out, q.msg) end
+  end
+  return out
+end
+local function fields(msg)
+  local f = {}
+  for piece in string.gfind(msg .. "~", "([^~]*)~") do table.insert(f, piece) end
+  return f
 end
 
--- Off means off.
-Wrekkit.db.liveSync = nil
-Wrekkit.sync:OnMessage("WREKKIT", "M~*~Another~MAGE~500~0~0~5", "RAID", "Another")
-check("switched off, reports are ignored", live.remote["Another"], nil)
+IN_COMBAT = true
+fire("PLAYER_REGEN_DISABLED")
+local live = Wrekkit.encounter.live
+Wrekkit.encounter:Damage("0xP1", "0xBoss", 11267, 5000, {})
+advance(3)
+
+Wrekkit.sync:BroadcastMine()
+local sent = reportsSent()
+check("our own totals go out", table.getn(sent), 1)
+local f = fields(sent[1] or "")
+check("in the full format", table.getn(f), 15)
+check("addressed to everyone, naming us", (f[2] or "") .. (f[3] or ""), "*Fuff")
+check("with our damage", tonumber(f[5]), 5000)
+check("how long ago our pull began", tonumber(f[12]), 3, 0.05)
+check("and the enemy we fought", f[15], "Onyxia")
+
+-- Built while another waits: it replaces that one, ahead of a transfer.
+WIRE = {}
+Wrekkit.sync.pumping = true
+Wrekkit.sync.queue = { { msg = "D~*~1~1~x", channel = "RAID" } }
+Wrekkit.sync:BroadcastMine()
+Wrekkit.sync:BroadcastMine()
+local waiting = 0
+for _, q in ipairs(Wrekkit.sync.queue) do if q.latest then waiting = waiting + 1 end end
+check("only the newest report waits", waiting, 1)
+check("and it goes first", Wrekkit.sync.queue[1].latest, true)
+Wrekkit.sync.queue = {}
+Wrekkit.sync.pumping = false
+
+-- A report for the pull we are in.
+hear(rep("Faraway", "MAGE", 9000, 3, 3, 11, "Onyxia"), "Faraway")
+local view = Wrekkit.report:View({ live }, {})
+local far = TH.rowOf(view, "damage", "Faraway")
+check("a report for our pull fills the gap", far and far.damage, 9000)
+check("and the row is marked as reported", far and far.remote, true)
+
+-- Measured here beats reported.
+Wrekkit.encounter:Damage("0xP2", "0xBoss", 25304, 800, {})
+hear(rep("Elfpriest", "PRIEST", 10, 3, 3, 12, "Onyxia"), "Elfpriest")
+view = Wrekkit.report:View({ live }, {})
+local pr = TH.rowOf(view, "damage", "Elfpriest")
+check("a smaller report never lowers a measurement", pr and pr.damage, 800)
+check("and does not mark it", pr and pr.remote, nil)
+
+-- Refused outright.
+hear(rep("Someone", "MAGE", 99999, 3, 3, 1, "Onyxia"), "Liar")
+check("a report about someone else", live.remote["Someone"], nil)
+Wrekkit.db.acceptShares = false
+hear(rep("Another", "MAGE", 500, 3, 3, 1, "Onyxia"), "Another")
+check("with accept-logs switched off", live.remote["Another"], nil)
+Wrekkit.db.acceptShares = nil
+hear(rep("Early", "MAGE", 500, 60, 60, 1, "Onyxia"), "Early")
+check("from a pull that began well before ours", live.remote["Early"], nil)
+hear(rep("Elsewhere", "MAGE", 500, 3, 3, 1, "Ragnaros"), "Elsewhere")
+check("naming an enemy we never saw in this pull", live.remote["Elsewhere"], nil)
+hear("M~*~Oldver~MAGE~9000~0~0~5", "Oldver")
+check("in an older, shorter format", live.remote["Oldver"], nil)
+
+-- Two pulls of the sender inside one of ours add up.
+hear(rep("Split", "MAGE", 400, 3, 1, 501, ""), "Split")
+hear(rep("Split", "MAGE", 300, 1, 1, 502, ""), "Split")
+view = Wrekkit.report:View({ live }, {})
+check("two of their pulls in one of ours add up",
+  TH.rowOf(view, "damage", "Split").damage, 700)
+
+-- Pets: merged holds the pet, separated does not.
+hear(rep("Petowner", "HUNTER", 1000, 3, 3, 21, "", { pet = 500 }), "Petowner")
+view = Wrekkit.report:View({ live }, { petMode = "merge" })
+check("merged, the report includes the pet", TH.rowOf(view, "damage", "Petowner").damage, 1500)
+view = Wrekkit.report:View({ live }, { petMode = "separate" })
+check("separated, the owner row is the owner", TH.rowOf(view, "damage", "Petowner").damage, 1000)
+
+-- The ticker reports while fighting and stops when combat does.
+local calls = 0
+local realBroadcast = Wrekkit.sync.BroadcastMine
+Wrekkit.sync.BroadcastMine = function(self, enc)
+  calls = calls + 1
+  return realBroadcast(self, enc)
+end
+Wrekkit.sync:StartLive()
+advance(31)
+TH.runTimers()
+check("a report goes out on the timer while in combat", calls, 1)
+IN_COMBAT = false
+fire("PLAYER_REGEN_ENABLED")
+calls = 0
+advance(6)
+TH.runTimers()
+advance(31)
+TH.runTimers()
+advance(31)
+TH.runTimers()
+-- Only the final one, sent by Finish when the finish timer fires.
+check("after combat only the final report goes out", calls, 1)
+Wrekkit.sync.BroadcastMine = realBroadcast
+
+-- A pull shorter than the interval still reports, at its end.
+Wrekkit.ResetData("all")
+WIRE = {}
+Wrekkit.sync.queue = {}
+Wrekkit.sync.pumping = false
+IN_COMBAT = true
+fire("PLAYER_REGEN_DISABLED")
+Wrekkit.encounter:Damage("0xP1", "0xBoss", 11267, 1234, {})
+advance(20)
+Wrekkit.encounter:Damage("0xP1", "0xBoss", 11267, 1000, {})
+IN_COMBAT = false
+fire("PLAYER_REGEN_ENABLED")
+Wrekkit.encounter:Finish()
+sent = reportsSent()
+check("a short pull reports once, at its end", table.getn(sent), 1)
+f = fields(sent[1] or "")
+check("with its final numbers", tonumber(f[5]), 2234)
+check("and how long it ran", tonumber(f[13]), 20, 0.05)
+
+-- The last report of a pull lands after it ended here.
+advance(6)
+hear(rep("Faraway", "MAGE", 7000, 26, 20, 900, "Onyxia"), "Faraway")
+local stored = TH.lastStored()
+check("a late report lands on the stored pull",
+  stored.remote and stored.remote["Faraway"] ~= nil, true)
+local sv = Wrekkit.report:View({ stored }, {})
+check("and shows in it", TH.rowOf(sv, "damage", "Faraway").damage, 7000)
+
+-- Several pulls in one view: a report fills ITS pull, never the night.
+Wrekkit.ResetData("all")
+IN_COMBAT = true
+fire("PLAYER_REGEN_DISABLED")
+Wrekkit.encounter:Damage("0xP2", "0xBoss", 25304, 300, {})
+advance(10)
+IN_COMBAT = false
+fire("PLAYER_REGEN_ENABLED")
+Wrekkit.encounter:Finish()
+advance(30)
+IN_COMBAT = true
+fire("PLAYER_REGEN_DISABLED")
+Wrekkit.encounter:Damage("0xP2", "0xBoss", 25304, 200, {})
+advance(10)
+hear(rep("Elfpriest", "PRIEST", 900, 10, 10, 77, "Onyxia"), "Elfpriest")
+IN_COMBAT = false
+fire("PLAYER_REGEN_ENABLED")
+Wrekkit.encounter:Finish()
+local n = table.getn(Wrekkit.db.encounters)
+local night = Wrekkit.report:View({ Wrekkit.db.encounters[n - 1], Wrekkit.db.encounters[n] }, {})
+check("two pulls: the first is kept and the second filled",
+  TH.rowOf(night, "damage", "Elfpriest").damage, 1200)
+check("and the total agrees with the rows", night.totals.damage, 1200)
 
 Wrekkit.db.liveSync = nil
 Wrekkit.db.shareEnabled = false
 GetNumRaidMembers = function() return 0 end
-IN_COMBAT = false
-fire("PLAYER_REGEN_ENABLED")
-Wrekkit.encounter:Finish()
+WIRE = {}
+Wrekkit.sync.queue = {}
+Wrekkit.sync.pumping = false
 Wrekkit.ResetData("all")
+end
+
+----------------------------------------------------------------------
+print("\n-- log range restore --")
+----------------------------------------------------------------------
+do
+-- Turning the setting off puts back what the client had.
+CVARS = { CombatLogRangeCreature = "30", CombatLogRangeParty = "50" }
+Wrekkit.db.combatLogRange = nil
+Wrekkit.db.combatLogRangeYards = nil
+Wrekkit.db.combatLogRangeSaved = nil
+Wrekkit.capture:ApplyCombatLogRange()
+check("raised", tonumber(CVARS["CombatLogRangeCreature"]), 200)
+local restored, unknown = Wrekkit.capture:RestoreCombatLogRange()
+check("switched off, the old creature range is back", tonumber(CVARS["CombatLogRangeCreature"]), 30)
+check("and the old party range", tonumber(CVARS["CombatLogRangeParty"]), 50)
+check("nothing it could not restore", unknown, 0)
+
+-- A value raised before anything was kept is not restored to itself.
+CVARS = { CombatLogRangeCreature = "200" }
+Wrekkit.capture:ApplyCombatLogRange()
+restored, unknown = Wrekkit.capture:RestoreCombatLogRange()
+check("an already-raised value is reported as unknown", unknown, 1)
+CVARS = {}
+Wrekkit.db.combatLogRangeSaved = nil
 end
 
 print(string.format("\n%d passed, %d failed\n", pass, fail))

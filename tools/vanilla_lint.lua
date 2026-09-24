@@ -148,6 +148,20 @@ local RULES = {
     { pattern = "%f[%w]UnitGUID",     msg = "UnitGUID() does not exist in 1.12 - identify units by name" },
     { pattern = "C_[%a]+%.",          msg = "the C_ namespace does not exist in 1.12" },
     { pattern = "string%.split",      msg = "string.split() does not exist in 1.12 - use string.gfind" },
+    -- Not a version difference: wrong in every Lua. "x and nil or y" and
+    -- "x and false or y" ALWAYS give y, because the middle is falsy and so
+    -- falls through to the "or". It reads like a ternary and is not one.
+    -- Three settings checkboxes and a drilldown toggle shipped with it:
+    -- each click stored false whichever way it went, so one click turned
+    -- the feature off for good. Write it as if/else.
+    {
+        pattern = "%f[%w]and%s+nil%s+or%f[%W]",
+        msg = "'x and nil or y' always yields y (nil is falsy, so it falls through to the or) - use if/else",
+    },
+    {
+        pattern = "%f[%w]and%s+false%s+or%f[%W]",
+        msg = "'x and false or y' always yields y (false falls through to the or) - use if/else",
+    },
 }
 
 -- Rules that must see string literals, so they run on the ORIGINAL source

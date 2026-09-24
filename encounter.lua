@@ -58,12 +58,13 @@ local function newActor(guid, u)
     absorbed = 0, deaths = 0, dispels = 0, interrupts = 0,
     hits = 0, crits = 0, misses = 0, consumes = 0,
 
-    -- Seconds this actor actually did something. Recount divides by
-    -- this; Skada divides by the whole fight. The two disagree and
-    -- people argue about it, so Wrekkit can answer either way.
-    active = 0, lastActiveSec = nil,
+    -- Seconds this actor spent acting (see markActive). Recount divides by
+    -- this; Skada divides by the whole fight. The two disagree and people
+    -- argue about it, so Wrekkit can answer either way.
+    active = 0, activeUntil = nil,
 
-    -- spellId -> { name, up (seconds), since (nil when down), applied }
+    -- Buffs: spellId -> { name, up (seconds banked), since (set while up),
+    -- applied }. Group members only; see E:SeedAuras.
     auras = {},
     dmgAbility = {},    -- spellId -> { name, amount, hits, crits, max, misses }
     healAbility = {},   -- spellId -> { name, amount, over, hits, crits }
@@ -96,6 +97,11 @@ local function newEncounter(session, now)
     bucket = {},
     maxBucket = 0,
     totals = { damage = 0, healing = 0, overheal = 0, taken = 0, enemy = 0 },
+    -- Active time per player INCLUDING their pets, kept as one union.
+    -- Adding a pet's seconds to its owner's would count a moment in which
+    -- both acted twice. Keyed by the player's name, which is what the view
+    -- merges on.
+    activeGroup = {},
   }
 end
 
@@ -351,6 +357,8 @@ function E:Actor(guid)
         a.isPlayer = u.isPlayer
         a.owner = u.owner
         a.ownerName = u.ownerName
+        -- Only now is it known whether this is one of ours.
+        self:SeedAuras(enc, a, guid)
       end
     end
     return a
@@ -363,23 +371,173 @@ function E:Actor(guid)
 
   if not a.isPlayer and a.class ~= "PET" then
     enc.enemies[guid] = a
+  else
+    self:SeedAuras(enc, a, guid)
   end
   return a
+end
+
+----------------------------------------------------------------------
+-- buffs
+----------------------------------------------------------------------
+
+function E:AuraRow(a, spellId)
+  if not a.auras then a.auras = {} end
+  local row = a.auras[spellId]
+  if not row then
+    row = { id = spellId, name = W.capture:Spell(spellId), up = 0, applied = 0 }
+    a.auras[spellId] = row
+  end
+  return row
+end
+
+--[[ Bring in the buffs a group member already had when they entered the pull.
+
+     Capture follows the group's buffs all the time; an encounter only hears
+     about CHANGES while it runs. Without this a flask drunk before the pull
+     -- the normal case, and the buff anybody actually asks about -- would
+     never be counted at all.
+
+     Something up before the pull started counts from the start of the
+     pull, which is what uptime is measured against. Something whose start
+     is unknown (found by scanning, not by an event) is given the same. ]]
+function E:SeedAuras(enc, a, guid)
+  if a.aurasSeeded then return end
+  if W.db and W.db.trackAuras == false then return end
+  if not W.capture:IsGroupUnit(guid) then return end
+  a.aurasSeeded = true
+
+  W.capture:SeedBuffs(guid)
+  local set = W.capture.buffs[guid]
+  if not set then return end
+  for id, b in pairs(set) do
+    local row = self:AuraRow(a, id)
+    if not row.since then
+      local since = b.since or enc.startT
+      if b.scanned or since < enc.startT then since = enc.startT end
+      row.since = since
+      row.applied = row.applied + 1
+    end
+  end
+end
+
+--- A buff came up or went down on a group unit (see C:Buff). Never creates
+--- an actor: someone who has done nothing in this pull is not in it, and
+--- SeedAuras brings their buffs in if they ever do something.
+function E:BuffEdge(guid, spellId, up, now)
+  local enc = self.live
+  if not enc then return end
+  local a = enc.actors[guid]
+  if not a then return end
+  if not a.aurasSeeded then
+    -- Capture has already applied this change, so seeding from it now
+    -- gets both directions right.
+    self:SeedAuras(enc, a, guid)
+    return
+  end
+
+  local row = self:AuraRow(a, spellId)
+  if up then
+    if not row.since then
+      row.since = now
+      row.applied = row.applied + 1
+    end
+  elseif row.since then
+    row.up = row.up + (now - row.since)
+    row.since = nil
+  end
+end
+
+--- Seconds a buff row has been up, including a run still in progress --
+--- measured to the same "now" the encounter's own length is, so a buff that
+--- never dropped reads as exactly the length of the pull.
+function E:AuraSeconds(enc, row)
+  local up = row.up or 0
+  if row.since and enc then
+    local endT = (enc.startT or row.since) + self:Elapsed(enc)
+    if endT > row.since then up = up + (endT - row.since) end
+  end
+  return up
+end
+
+--- Close one actor's running buffs at a given moment.
+local function closeAuras(a, at)
+  for _, row in pairs(a.auras or {}) do
+    if row.since then
+      if at > row.since then row.up = row.up + (at - row.since) end
+      row.since = nil
+    end
+  end
 end
 
 ----------------------------------------------------------------------
 -- timeline
 ----------------------------------------------------------------------
 
---- Count a second in which this actor did something. O(1): only the
---- second index is compared, so a busy second costs one comparison.
-local function noteActive(a, enc, now)
-  if not a then return end
-  local sec = math.floor(now - enc.startT)
-  if a.lastActiveSec ~= sec then
-    a.lastActiveSec = sec
-    a.active = (a.active or 0) + 1
+--[[ Active time: how long someone spent acting, not how many seconds
+     happened to contain an event.
+
+     Counting seconds-with-an-event was badly wrong. A caster landing a 2.5
+     second cast back to back, never idle, only has an event in two seconds
+     out of five -- so a mage busy for the whole fight banked 8 seconds of
+     a 20 second pull and read at two and a half times their real rate.
+
+     Instead every action covers the next ACTIVE_WINDOW seconds, and active
+     time is the length of the union of those windows. 3.5 spans the
+     slowest thing anyone does over and over -- a 3.8 speed two-hander
+     between specials, a 3 second cast, an auto shot -- so a caster between
+     casts is acting, while standing idle for longer than that is not. ]]
+local ACTIVE_WINDOW = 3.5
+
+--- Grow a running union of [t, t + ACTIVE_WINDOW] windows. Exact and O(1),
+--- which relies on events arriving in time order -- as they do.
+local function extendActive(rec, now)
+  local untilT = rec.activeUntil
+  local newUntil = now + ACTIVE_WINDOW
+  if untilT and now < untilT then
+    if newUntil > untilT then
+      rec.active = (rec.active or 0) + (newUntil - untilT)
+      rec.activeUntil = newUntil
+    end
+  else
+    rec.active = (rec.active or 0) + ACTIVE_WINDOW
+    rec.activeUntil = newUntil
   end
+end
+
+--- Someone did something. Their own time, and their share of the union
+--- with their pets that the merged view reads.
+local function markActive(enc, a, now)
+  if not a then return end
+  extendActive(a, now)
+
+  local owner
+  if a.isPlayer then
+    owner = a.name
+  elseif a.class == "PET" then
+    owner = a.ownerName
+  end
+  if owner and owner ~= "?" then
+    local g = enc.activeGroup[owner]
+    if not g then
+      g = { active = 0 }
+      enc.activeGroup[owner] = g
+    end
+    extendActive(g, now)
+  end
+end
+
+--- Active seconds, less any window still reaching past the end of the pull
+--- (or past now, while it runs). That part has not happened.
+function E:ActiveSeconds(enc, rec)
+  local active = rec.active or 0
+  local untilT = rec.activeUntil
+  if untilT and enc then
+    local endT = (enc.startT or untilT) + self:Elapsed(enc)
+    if untilT > endT then active = active - (untilT - endT) end
+  end
+  if active < 0 then active = 0 end
+  return active
 end
 
 --- How many hits before a death the recap keeps.
@@ -387,8 +545,9 @@ local RECAP_HITS = 8
 
 --- Remember the last few hits this actor took, oldest overwritten first.
 --- A fixed ring rather than a growing list: this runs on every hit taken by
---- every player in the raid, and only the tail is ever read.
-local function noteRecent(a, enc, now, srcName, spell, amount, overkill)
+--- every player in the raid, and only the tail is ever read. The hp given
+--- is health AFTER the hit: capture applies damage before we see it.
+local function noteRecent(a, enc, now, srcName, spell, amount, hp)
   if not a.recent then a.recent = {} a.recentAt = 0 end
   a.recentAt = math.mod(a.recentAt or 0, RECAP_HITS) + 1
   a.recent[a.recentAt] = {
@@ -396,24 +555,30 @@ local function noteRecent(a, enc, now, srcName, spell, amount, overkill)
     src = srcName,
     spell = spell,
     a = amount,
-    hp = a.health,
+    hp = hp,
   }
 end
 
---- The ring read out oldest-first, which is the order a recap is read in.
+--- The ring read out oldest-first, by position rather than by time: hits in
+--- one frame share a timestamp, and sorting on it could put the killing
+--- blow anywhere among them.
 local function recentInOrder(a)
-  if not a.recent then return {} end
   local out = {}
-  local n = RECAP_HITS
+  local ring = a.recent
+  if not ring then return out end
   local at = a.recentAt or 0
-  for i = 1, n do
-    local idx = math.mod(at + i - 1, n) + 1
-    local e = a.recent[idx]
+  for i = 1, RECAP_HITS do
+    local e = ring[math.mod(at + i - 1, RECAP_HITS) + 1]
     if e then table.insert(out, e) end
   end
-  table.sort(out, function(x, y) return (x.t or 0) < (y.t or 0) end)
   return out
 end
+
+--- Environmental damage arrives as a number: the client EnvironmentalDamageType.
+local ENVIRONMENT = {
+  [0] = "Fatigue", [1] = "Drowning", [2] = "Falling", [3] = "Lava",
+  [4] = "Slime", [5] = "Fire", [6] = "Falling",
+}
 
 local function bucketFor(enc, now)
   local i = math.floor(now - enc.startT)
@@ -561,7 +726,7 @@ function E:Damage(sourceGuid, targetGuid, spellId, amount, info)
     src.hits = src.hits + 1
     if info.crit then src.crits = src.crits + 1 end
 
-    noteActive(src, enc, now)
+    markActive(enc, src, now)
     local row = abilityRow(src.dmgAbility, spellId, spellName)
     row.amount = row.amount + amount
     row.hits = row.hits + 1
@@ -605,7 +770,9 @@ function E:Damage(sourceGuid, targetGuid, spellId, amount, info)
       contribute(b, "t", sourceGuid, targetGuid, spellId, amount)
       -- Remember the hit itself, so a death can be explained afterwards.
       local su = W.capture.units[sourceGuid]
-      noteRecent(dst, enc, now, (su and su.name) or "?", spellName, amount)
+      local tu = W.capture.units[targetGuid]
+      noteRecent(dst, enc, now, (su and su.name) or "?", spellName, amount,
+        tu and tu.health)
     end
 
     -- Track the biggest thing we fought so the encounter can be named.
@@ -652,7 +819,7 @@ function E:Heal(casterGuid, targetGuid, spellId, effective, over, info)
   noteAmount(row, effective + over, info.crit)
 
   if src.isPlayer or src.class == "PET" then
-    noteActive(src, enc, now)
+    markActive(enc, src, now)
     enc.totals.healing = enc.totals.healing + effective
     enc.totals.overheal = enc.totals.overheal + over
     local b = bucketFor(enc, now)
@@ -673,10 +840,14 @@ end
      "misses" hides both: a caster cannot tell bad luck on hit chance from
      being under-geared against a school. ]]
 function E:Miss(casterGuid, targetGuid, spellId, missInfo)
-  if not self.live then return end
+  local enc = self.live
+  if not enc then return end
   local src = self:Actor(casterGuid)
   if not src then return end
   src.misses = src.misses + 1
+  -- A swing that was dodged or parried was still a swing: the attacker was
+  -- acting, and leaving it out credits melee with idle time it never had.
+  markActive(enc, src, GetTime())
   local row = abilityRow(src.dmgAbility, spellId, W.capture:Spell(spellId))
   row.misses = row.misses + 1
 
@@ -698,14 +869,21 @@ function E:Environmental(guid, damageType, damage, absorb, resist)
   local enc = self.live
 
   dst.taken = dst.taken + damage
-  local label = "Environment (" .. tostring(damageType or "?") .. ")"
+  local kind = ENVIRONMENT[tonumber(damageType) or -1] or tostring(damageType or "?")
+  local label = "Environment (" .. kind .. ")"
   local row = abilityRow(dst.takenAbility, -1, label)
   row.amount = row.amount + damage
   row.hits = row.hits + 1
 
   if dst.isPlayer or dst.class == "PET" then
+    local now = GetTime()
     enc.totals.taken = enc.totals.taken + damage
-    bucketFor(enc, GetTime()).dt = bucketFor(enc, GetTime()).dt + damage
+    local b = bucketFor(enc, now)
+    b.dt = b.dt + damage
+    -- Lava and falling kill people too. A recap that left them out would
+    -- blame whatever hit them last before the lava did.
+    local tu = W.capture.units[guid]
+    noteRecent(dst, enc, now, "Environment", kind, damage, tu and tu.health)
   end
 end
 
@@ -728,81 +906,115 @@ function E:Consumable(guid, itemId, spellId)
   row.name = name
 end
 
--- An aura went on or came off. Intervals, not edges: the edges are what
--- arrives, but "how long was the flask up" is the question anyone actually
--- asks, and keeping every edge would be a per-second cost for a
--- once-per-encounter answer.
---
--- Re-applying something already up is NOT counted as a second application
--- here, because the client sends an add without a matching remove when a
--- buff is refreshed; counting it would inflate the count and, worse, reset
--- the interval and lose the uptime accrued so far.
-function E:Aura(guid, spellId, gained)
-  local enc = self.live
-  if not enc then return end
-  if W.db and W.db.trackAuras == false then return end
-
-  local a = self:Actor(guid)
-  if not a then return end
-  if not a.auras then a.auras = {} end
-
-  local row = a.auras[spellId]
-  if not row then
-    row = { id = spellId, name = W.capture:Spell(spellId), up = 0,
-            since = nil, applied = 0 }
-    a.auras[spellId] = row
-  end
-
-  local now = GetTime()
-  if gained then
-    if not row.since then
-      row.since = now
-      row.applied = row.applied + 1
-    end
-  else
-    if row.since then
-      row.up = row.up + (now - row.since)
-      row.since = nil
-    end
-  end
-end
-
---- Close every aura still running, so uptime is not lost at the end of a
---- fight just because nothing removed it.
+--- Close every buff still running when the pull ended: a flask nobody ever
+--- lost was up until the end, not for zero seconds.
 function E:CloseAuras(enc)
   local stop = enc.stopT or GetTime()
+  for _, a in pairs(enc.actors or {}) do closeAuras(a, stop) end
+end
+
+--- Bank active time at the end of the pull, dropping the part of any
+--- window that reached past it. Needs enc.duration, so Finish sets that first.
+function E:CloseActive(enc)
   for _, a in pairs(enc.actors or {}) do
-    for _, row in pairs(a.auras or {}) do
-      if row.since then
-        row.up = row.up + (stop - row.since)
-        row.since = nil
-      end
-    end
+    a.active = self:ActiveSeconds(enc, a)
+    a.activeUntil = nil
+  end
+  for _, g in pairs(enc.activeGroup or {}) do
+    g.active = self:ActiveSeconds(enc, g)
+    g.activeUntil = nil
   end
 end
 
---[[ Someone else's own totals, for a pull we are both in.
+--[[ Another player's report of their own totals (see W.sync).
 
-     Kept apart from actors on purpose. These were asserted by another
-     client rather than observed by this one, so they must never overwrite
-     something measured here: the merge takes them only where local
-     observation is missing or smaller, and the report marks them, so nobody
-     mistakes a report for a measurement. ]]
-function E:RemoteTotals(name, class, damage, healing, taken, active)
-  local enc = self.live
-  if not enc then return end
-  if not name or name == "" then return end
+     Kept apart from actors on purpose. It was asserted by another client,
+     not observed by this one, so it only ever fills a gap (R:View) and the
+     row it fills is marked.
 
-  if not enc.remote then enc.remote = {} end
-  enc.remote[name] = {
-    name = name,
-    class = (class and class ~= "" and class) or "UNKNOWN",
-    damage = damage or 0,
-    healing = healing or 0,
-    taken = taken or 0,
-    active = active or 0,
-    at = GetTime(),
+     The hard part is WHICH pull it describes. Every client splits combat
+     into pulls on its own, seconds apart from everyone else, and the last
+     report of a pull arrives after that pull has already ended here. So a
+     report says how long ago its pull began and how long it ran -- spans on
+     the sender's own clock, which need no agreement about the time of day
+     -- and is placed against this client's pulls:
+
+       it began no earlier than REMOTE_SLACK before ours,
+       it began before ours ended,
+       it did not run on past ours by more than REMOTE_SLACK,
+       and if it names the enemy it hit hardest, we saw that enemy too.
+
+     A report that fits no pull is dropped. Filling the wrong pull would put
+     a number in the meter that nobody earned there, which is worse than
+     leaving the gap. ]]
+local REMOTE_SLACK = 10
+local REMOTE_LOOKBACK = 6   -- stored pulls considered, newest first
+
+--- Did this pull involve an enemy of that name? No enemies recorded at all
+--- says nothing either way, so that is not a mismatch.
+local function sawEnemy(enc, foe)
+  local any = false
+  for _, a in pairs(enc.actors or {}) do
+    if not a.isPlayer and a.class ~= "PET" then
+      any = true
+      if W.WireText(a.name) == foe then return true end
+    end
+  end
+  return not any
+end
+
+function E:RemoteReport(r)
+  if not r or not r.name or r.name == "" then return false end
+
+  local nowWall = time()
+  local began = nowWall - (r.ago or 0)
+  local ended = began + (r.dur or r.ago or 0)
+
+  local best, bestGap = nil, nil
+  local function consider(enc, s, e)
+    if not s then return end
+    if began < s - REMOTE_SLACK then return end
+    if began > e then return end
+    if ended > e + REMOTE_SLACK then return end
+    if r.foe and r.foe ~= "" and not sawEnemy(enc, r.foe) then return end
+    local gap = math.abs(began - s)
+    if not best or gap < bestGap then best, bestGap = enc, gap end
+  end
+
+  local live = self.live
+  if live then consider(live, live.startTime, nowWall) end
+
+  -- Stored pulls too: the final report of a pull lands after it ended.
+  local list = (W.db and W.db.encounters) or {}
+  local looked = 0
+  for i = table.getn(list), 1, -1 do
+    local rec = list[i]
+    if not rec.sharedBy and not rec.imported and rec.startTime then
+      consider(rec, rec.startTime, rec.startTime + (rec.duration or 0))
+      looked = looked + 1
+      if looked >= REMOTE_LOOKBACK then break end
+    end
+  end
+  if not best then return false end
+
+  if not best.remote then best.remote = {} end
+  local who = best.remote[r.name]
+  if not who then
+    who = { parts = {} }
+    best.remote[r.name] = who
+  end
+  if r.class and r.class ~= "" and r.class ~= "UNKNOWN" then who.class = r.class end
+
+  --[[ One part per pull OF THE SENDER. Each report restates its pull so far,
+       so a later one replaces an earlier one -- but two of the sender's
+       pulls can both fall inside one of ours (they dropped combat for a
+       moment, we did not), and those have to add up, not overwrite. ]]
+  who.parts[r.pid or "?"] = {
+    damage = r.damage or 0, petDamage = r.petDamage or 0,
+    healing = r.healing or 0, taken = r.taken or 0, petTaken = r.petTaken or 0,
+    active = r.active or 0, activeOwn = r.activeOwn or 0,
   }
+  return true
 end
 
 function E:Death(guid)
@@ -811,21 +1023,33 @@ function E:Death(guid)
   local a = self:Actor(guid)
   if not a then return end
 
+  local now = GetTime()
   a.deaths = a.deaths + 1
+  -- Buffs fall off at death. Closed here, at the moment it happened, not
+  -- whenever the removals turn up -- some never do.
+  closeAuras(a, now)
+
+  local deathT = now - enc.startT
+  local recap = {}
+  --[[ Snapshot what killed them WHILE it is still known.
+
+       The ring keeps being overwritten as the fight goes on, so reading it
+       later would describe whatever happened next rather than what happened
+       last. Copied, not referenced, for the same reason. Each line carries
+       its distance from the death, which is what the recap prints and the
+       one number that means the same thing in every view. ]]
+  for _, e in ipairs(recentInOrder(a)) do
+    table.insert(recap, { t = e.t, ago = deathT - (e.t or deathT),
+                          src = e.src, spell = e.spell, a = e.a, hp = e.hp })
+  end
+  -- The next life starts with an empty ring; otherwise a second death soon
+  -- after a rez is explained by hits from before the first.
+  a.recent = nil
+  a.recentAt = 0
+
   if a.isPlayer then
-    --[[ Snapshot what killed them WHILE it is still known.
-
-         The ring keeps being overwritten as the fight goes on, so reading
-         it later would describe whatever happened next rather than what
-         happened last. Copied, not referenced, for the same reason. ]]
-    local recap = {}
-    for _, e in ipairs(recentInOrder(a)) do
-      table.insert(recap, { t = e.t, src = e.src, spell = e.spell,
-                            a = e.a, hp = e.hp })
-    end
-
     table.insert(enc.deaths, {
-      t = GetTime() - enc.startT,
+      t = deathT,
       guid = guid,
       name = a.name,
       class = a.class,
@@ -903,9 +1127,6 @@ function E:HealStuckCombat()
 end
 
 function E:CombatStart()
-  -- Only while something is happening: reporting into an empty raid is
-  -- traffic nobody asked for.
-  if W.db and W.db.liveSync and W.sync then W.sync:StartLive() end
   if not self:ShouldRecord() then
     -- Say so once per zone. Silently recording nothing is the single most
     -- confusing way for this addon to behave.
@@ -935,6 +1156,7 @@ function E:CombatStart()
   if self.live and self.lastCombatEnd and (now - self.lastCombatEnd) <= MERGE_GAP then
     self.inCombat = true
     self.combatMark = now
+    if W.sync then W.sync:StartLive() end
     return
   end
 
@@ -943,6 +1165,10 @@ function E:CombatStart()
   self.live = newEncounter(self.session, now)
   self.inCombat = true
   self.combatMark = now
+  -- Report our own totals while this pull runs; W.sync decides whether.
+  -- Only from here, when a pull is really being recorded: reporting into
+  -- a raid while nothing is happening is traffic nobody asked for.
+  if W.sync then W.sync:StartLive() end
 end
 
 function E:CombatEnd()
@@ -954,6 +1180,7 @@ function E:CombatEnd()
     self.live.stopT = now
     self.live.combat = self.live.combat + (now - (self.combatMark or now))
   end
+  if W.sync then W.sync:StopLive() end
   -- Hold the encounter open for MERGE_GAP in case the next wave lands.
   W.ScheduleFinish(MERGE_GAP + 0.5)
 end
@@ -1048,6 +1275,7 @@ function E:Finish()
   -- Without this, a flask that was never removed reads as zero uptime --
   -- the exact opposite of the truth.
   self:CloseAuras(enc)
+  self:CloseActive(enc)
 
   local name, anyDead, primary = deriveName(enc)
   enc.name = name
@@ -1066,6 +1294,13 @@ function E:Finish()
 
   self:Persist(enc)
   self:RememberSession(session, enc)
+
+  -- The last word on this pull goes out now, while its numbers are final.
+  -- Without it a pull shorter than the report interval was never reported
+  -- at all, and every longer one lost what happened after the last tick.
+  if W.sync then
+    W.Guard("live sync", function() W.sync:BroadcastMine(enc) end)
+  end
 
   --[[ Append to the on-disk journal immediately.
 
@@ -1149,6 +1384,12 @@ function E:Persist(enc)
     bossBy = enc.bossBy,
     totals = enc.totals,
     deaths = enc.deaths,
+    -- Seconds per player with their pets, as one union (see markActive).
+    activeGroup = {},
+    -- Other players' reports about themselves. Shared rather than copied,
+    -- and created here if need be: the final reports of a pull arrive
+    -- after it is stored, and land on this record.
+    remote = enc.remote,
     actors = {},
     bucket = {},
     maxBucket = enc.maxBucket,
@@ -1258,6 +1499,10 @@ function E:Persist(enc)
       takenAbility = keepDetail and topAbilities(a.takenAbility, limit) or nil,
       consumeItem = keepDetail and topAbilities(a.consumeItem, limit) or nil,
     }
+  end
+
+  for name, g in pairs(enc.activeGroup or {}) do
+    rec.activeGroup[name] = g.active
   end
 
   table.insert(W.db.encounters, rec)

@@ -558,14 +558,21 @@ end
 
 local function paintRow(row, item, index)
   local color = item._color or W.ClassColor(item.class)
-  row:SetData(item._rank, item.name, item._text, item._sub, item._frac, color, 72)
+  -- Filled from the player's own report rather than measured here; the
+  -- pane's total line says what the mark means.
+  local name = item.remote and ((item.name or "?") .. "|cff9d9d9d*|r") or item.name
+  row:SetData(item._rank, name, item._text, item._sub, item._frac, color, 72)
   row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
   row:SetScript("OnClick", function()
     W.Guard("row click", function()
       if arg1 == "RightButton" then
         R.state.drill = nil R.state.deathDrill = nil
+      elseif R.state.drill == item.key then
+        -- Clicking the open row closes it. This was once one line of
+        -- and/or shorthand, which cannot produce nil, so it never closed.
+        R.state.drill = nil
       else
-        R.state.drill = (R.state.drill == item.key) and nil or item.key
+        R.state.drill = item.key
       end
       -- Any change of actor drops the ability we were inspecting.
       R.state.drillAbility = nil
@@ -575,8 +582,9 @@ local function paintRow(row, item, index)
 end
 
 local function paintAbilityRow(row, item, index)
-  row:SetData(index, item.label or item.name, W.Short(item.amount),
-    string.format("%d hits  %.0f%%", item.hits, item._critPct),
+  row:SetData(index, item.label or item.name,
+    item._value or W.Short(item.amount),
+    item._note or string.format("%d hits  %.0f%%", item.hits or 0, item._critPct or 0),
     item._frac, item._color or W.color.accent, 92)
   row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
   row.abilityId = item.id
@@ -612,7 +620,7 @@ function R:FillTable(pane, list, view, metricKey, title)
   local rows, metric, total = W.report:Rank(view, metricKey,
     { search = self.state.search, groupOnly = self.state.groupOnly })
 
-  pane.titleText:SetText(title or metric.label)
+  pane.titleText:SetText(title or W.metrics.Label(metric))
 
   if self.state.drill then
     local target
@@ -640,14 +648,14 @@ function R:FillTable(pane, list, view, metricKey, title)
 
       -- An empty drilldown needs to say why; see R:EmptyDetailNote.
       if table.getn(abilities) == 0 then
-        pane.titleText:SetText(target.name .. "  -  " .. metric.label)
+        pane.titleText:SetText(target.name .. "  -  " .. W.metrics.Label(metric))
         pane.totalText:SetText("right-click to go back")
         list:SetData({ { label = W.report:EmptyDetailNote(view), value = "" } },
           paintStatRow)
         return
       end
 
-      pane.titleText:SetText(target.name .. "  -  " .. metric.label)
+      pane.titleText:SetText(target.name .. "  -  " .. W.metrics.Label(metric))
       pane.totalText:SetText(W.Short(abTotal) .. "   (click an ability for detail)")
       list:SetData(abilities, paintAbilityRow)
       return
@@ -658,11 +666,20 @@ function R:FillTable(pane, list, view, metricKey, title)
     r._color = metric.color or W.ClassColor(r.class)
   end
 
+  local text
   if metric.percent or metric.integer then
-    pane.totalText:SetText(table.getn(rows) .. " rows")
+    text = table.getn(rows) .. " rows"
   else
-    pane.totalText:SetText("Total " .. W.Short(total))
+    text = "Total " .. W.Short(total)
   end
+  -- Say what the mark on a row means, wherever one appears.
+  for _, r in ipairs(rows) do
+    if r.remote then
+      text = text .. "   |cff9d9d9d* = from that player's own report|r"
+      break
+    end
+  end
+  pane.totalText:SetText(text)
   list:SetData(rows, paintRow)
 end
 
