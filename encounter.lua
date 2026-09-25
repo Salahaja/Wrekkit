@@ -1331,19 +1331,34 @@ end
      per-ability detail for trash mobs -- which is 90% of the rows and the
      part nobody reads. ]]
 
--- Auras worth storing: anything that was actually up. Sorted by uptime so
--- a capped list keeps what mattered rather than whatever hashed first.
-local function topAuras(tbl, limit)
+--[[ Buffs worth storing -- anything that was actually up -- packed into one
+     short string per actor: "id:tenths:applied;..." with the uptime in
+     tenths of a second. The names go into `names`, once per pull.
+
+     Stored as a table per buff they cost as much as everything else in a
+     pull put together: a name and four keys, per buff, per player, written
+     out as Lua source at every logout and parsed again at every login. A
+     buff list is only ever read whole, so nothing is lost by packing it.
+     Integers only, so no decimal point can be mangled on the way.
+
+     Sorted by uptime, so a capped list keeps what mattered rather than
+     whatever hashed first. ]]
+local function packAuras(tbl, names, limit)
   local rows = {}
   for id, r in pairs(tbl or {}) do
-    if (r.up or 0) > 0.5 then
-      table.insert(rows, { id = id, name = r.name, up = r.up,
-                           applied = r.applied })
-    end
+    if (r.up or 0) > 0.5 then table.insert(rows, { id = id, row = r }) end
   end
-  table.sort(rows, function(x, y) return (x.up or 0) > (y.up or 0) end)
-  while table.getn(rows) > (limit or 24) do table.remove(rows) end
-  return rows
+  if table.getn(rows) == 0 then return nil end
+  table.sort(rows, function(x, y) return x.row.up > y.row.up end)
+
+  local parts = {}
+  for i = 1, math.min(table.getn(rows), limit or 24) do
+    local id, r = rows[i].id, rows[i].row
+    if names[id] == nil then names[id] = r.name end
+    -- %.0f, not %d: the client's %d is a 32-bit int.
+    table.insert(parts, string.format("%.0f:%.0f:%.0f", id, r.up * 10, r.applied or 0))
+  end
+  return table.concat(parts, ";")
 end
 
 local function topAbilities(tbl, limit)
@@ -1391,6 +1406,8 @@ function E:Persist(enc)
     -- after it is stored, and land on this record.
     remote = enc.remote,
     actors = {},
+    -- Buff names, once per pull rather than once per player (packAuras).
+    auraNames = {},
     bucket = {},
     maxBucket = enc.maxBucket,
   }
@@ -1491,15 +1508,16 @@ function E:Persist(enc)
       hits = a.hits, crits = a.crits, misses = a.misses,
       consumes = a.consumes,
       active = a.active,
-      -- Uptime as an array, same shape as the ability tables: the live one
-      -- is keyed by spell id, the stored one is a list.
-      auras = topAuras(a.auras),
+      -- Packed: the live table is keyed by spell id, this is a string.
+      auras = packAuras(a.auras, rec.auraNames),
       dmgAbility = keepDetail and topAbilities(a.dmgAbility, limit) or nil,
       healAbility = keepDetail and topAbilities(a.healAbility, limit) or nil,
       takenAbility = keepDetail and topAbilities(a.takenAbility, limit) or nil,
       consumeItem = keepDetail and topAbilities(a.consumeItem, limit) or nil,
     }
   end
+
+  if next(rec.auraNames) == nil then rec.auraNames = nil end
 
   for name, g in pairs(enc.activeGroup or {}) do
     rec.activeGroup[name] = g.active

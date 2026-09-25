@@ -29,6 +29,32 @@ table.getn = table.getn or function(t) return #t end
 table.setn = table.setn or function() end
 unpack = unpack or table.unpack
 
+--[[ The client's Lua is a 32-bit build: %d goes through a C int, so any
+     value from 2^31 up prints as -2147483648 there, where 5.4 prints it
+     whole. Print it the client's way, or a %d on a big number passes here
+     and prints nonsense in game. ]]
+do
+  local realFormat = string.format
+  string.format = function(fmt, ...)
+    local args = table.pack(...)
+    if type(fmt) == "string" then
+      local i = 0
+      for spec in string.gmatch(fmt, "%%[-+ #0]*%d*%.?%d*[%a%%]") do
+        if spec ~= "%%" then
+          i = i + 1
+          local conv = string.sub(spec, -1)
+          local v = args[i]
+          if (conv == "d" or conv == "i") and type(v) == "number"
+             and (v >= 2147483648 or v < -2147483648) then
+            args[i] = -2147483648
+          end
+        end
+      end
+    end
+    return realFormat(fmt, table.unpack(args, 1, args.n))
+  end
+end
+
 ----------------------------------------------------------------------
 -- clock
 ----------------------------------------------------------------------
@@ -1651,8 +1677,9 @@ check("a missing school on melee is Physical", Wrekkit.SchoolName(nil, 0), "Phys
 check("school zero is Physical", Wrekkit.SchoolName(0, 0), "Physical")
 
 --[[ Persistence rebuilds every ability from an explicit field list, which is
-     exactly where the resist statistics were lost once already. ]]
-Wrekkit.encounter:Persist(Wrekkit.report:CurrentSession().encounters[1])
+     exactly where the resist statistics were lost once already. The pull
+     above went through it when combat ended; Persist only ever takes a live
+     pull, so a stored record is not handed back to it. ]]
 local keptSchool, keptMobDetail = false, false
 for _, enc in ipairs((Wrekkit.db and Wrekkit.db.encounters) or {}) do
   for _, actor in pairs(enc.actors or {}) do
@@ -2259,6 +2286,65 @@ local sv = Wrekkit.report:View({ stored }, {})
 local up = TH.rowOf(sv, "damage", "Fuff").auras[17628].up
 check("stored: up from the pull start until the death", up, 20, 0.01)
 
+-- Stored packed: one short string per player, each name once per pull.
+-- In a function of its own: this block is at the 200-local limit.
+local function packedStorage()
+  local fuffStored = stored.actors["0xP1"]
+  check("stored buffs are one packed string per player", type(fuffStored.auras), "string")
+  check("the boss is stored", type(stored.actors["0xBoss"]), "table")
+  check("  with nothing at all for buffs it never had",
+    stored.actors["0xBoss"] and stored.actors["0xBoss"].auras, nil)
+  check("each buff's name is kept once for the pull",
+    stored.auraNames and stored.auraNames[17628], live.actors["0xP1"].auras[17628].name)
+  check("and comes back with the row", TH.rowOf(sv, "damage", "Fuff").auras[17628].name,
+    live.actors["0xP1"].auras[17628].name)
+  check("the count of applications survives",
+    TH.rowOf(sv, "damage", "Fuff").auras[17628].applied, live.actors["0xP1"].auras[17628].applied)
+
+  --[[ 0.4.0 and 0.4.1 stored a list of rows. Those pulls are still in
+       everybody's SavedVariables and have to keep reading, alone and mixed
+       in with new ones. ]]
+  local function deepCopy(t)
+    if type(t) ~= "table" then return t end
+    local c = {}
+    for k, v in pairs(t) do c[k] = deepCopy(v) end
+    return c
+  end
+  local legacy = deepCopy(stored)
+  legacy.auraNames = nil
+  legacy.id = (stored.id or 0) + 1000
+  for guid, a in pairs(legacy.actors) do
+    local liveActor = live.actors[guid]
+    if a.auras and liveActor then
+      local list = {}
+      for id, r in pairs(liveActor.auras or {}) do
+        if (r.up or 0) > 0.5 then
+          table.insert(list, { id = id, name = r.name, up = r.up, applied = r.applied })
+        end
+      end
+      a.auras = list
+    end
+  end
+  local lv = Wrekkit.report:View({ legacy }, {})
+  check("a pull stored by 0.4.1 still reads",
+    TH.rowOf(lv, "damage", "Fuff").auras[17628].up, 20, 0.01)
+  check("  with its names", TH.rowOf(lv, "damage", "Fuff").auras[17628].name,
+    live.actors["0xP1"].auras[17628].name)
+  local mixed = Wrekkit.report:View({ legacy, stored }, {})
+  check("old and new pulls add up together",
+    TH.rowOf(mixed, "damage", "Fuff").auras[17628].up, 40, 0.01)
+
+  -- A name the first pull lacked is filled in by a later one.
+  local unnamed = deepCopy(stored)
+  unnamed.auraNames = nil
+  unnamed.id = (stored.id or 0) + 2000
+  local filled = Wrekkit.report:View({ unnamed, stored }, {})
+  check("a later pull fills in a missing name",
+    TH.rowOf(filled, "damage", "Fuff").auras[17628].name,
+    live.actors["0xP1"].auras[17628].name)
+end
+packedStorage()
+
 -- Ranking one chosen buff across everybody.
 local metric = Wrekkit.metrics.Get("uptime")
 local counted = TH.rowOf(sv, "uptime", "Fuff")
@@ -2581,6 +2667,60 @@ Wrekkit.report:ClearPicks()
 check("clearing leaves nobody picked", Wrekkit.report:AnyPicked(), false)
 
 Wrekkit.ResetData("all")
+end
+
+----------------------------------------------------------------------
+print("\n-- more buffs than are stored --")
+----------------------------------------------------------------------
+do
+Wrekkit.ResetData("all")
+Wrekkit.db.trackAuras = nil
+Wrekkit.capture.buffs = {}
+TH.setRaid({ "Fuff" })
+
+-- Thirty buffs, all up before the pull. 30001 drops a second in, so it has
+-- the least uptime and is one the cap has to leave out.
+for b = 1, 30 do
+  fire("BUFF_ADDED_SELF", "0xP1", b, 30000 + b, 1, 60, b - 1, 0)
+end
+IN_COMBAT = true
+fire("PLAYER_REGEN_DISABLED")
+Wrekkit.encounter:Damage("0xP1", "0xBoss", 11267, 100, {})
+advance(1)
+fire("BUFF_REMOVED_SELF", "0xP1", 1, 30001, 0, 60, 0, 1)
+for i = 1, 9 do
+  Wrekkit.encounter:Damage("0xP1", "0xBoss", 11267, 100, {})
+  advance(1)
+end
+IN_COMBAT = false
+fire("PLAYER_REGEN_ENABLED")
+Wrekkit.encounter:Finish()
+
+local packed = TH.lastStored().actors["0xP1"].auras or ""
+local _, kept = string.gsub(packed, "[^;]+", "")
+check("a player's stored buffs are capped", kept, 24)
+check("  keeping the longest-running",
+  string.find(";" .. packed, ";30001:", 1, true), nil)
+
+Wrekkit.capture.buffs = {}
+TH.clearRaid()
+Wrekkit.ResetData("all")
+end
+
+----------------------------------------------------------------------
+print("\n-- saved settings --")
+----------------------------------------------------------------------
+do
+-- A default nothing ever read: each window keeps its own geometry. Every
+-- saved file up to 0.4.1 carries a copy of it.
+local saved = WrekkitDB
+WrekkitDB = { window = { point = "CENTER", x = 0, y = 0, w = 900, h = 620 },
+              encounters = {} }
+Wrekkit.InitDB()
+check("the unused window default leaves old files", WrekkitDB.window, nil)
+check("and is no longer a default", Wrekkit.defaults.window, nil)
+WrekkitDB = saved
+Wrekkit.db = saved
 end
 
 print(string.format("\n%d passed, %d failed\n", pass, fail))

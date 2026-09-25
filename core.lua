@@ -225,7 +225,6 @@ W.defaults = {
   sessionBarrier = 0,      -- sessions ending at or before this never resume
   autoSave = true,         -- append each encounter to disk as it finishes
   minimap = { show = true, angle = 214 },
-  window = { point = "CENTER", x = 0, y = 0, w = 900, h = 620 },
 }
 
 local function applyDefaults(dst, src)
@@ -241,6 +240,9 @@ end
 
 function W.InitDB()
   if type(WrekkitDB) ~= "table" then WrekkitDB = {} end
+  -- A default nothing ever read: each window keeps its own geometry. Every
+  -- saved file up to 0.4.1 carries a copy of it.
+  WrekkitDB.window = nil
   applyDefaults(WrekkitDB, W.defaults)
   if type(WrekkitDB.encounters) ~= "table" then WrekkitDB.encounters = {} end
   W.db = WrekkitDB

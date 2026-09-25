@@ -185,22 +185,37 @@ end
 --- Fold one pull's buff rows into a view row. The live pull keeps a buff
 --- still running open-ended, so it is measured to the pull's own "now";
 --- a stored pull has already closed every one.
+---
+--- Three shapes arrive here: the live pull's rows keyed by spell id, the
+--- list of rows 0.4.0 and 0.4.1 stored, and since 0.4.2 one packed string
+--- per actor with the names kept once per pull (see packAuras).
 local function addAuras(row, auras, enc)
   if not auras then return end
   if not row.auras then row.auras = {} end
-  local function add(id, au)
+  local function add(id, name, up, applied)
     local d = row.auras[id]
     if not d then
-      d = { id = id, name = au.name, up = 0, applied = 0 }
+      d = { id = id, name = name, up = 0, applied = 0 }
       row.auras[id] = d
     end
-    d.up = d.up + W.encounter:AuraSeconds(enc, au)
-    d.applied = d.applied + (au.applied or 0)
+    if not d.name then d.name = name end
+    d.up = d.up + up
+    d.applied = d.applied + (applied or 0)
   end
-  if auras[1] ~= nil then
-    for _, au in ipairs(auras) do add(au.id, au) end
+  if type(auras) == "string" then
+    local names = (enc and enc.auraNames) or {}
+    for id, tenths, applied in string.gfind(auras, "(%d+):(%d+):(%d+)") do
+      local spellId = tonumber(id)
+      add(spellId, names[spellId], tonumber(tenths) / 10, tonumber(applied))
+    end
+  elseif auras[1] ~= nil then
+    for _, au in ipairs(auras) do
+      add(au.id, au.name, W.encounter:AuraSeconds(enc, au), au.applied)
+    end
   else
-    for id, au in pairs(auras) do add(id, au) end
+    for id, au in pairs(auras) do
+      add(id, au.name, W.encounter:AuraSeconds(enc, au), au.applied)
+    end
   end
 end
 

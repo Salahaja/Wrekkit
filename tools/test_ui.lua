@@ -21,6 +21,29 @@ table.getn = table.getn or function(t) return #t end
 table.setn = table.setn or function() end
 unpack = unpack or table.unpack
 
+-- The client's %d is a 32-bit int; see the same block in test_engine.lua.
+do
+  local realFormat = string.format
+  string.format = function(fmt, ...)
+    local args = table.pack(...)
+    if type(fmt) == "string" then
+      local i = 0
+      for spec in string.gmatch(fmt, "%%[-+ #0]*%d*%.?%d*[%a%%]") do
+        if spec ~= "%%" then
+          i = i + 1
+          local conv = string.sub(spec, -1)
+          local v = args[i]
+          if (conv == "d" or conv == "i") and type(v) == "number"
+             and (v >= 2147483648 or v < -2147483648) then
+            args[i] = -2147483648
+          end
+        end
+      end
+    end
+    return realFormat(fmt, table.unpack(args, 1, args.n))
+  end
+end
+
 local NOW = 1000.0
 GetTime = function() return NOW end
 time = function() return 1700000000 + math.floor(NOW) end
