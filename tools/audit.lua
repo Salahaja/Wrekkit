@@ -1325,6 +1325,27 @@ step("logout path", function()
   if not f._events["PLAYER_LOGOUT"] then error("PLAYER_LOGOUT not registered") end
 end)
 
+step("crash recovery once a login, and the mark at logout", function()
+  local f = _G["WrekkitInitFrame"]
+  local runs = 0
+  local realRecover = W.store.Recover
+  W.store.Recover = function(self) runs = runs + 1 return realRecover(self) end
+  W.store.recovered = nil
+  event = "PLAYER_ENTERING_WORLD"
+  f._scripts.OnEvent()
+  f._scripts.OnEvent()           -- every loading screen fires it
+  W.store.Recover = realRecover
+  if runs ~= 1 then error("recovery ran " .. runs .. " times, not once") end
+
+  event = "PLAYER_LOGOUT"
+  f._scripts.OnEvent()
+  local mark = W.db.journalMarks and W.db.journalMarks[W.store:Filename()]
+  if not mark then error("logout left no journal mark") end
+  if mark.bytes ~= string.len(DISK[W.store:Filename()] or "") then
+    error("the mark's length disagrees with the journal on disk")
+  end
+end)
+
 ----------------------------------------------------------------------
 -- report
 ----------------------------------------------------------------------

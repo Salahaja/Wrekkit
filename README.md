@@ -385,9 +385,11 @@ logout or `/reload`*, so after a crash they still hold the last clean save and
 nothing since — the whole night is gone from them, no matter how carefully it
 was aggregated in memory. Wrekkit therefore appends each encounter to
 `CustomData\Wrekkit_<character>.txt` the moment it ends, through Nampower's
-file API. Every login restores whatever the journal has that the saved history
-is missing, and says how many fights it brought back. When nothing is missing
-it says nothing.
+file API, and every clean logout notes how far the journal had got. The next
+login restores the pulls that started after that point and never reached the
+saved history, and says how many. Older pulls the history dropped to stay
+within its cap stay dropped. When nothing was lost it says nothing, and does
+not even parse the journal.
 
 Recovery reconstructs the session too, deriving it from the restored
 encounters rather than the saved pointer the crash destroyed — so the night

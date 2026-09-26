@@ -158,10 +158,18 @@ function St:AppendEncounter(enc, session)
   local ok, err = pcall(WriteCustomFile, filename, text, "a")
   if not ok then
     W.Debug("journal append failed: " .. tostring(err))
+    self.journalBytes = nil     -- part of it may have landed: length unknown
     return false
   end
 
   self.journalSession = enc.sessionId
+  -- Keep count of the file's length. The clean-save mark records it, so the
+  -- next login can tell without parsing whether anything was added since.
+  if prefix ~= "" then
+    self.journalBytes = string.len(text)
+  elseif self.journalBytes then
+    self.journalBytes = self.journalBytes + string.len(text)
+  end
   return true
 end
 
@@ -183,7 +191,21 @@ function St:Rewrite()
       or self:Serialize(encounters)
   local ok = pcall(WriteCustomFile, self:Filename(), text, "w")
   self.journalSession = nil
+  self.journalBytes = ok and string.len(text) or nil
   return ok == true
+end
+
+--[[ How far the journal had got at a clean save. PLAYER_LOGOUT fires just
+     before SavedVariables are written, at a logout and at a /reload alike,
+     so this mark is saved together with the history it describes. After a
+     crash it still describes the last CLEAN save, which is the question the
+     next login asks: what did the journal get that the saved history never
+     did? Kept per journal file, since the history is shared by the account
+     and each character has a journal of its own. ]]
+function St:MarkSaved()
+  if not W.db or not self:Available() then return end
+  W.db.journalMarks = W.db.journalMarks or {}
+  W.db.journalMarks[self:Filename()] = { saved = time(), bytes = self.journalBytes }
 end
 
 ----------------------------------------------------------------------
@@ -272,6 +294,7 @@ function St:Save()
 
   local text = self:Serialize(encounters)
   local ok, err = pcall(WriteCustomFile, self:Filename(), text, "w")
+  self.journalBytes = ok and string.len(text) or nil
   if not ok then
     W.Print("Save failed: " .. tostring(err))
     return false
@@ -381,23 +404,32 @@ function St:Deserialize(text)
   return encounters
 end
 
---- Merge the file on disk into the history. `quiet` says nothing unless it
---- found something the history was missing: what every login does.
-function St:Load(quiet)
+--- An encounter's identity, the same in memory and in the file.
+local function keyOf(e)
+  return tostring(e.sessionId) .. ":" .. tostring(e.id)
+end
+
+local function byStart(a, b)
+  local at, bt = a.startTime or 0, b.startTime or 0
+  if at == bt then return (a.id or 0) < (b.id or 0) end
+  return at < bt
+end
+
+function St:Load()
   if not self:Available() then
-    if not quiet then W.Print("Loading from disk needs Nampower's file API (ReadCustomFile).") end
+    W.Print("Loading from disk needs Nampower's file API (ReadCustomFile).")
     return false
   end
 
   local ok, text = pcall(ReadCustomFile, self:Filename())
   if not ok or not text or text == "" then
-    if not quiet then W.Print("No saved file found at CustomData\\" .. self:Filename()) end
+    W.Print("No saved file found at CustomData\\" .. self:Filename())
     return false
   end
 
   local encounters = self:Deserialize(text)
   if table.getn(encounters) == 0 then
-    if not quiet then W.Print("That file held no encounters.") end
+    W.Print("That file held no encounters.")
     return false
   end
 
@@ -408,9 +440,6 @@ function St:Load(quiet)
        identified by session and id, and the in-memory copy wins on a tie --
        it carries per-ability detail the file does not. That also makes
        loading idempotent: running it twice changes nothing. ]]
-  local function keyOf(e)
-    return tostring(e.sessionId) .. ":" .. tostring(e.id)
-  end
 
   -- A copy loaded from the file before is replaced by the file's own, fresh
   -- one: counted as already there, not as recovered all over again.
@@ -436,18 +465,10 @@ function St:Load(quiet)
     end
   end
 
-  table.sort(kept, function(a, b)
-    local at, bt = a.startTime or 0, b.startTime or 0
-    if at == bt then return (a.id or 0) < (b.id or 0) end
-    return at < bt
-  end)
+  table.sort(kept, byStart)
   W.db.encounters = kept
 
-  if quiet then
-    if added == 0 then return true end
-    W.Print("recovered " .. added .. " fight(s) the last session did not save - it " ..
-      "ended without a clean logout (a crash, or the client closing).")
-  elseif skipped > 0 then
+  if skipped > 0 then
     W.Print("Recovered " .. added .. " encounters from disk (" ..
       skipped .. " already in memory).")
   else
@@ -457,17 +478,85 @@ function St:Load(quiet)
   return true
 end
 
---[[ Crash recovery, at every login.
+--[[ Crash recovery, once a login.
 
      SavedVariables are written only at a clean logout or /reload, so after a
-     crash they hold the last CLEAN save -- not nothing -- and every fight
-     since exists only in the journal. Waiting for an empty history to
-     recover missed exactly that case. The merge goes by identity and the
-     in-memory copy wins, so running it every time restores what the last
-     session failed to save, and otherwise changes nothing and says nothing. ]]
+     crash they hold the last CLEAN save -- not nothing -- and every pull
+     since exists only in the journal. Those are what this restores: pulls
+     that started after the last clean save (see St:MarkSaved) and are not in
+     the history.
+
+     Not everything the journal has and the history lacks. The journal keeps
+     every pull ever recorded; the history keeps the newest 60 and drops the
+     rest as it goes, and restoring those would undo the cap at every login.
+     A journal that has not grown since the clean save is not even parsed. ]]
 function St:Recover()
-  if not self:Available() then return false end
-  return self:Load(true)
+  if not W.db or not self:Available() then return false end
+
+  local name = self:Filename()
+  local ok, text = pcall(ReadCustomFile, name)
+  if not ok or type(text) ~= "string" then text = "" end
+  self.journalBytes = string.len(text)
+
+  local mark = W.db.journalMarks and W.db.journalMarks[name]
+  if text == "" or (mark and mark.bytes == self.journalBytes) then return true end
+
+  -- No mark yet (the first login on this version, or a wiped history): the
+  -- newest pull the history kept stands in for the last clean save.
+  local since = mark and mark.saved
+  if not since then
+    since = 0
+    for _, e in ipairs(W.db.encounters) do
+      if not e.sharedBy and (e.startTime or 0) > since then since = e.startTime end
+    end
+  end
+
+  local list = W.db.encounters
+  local wasEmpty = table.getn(list) == 0
+  local have, back = {}, {}
+  for _, e in ipairs(list) do have[keyOf(e)] = true end
+  for _, e in ipairs(self:Deserialize(text)) do
+    local k = keyOf(e)
+    if not have[k] and (e.startTime or 0) > since then
+      have[k] = true
+      back[e] = true
+      table.insert(list, e)
+    end
+  end
+  if next(back) == nil then return true end
+
+  -- The saved session pointer predates these pulls: resuming from it would
+  -- give the next pull an id one of them already has. Without it the session
+  -- comes from the history (E:SessionFromHistory), restored pulls included.
+  W.db.session = nil
+
+  -- The history's own cap, oldest unlocked out first: a lost session that
+  -- ran past it leaves exactly what a clean logout would have.
+  table.sort(list, byStart)
+  local maxKeep = W.db.maxEncounters or 60
+  while table.getn(list) > maxKeep do
+    local victim
+    for i = 1, table.getn(list) do
+      if not list[i].locked then victim = i break end
+    end
+    if not victim then break end
+    table.remove(list, victim)
+  end
+
+  local n = 0
+  for _, e in ipairs(list) do
+    if back[e] then n = n + 1 end
+  end
+  if n == 0 then return true end
+  if wasEmpty then
+    W.Print("the saved history was empty - restored " .. n ..
+      " fight(s) from the journal on disk.")
+  else
+    W.Print("recovered " .. n .. " fight(s) the last session did not save - it " ..
+      "ended without a clean logout (a crash, or the client closing).")
+  end
+  if W.ui and W.ui.report and W.ui.report.frame then W.ui.report:Refresh() end
+  return true
 end
 
 ----------------------------------------------------------------------

@@ -938,6 +938,8 @@ local function simulateReload()
   Wrekkit.encounter.session = nil
   Wrekkit.encounter.inCombat = false
   Wrekkit.store.journalSession = nil
+  Wrekkit.store.journalBytes = nil
+  Wrekkit.store.recovered = nil
   Wrekkit.capture.units = {}
 end
 
@@ -1166,11 +1168,14 @@ end
 check("resumed into the recovered session, not a new one",
   Wrekkit.Count(ids), 1)
 
---[[ The crash that actually happens. A crash does not wipe SavedVariables:
-     they keep the last CLEAN logout, and the pulls since exist only in the
-     journal. Recovery used to wait for an empty history, so it never ran in
-     exactly this case and the pulls were left on disk. Its own scope: the
-     main chunk is near Lua's 200-local limit. ]]
+--[[ The crash that actually happens, and the history's cap.
+
+     A crash does not wipe SavedVariables: they keep the last CLEAN save, and
+     the pulls since exist only in the journal. Every login restores those --
+     and only those. The journal keeps every pull ever recorded while the
+     history keeps its newest few, so restoring everything the history lacks
+     would undo the cap at every login. Its own scope: the main chunk is near
+     Lua's 200-local limit. ]]
 do
 local function copyOf(t)
   if type(t) ~= "table" then return t end
@@ -1179,41 +1184,204 @@ local function copyOf(t)
   return c
 end
 
-WrekkitDB = nil
-Wrekkit.InitDB()
-simulateReload()
-DISK[Wrekkit.store:Filename()] = nil
-pull(20)
-local cleanSave = copyOf(WrekkitDB)          -- a clean logout writes this out
-advance(40)
-pull(20)
-advance(40)
-pull(20)                                     -- two more, journaled as they end
-
-WrekkitDB = cleanSave                        -- the crash: back to the last clean save
-Wrekkit.InitDB()
-simulateReload()
-check("after a crash, SavedVariables hold only what was cleanly saved",
-  table.getn(Wrekkit.db.encounters), 1)
-
 local said = {}
 local keepPrint = Wrekkit.Print
-Wrekkit.Print = function(msg) table.insert(said, msg) end
-Wrekkit.store:Recover()                      -- what the next login does
-check("the next login brings back what the crash lost",
-  table.getn(Wrekkit.db.encounters), 3)
-check("  and says so", table.getn(said) == 1 and
-  string.find(said[1], "recovered 2 fight", 1, true) ~= nil, true)
+Wrekkit.Print = function(msg) table.insert(said, tostring(msg)) end
+local function saidOnce(text)
+  return table.getn(said) == 1 and string.find(said[1], text, 1, true) ~= nil
+end
+
+local function journal() return DISK[Wrekkit.store:Filename()] or "" end
+
+--- A clean logout: PLAYER_LOGOUT marks the journal, then SavedVariables are
+--- written out. The copy is what they hold.
+local function cleanLogout()
+  Wrekkit.store:MarkSaved()
+  return copyOf(WrekkitDB)
+end
+
+--- The next login, from whatever the last save left -- a clean logout's, or
+--- an older one when a crash came since. Recovery runs as it loads.
+local function login(saved)
+  WrekkitDB = copyOf(saved)
+  Wrekkit.InitDB()
+  simulateReload()
+  said = {}
+  Wrekkit.store:Recover()
+end
+
+local function fresh(cap)
+  WrekkitDB = nil
+  Wrekkit.InitDB()
+  Wrekkit.db.maxEncounters = cap
+  simulateReload()
+  DISK[Wrekkit.store:Filename()] = nil
+  advance(3600)                  -- clear of any earlier section's session
+end
+
+local function pulls(n)
+  for i = 1, n do advance(40) pull(20) end
+end
+
+local function starts()
+  local out = {}
+  for _, e in ipairs(Wrekkit.db.encounters) do table.insert(out, e.startTime) end
+  return table.concat(out, ",")
+end
+
+-- The crash.
+fresh()
+pulls(1)
+local saved = cleanLogout()
+pulls(2)                         -- journaled as they end; then the crash
+local lost = starts()
+login(saved)
+check("the login after a crash brings back the pulls it lost", starts(), lost)
+check("  and says so", saidOnce("recovered 2 fight"), true)
 said = {}
 Wrekkit.store:Recover()
-check("a login with nothing missing changes nothing",
-  table.getn(Wrekkit.db.encounters), 3)
+check("recovering again changes nothing", starts(), lost)
 check("  and says nothing", table.getn(said), 0)
+
+-- The saved session pointer is from before the crash. Resuming from it
+-- would reuse the ids of the pulls just restored.
+pulls(1)
+local ids, reused = {}, false
+for _, e in ipairs(Wrekkit.db.encounters) do
+  local k = tostring(e.sessionId) .. ":" .. tostring(e.id)
+  if ids[k] then reused = true end
+  ids[k] = true
+end
+check("the next pull gets an id none of the restored ones has", reused, false)
+check("  and carries on their session",
+  Wrekkit.db.encounters[4].sessionId, Wrekkit.db.encounters[3].sessionId)
+
+-- The same crash on a history saved before there were marks (0.4.2).
+fresh()
+pulls(1)
+saved = copyOf(WrekkitDB)
+pulls(2)
+lost = starts()
+login(saved)
+check("a crash before the first mark is recovered too", starts(), lost)
 said = {}
 DISK[Wrekkit.store:Filename()] = nil
 Wrekkit.store:Recover()
-check("a login with no journal at all says nothing either", table.getn(said), 0)
+check("a login with no journal at all says nothing", table.getn(said), 0)
+
+-- A full history. The cap dropped pulls the journal still has, and a login
+-- has to leave them dropped: the first cut of this restored all of them.
+fresh(3)
+pulls(6)
+check("the journal keeps every pull",
+  table.getn(Wrekkit.store:Deserialize(journal())), 6)
+check("  the history just the newest 3", table.getn(Wrekkit.db.encounters), 3)
+local kept = starts()
+saved = cleanLogout()
+login(saved)
+check("the next login restores nothing the cap dropped", starts(), kept)
+check("  and says nothing", table.getn(said), 0)
+local unmarked = copyOf(saved)
+unmarked.journalMarks = nil
+login(unmarked)
+check("nor does the first login without a mark", starts(), kept)
+check("  which says nothing either", table.getn(said), 0)
+
+-- Raise the cap, as the "history is full" warning suggests, then crash. Only
+-- the pull the crash lost comes back -- not the old ones the cap dropped
+-- before, which would now fit.
+fresh(3)
+pulls(6)
+Wrekkit.db.maxEncounters = 10
+saved = cleanLogout()
+unmarked = copyOf(saved)
+unmarked.journalMarks = nil
+pulls(1)
+kept = starts()
+login(saved)
+check("after raising the cap, a crash brings back only what it lost", starts(), kept)
+check("  and counts just that", saidOnce("recovered 1 fight"), true)
+login(unmarked)
+check("  the same without a mark", starts(), kept)
+
+-- A crash after the history filled: what comes back is what a clean logout
+-- would have kept, and only the restored pulls it kept are counted.
+fresh(3)
+pulls(3)
+saved = cleanLogout()
+pulls(4)
+kept = starts()
+login(saved)
+check("a crash past the cap comes back as a clean logout would have left it",
+  starts(), kept)
+check("  counting the restored pulls it kept", saidOnce("recovered 3 fight"), true)
+
+-- A journal that has not grown since the clean save is not even parsed: it
+-- holds every pull ever, and parsing it at every login costs more each raid.
+fresh()
+pulls(2)
+check("the journal's length is tracked as pulls are appended",
+  Wrekkit.store.journalBytes, string.len(journal()))
+saved = cleanLogout()
+local parses = 0
+local realDeserialize = Wrekkit.store.Deserialize
+Wrekkit.store.Deserialize = function(self, text)
+  parses = parses + 1
+  return realDeserialize(self, text)
+end
+login(saved)
+check("a journal unchanged since the clean save is not parsed", parses, 0)
+check("  its length known from the read", Wrekkit.store.journalBytes, string.len(journal()))
+pulls(1)
+login(saved)                     -- a crash: that pull was never saved
+check("  one that grew is", parses, 1)
+check("  and gives the pull back", table.getn(Wrekkit.db.encounters), 3)
+Wrekkit.store.Deserialize = realDeserialize
+Wrekkit.SetLocked(Wrekkit.db.encounters[1], true)     -- rewrites the journal
+check("the length stays right through a rewrite",
+  Wrekkit.store.journalBytes, string.len(journal()))
+Wrekkit.store:Save()
+check("  a full save", Wrekkit.store.journalBytes, string.len(journal()))
+pulls(1)
+check("  and the appends after them", Wrekkit.store.journalBytes, string.len(journal()))
+
+-- The history is the account's, the journals each character's. A crash on
+-- one character still comes back after another has logged out cleanly since,
+-- with a pull newer than anything the crash lost. The other character raids
+-- on its own lockout: on the SAME one it would resume the crashed session
+-- from the stale pointer and could take a lost pull's id -- a limit of
+-- identity by session and id that /wrek load shares.
+fresh()
+local realUnitName = UnitName
+local function playAs(name)
+  UnitName = function(u)
+    if u == "player" then return name end
+    return realUnitName(u)
+  end
+  DISK[Wrekkit.store:Filename()] = nil
+end
+playAs("Bee")
+pulls(1)
+saved = cleanLogout()
+pulls(2)                         -- then two more, and a crash
+local beeJournal = journal()
+playAs("Ay")
+login(saved)
+local beeLockout = SAVED_ID
+SAVED_ID = beeLockout + 1
+pulls(1)
+SAVED_ID = beeLockout
+saved = cleanLogout()
+playAs("Bee")
+DISK[Wrekkit.store:Filename()] = beeJournal
+login(saved)
+check("a crash on one character comes back after another's clean logout",
+  saidOnce("recovered 2 fight"), true)
+check("  into the account's history", table.getn(Wrekkit.db.encounters), 4)
+UnitName = realUnitName
+
 Wrekkit.Print = keepPrint
+Wrekkit.db.maxEncounters = nil
 end
 
 

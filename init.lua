@@ -19,11 +19,6 @@ f:SetScript("OnEvent", function()
     W.sync:Start()
     W.minimap:Update()
 
-    --[[ Auto-recover after a crash, every login: whatever the journal has
-         that SavedVariables do not is what the last session lost. Never
-         overwrites -- see St:Recover -- and silent when nothing is missing. ]]
-    W.Guard("crash recovery", function() W.store:Recover() end)
-
     local missing = W.capture:CheckEnvironment()
     if table.getn(missing) > 0 then
       W.Print("|cffd44f53missing:|r " .. table.concat(missing, ", ") ..
@@ -52,9 +47,19 @@ f:SetScript("OnEvent", function()
     -- Close the pull in progress so it lands in SavedVariables instead of
     -- being lost at the loading screen.
     if W.encounter.live then W.encounter:Finish() end
+    -- And note how far the journal had got, for the next login's recovery.
+    W.Guard("journal mark", function() W.store:MarkSaved() end)
 
   elseif event == "PLAYER_ENTERING_WORLD" then
     -- A zone change ends whatever was being recorded: combat cannot span it.
     if W.encounter.live then W.encounter:Finish() end
+
+    --[[ Bring back what a crash lost, once a login -- see St:Recover. Here
+         rather than at ADDON_LOADED: the journal is named after the player,
+         whose name is certain by now, and no pull can have ended yet. ]]
+    if not W.store.recovered then
+      W.store.recovered = true
+      W.Guard("crash recovery", function() W.store:Recover() end)
+    end
   end
 end)
