@@ -381,11 +381,13 @@ resets to zero every time the client starts, so a `GetTime`-based offset would
 stack post-crash encounters back at the beginning of the night.
 
 **The journal survives a crash.** SavedVariables are written *only at a clean
-logout*, so a crash loses the whole night no matter how carefully it was
-aggregated in memory. Wrekkit therefore appends each encounter to
+logout or `/reload`*, so after a crash they still hold the last clean save and
+nothing since — the whole night is gone from them, no matter how carefully it
+was aggregated in memory. Wrekkit therefore appends each encounter to
 `CustomData\Wrekkit_<character>.txt` the moment it ends, through Nampower's
-file API. On the next login, if the history is empty but the journal is not,
-it restores automatically and says so.
+file API. Every login restores whatever the journal has that the saved history
+is missing, and says how many fights it brought back. When nothing is missing
+it says nothing.
 
 Recovery reconstructs the session too, deriving it from the restored
 encounters rather than the saved pointer the crash destroyed — so the night
@@ -484,7 +486,7 @@ right; that still needs the client.
 
 All textures are generated, not drawn: `tools/make_textures.lua` emits
 uncompressed 32-bit BGRA top-down TGAs at power-of-two sizes, which is what
-1.12 loads from an addon folder. Shapes are supersampled 4�—4 for
+1.12 loads from an addon folder. Shapes are supersampled 4�—4 for
 anti-aliasing, and most are authored white so the addon can tint them at
 runtime — one bar texture serves every class colour.
 

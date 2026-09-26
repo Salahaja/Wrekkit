@@ -19,20 +19,10 @@ f:SetScript("OnEvent", function()
     W.sync:Start()
     W.minimap:Update()
 
-    --[[ Auto-recover after a crash.
-
-         SavedVariables are written only at a clean logout, so an empty
-         history plus a non-empty journal means the last session ended badly.
-         Restoring it silently would be presumptuous, but leaving the user to
-         discover "/wrek load" on their own is worse -- so restore and say so.
-         Only when the history is actually empty; never overwrite real data. ]]
-    if table.getn(W.db.encounters) == 0 and W.store:Available()
-        and W.store:FileExists(W.store:Filename()) then
-      W.Guard("crash recovery", function()
-        W.Print("history was empty but a saved journal exists - recovering.")
-        W.store:Load()
-      end)
-    end
+    --[[ Auto-recover after a crash, every login: whatever the journal has
+         that SavedVariables do not is what the last session lost. Never
+         overwrites -- see St:Recover -- and silent when nothing is missing. ]]
+    W.Guard("crash recovery", function() W.store:Recover() end)
 
     local missing = W.capture:CheckEnvironment()
     if table.getn(missing) > 0 then

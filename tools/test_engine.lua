@@ -1166,6 +1166,56 @@ end
 check("resumed into the recovered session, not a new one",
   Wrekkit.Count(ids), 1)
 
+--[[ The crash that actually happens. A crash does not wipe SavedVariables:
+     they keep the last CLEAN logout, and the pulls since exist only in the
+     journal. Recovery used to wait for an empty history, so it never ran in
+     exactly this case and the pulls were left on disk. Its own scope: the
+     main chunk is near Lua's 200-local limit. ]]
+do
+local function copyOf(t)
+  if type(t) ~= "table" then return t end
+  local c = {}
+  for k, v in pairs(t) do c[k] = copyOf(v) end
+  return c
+end
+
+WrekkitDB = nil
+Wrekkit.InitDB()
+simulateReload()
+DISK[Wrekkit.store:Filename()] = nil
+pull(20)
+local cleanSave = copyOf(WrekkitDB)          -- a clean logout writes this out
+advance(40)
+pull(20)
+advance(40)
+pull(20)                                     -- two more, journaled as they end
+
+WrekkitDB = cleanSave                        -- the crash: back to the last clean save
+Wrekkit.InitDB()
+simulateReload()
+check("after a crash, SavedVariables hold only what was cleanly saved",
+  table.getn(Wrekkit.db.encounters), 1)
+
+local said = {}
+local keepPrint = Wrekkit.Print
+Wrekkit.Print = function(msg) table.insert(said, msg) end
+Wrekkit.store:Recover()                      -- what the next login does
+check("the next login brings back what the crash lost",
+  table.getn(Wrekkit.db.encounters), 3)
+check("  and says so", table.getn(said) == 1 and
+  string.find(said[1], "recovered 2 fight", 1, true) ~= nil, true)
+said = {}
+Wrekkit.store:Recover()
+check("a login with nothing missing changes nothing",
+  table.getn(Wrekkit.db.encounters), 3)
+check("  and says nothing", table.getn(said), 0)
+said = {}
+DISK[Wrekkit.store:Filename()] = nil
+Wrekkit.store:Recover()
+check("a login with no journal at all says nothing either", table.getn(said), 0)
+Wrekkit.Print = keepPrint
+end
+
 
 ----------------------------------------------------------------------
 print("\n-- late-resolving names (the crash-in-a-group bug) --")

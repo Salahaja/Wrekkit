@@ -381,21 +381,23 @@ function St:Deserialize(text)
   return encounters
 end
 
-function St:Load()
+--- Merge the file on disk into the history. `quiet` says nothing unless it
+--- found something the history was missing: what every login does.
+function St:Load(quiet)
   if not self:Available() then
-    W.Print("Loading from disk needs Nampower's file API (ReadCustomFile).")
+    if not quiet then W.Print("Loading from disk needs Nampower's file API (ReadCustomFile).") end
     return false
   end
 
   local ok, text = pcall(ReadCustomFile, self:Filename())
   if not ok or not text or text == "" then
-    W.Print("No saved file found at CustomData\\" .. self:Filename())
+    if not quiet then W.Print("No saved file found at CustomData\\" .. self:Filename()) end
     return false
   end
 
   local encounters = self:Deserialize(text)
   if table.getn(encounters) == 0 then
-    W.Print("That file held no encounters.")
+    if not quiet then W.Print("That file held no encounters.") end
     return false
   end
 
@@ -410,9 +412,13 @@ function St:Load()
     return tostring(e.sessionId) .. ":" .. tostring(e.id)
   end
 
-  local seen, kept = {}, {}
+  -- A copy loaded from the file before is replaced by the file's own, fresh
+  -- one: counted as already there, not as recovered all over again.
+  local seen, kept, had = {}, {}, {}
   for _, e in ipairs(W.db.encounters) do
-    if not e.imported then
+    if e.imported then
+      had[keyOf(e)] = true
+    else
       seen[keyOf(e)] = true
       table.insert(kept, e)
     end
@@ -426,7 +432,7 @@ function St:Load()
     else
       seen[k] = true
       table.insert(kept, e)
-      added = added + 1
+      if had[k] then skipped = skipped + 1 else added = added + 1 end
     end
   end
 
@@ -437,7 +443,11 @@ function St:Load()
   end)
   W.db.encounters = kept
 
-  if skipped > 0 then
+  if quiet then
+    if added == 0 then return true end
+    W.Print("recovered " .. added .. " fight(s) the last session did not save - it " ..
+      "ended without a clean logout (a crash, or the client closing).")
+  elseif skipped > 0 then
     W.Print("Recovered " .. added .. " encounters from disk (" ..
       skipped .. " already in memory).")
   else
@@ -445,6 +455,19 @@ function St:Load()
   end
   if W.ui and W.ui.report and W.ui.report.frame then W.ui.report:Refresh() end
   return true
+end
+
+--[[ Crash recovery, at every login.
+
+     SavedVariables are written only at a clean logout or /reload, so after a
+     crash they hold the last CLEAN save -- not nothing -- and every fight
+     since exists only in the journal. Waiting for an empty history to
+     recover missed exactly that case. The merge goes by identity and the
+     in-memory copy wins, so running it every time restores what the last
+     session failed to save, and otherwise changes nothing and says nothing. ]]
+function St:Recover()
+  if not self:Available() then return false end
+  return self:Load(true)
 end
 
 ----------------------------------------------------------------------
