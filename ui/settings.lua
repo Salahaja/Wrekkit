@@ -850,6 +850,23 @@ function S:BuildThreat()
     1, 10, 1,
     function(v) return v .. (v == 1 and " mob" or " mobs") end)
 
+  get, set = pick("mobFramesCollapse")
+  choice(self, "Collapse",
+    {
+      { value = "auto", label = "when many" },
+      { value = "always", label = "always" },
+      { value = "never", label = "never" },
+    }, get, set,
+    { "Collapsed, mobs on you share one line --", "\"All 10 on you\" -- and only a mob that",
+      "breaks off, or that someone is close to", "pulling, gets a row of its own. Click the",
+      "title to flip it for this fight." })
+
+  stepper(self, "Collapse above",
+    function() return ts().mobFramesCollapseAt end,
+    function(v) ts().mobFramesCollapseAt = v; redraw() end,
+    1, 15, 1,
+    function(v) return v .. " mobs" end)
+
   stepper(self, "At most",
     function() return ts().mobFramesMax end,
     function(v) ts().mobFramesMax = v; redraw() end,

@@ -163,6 +163,10 @@ local function makeRow(parent, i)
   b:SetScript("OnLeave", function() b.hl:SetVertexColor(1, 1, 1, 0) end)
   b:SetScript("OnClick", function()
     W.Guard("mob frame click", function()
+      if b.summary then
+        MF:ToggleCollapse()
+        return
+      end
       local m = b.mob
       if not m or m.sample then return end
       if arg1 == "RightButton" then
@@ -194,6 +198,8 @@ function MF:Create()
   title:SetPoint("TOPLEFT", f, "TOPLEFT", 0, 0)
   title:SetPoint("TOPRIGHT", f, "TOPRIGHT", 0, 0)
   title:RegisterForDrag("LeftButton")
+  title:RegisterForClicks("LeftButtonUp")
+  title:SetScript("OnClick", function() W.Guard("mob frames toggle", function() MF:ToggleCollapse() end) end)
   title:SetScript("OnDragStart", function() f:StartMoving() end)
   title:SetScript("OnDragStop", function()
     f:StopMovingOrSizing()
@@ -203,7 +209,7 @@ function MF:Create()
   f.title:SetPoint("LEFT", title, "LEFT", 4, 0)
   f.count = UI.Text(title, 9, W.color.textFaint, "RIGHT")
   f.count:SetPoint("RIGHT", title, "RIGHT", -4, 0)
-  f.count:SetText("click: target  -  right-click: taunt")
+  f.count:SetText("click title: expand / collapse")
 
   self.rows = {}
   self:RestorePosition()
@@ -243,6 +249,89 @@ local SAMPLE = {
     onMe = false, state = "loose", sample = true },
 }
 
+--[[ Which mobs need a row of their own.
+
+     Tanking, a mob is
+       trouble   loose on someone, or held with someone at the warning line
+       fine      on you
+       elsewhere on a co-tank, a pet, or nobody
+     Not tanking, a mob on YOU is the trouble and the rest are elsewhere. ]]
+local function classify(m, tank, s)
+  if tank then
+    if m.state == "loose" then return "trouble" end
+    if m.pull and m.pull >= s.tankWarnAt then return "trouble" end
+    if m.onMe then return "fine" end
+    return "elsewhere"
+  end
+  if m.onMe then return "trouble" end
+  return "elsewhere"
+end
+
+--- Collapse now? "always", "never", or "auto" past mobFramesCollapseAt.
+--- A click on the title flips it until the fight ends.
+function MF:Collapsed(count)
+  local s = T:Settings()
+  local want
+  if s.mobFramesCollapse == "always" then want = true
+  elseif s.mobFramesCollapse == "never" then want = false
+  else want = count > s.mobFramesCollapseAt end
+  if self.flipped then want = not want end
+  return want
+end
+
+local function paintMob(b, m, tank, s, blink)
+  b.mob, b.summary = m, nil
+  b.name:SetText(m.name or "?")
+  b.hp:Show()
+  local frac = (m.max and m.max > 0) and (m.hp / m.max) or 1
+  if frac > 1 then frac = 1 elseif frac < 0.01 then frac = 0.01 end
+  local w = b:GetWidth()
+  if not w or w <= 0 then w = WIDTH - 4 end
+  b.hp:SetWidth(w * frac)
+
+  local trouble = classify(m, tank, s) == "trouble"
+  if m.onMe then
+    b.who:SetText("|cff5a9bffyou|r")
+  elseif m.who then
+    b.who:SetText(classHex(m.whoClass) .. m.who .. "|r")
+  else
+    b.who:SetText("|cff9d9d9d-|r")
+  end
+
+  if m.pull then
+    local c = T:TankColor(m.pull)
+    b.pct:SetText(T.PctText(m.pull))
+    b.pct:SetTextColor(c[1], c[2], c[3], 1)
+  else
+    b.pct:SetText(trouble and "|cfff23333!|r" or "")
+  end
+
+  b.trouble = trouble
+  b.alarm:SetVertexColor(0.95, 0.2, 0.2, trouble and blink or 0)
+end
+
+--[[ The collapsed line: everything that needs no row, in one. "All 10 on
+     you" in blue is the line a tank wants to read and then ignore. ]]
+local function paintSummary(b, fine, elsewhere, hidden, tank, total)
+  b.mob, b.summary, b.trouble = nil, true, false
+  b.hp:Hide()
+  b.alarm:SetVertexColor(0, 0, 0, 0)
+  local text
+  if tank then
+    if fine == total then
+      text = "|cff5a9bffAll " .. total .. " on you|r"
+    else
+      text = "|cff5a9bff" .. fine .. " on you|r"
+      if elsewhere > 0 then text = text .. "  |cff9d9d9d" .. elsewhere .. " elsewhere|r" end
+    end
+  else
+    text = "|cff9d9d9d" .. elsewhere .. " on others|r"
+  end
+  b.name:SetText(text)
+  b.who:SetText("")
+  b.pct:SetText(hidden > 0 and ("|cfff23333+" .. hidden .. "|r") or "")
+end
+
 function MF:Update()
   local now = GetTime()
   if now - (self.lastUpdate or 0) < UPDATE then return end
@@ -259,67 +348,81 @@ function MF:Update()
   else
     list = {}
   end
-  if not moving and not self:Wanted(table.getn(list)) then
+  local total = table.getn(list)
+  if not moving and not self:Wanted(total) then
     if self.frame and self.frame:IsShown() then self.frame:Hide() end
+    self.flipped = nil
     return
   end
 
   local f = self:Create()
-  local tank = T:IsTank()
+  local tank = moving or T:IsTank()
   local blink = 0.25 + 0.3 * math.abs(math.sin(now * math.pi * (s.flashSpeed or 3)))
-  local n = math.min(table.getn(list), s.mobFramesMax)
-  f.title:SetText("Mobs  " .. table.getn(list))
+  local collapsed = self:Collapsed(total)
+  self.collapsed = collapsed
 
-  for i = 1, n do
+  -- What gets a row: everything, or the summary line and the trouble.
+  local show, fine, elsewhere = {}, 0, 0
+  for _, m in ipairs(list) do
+    local kind = classify(m, tank, s)
+    if not collapsed or kind == "trouble" then
+      table.insert(show, m)
+    elseif kind == "fine" then
+      fine = fine + 1
+    else
+      elsewhere = elsewhere + 1
+    end
+  end
+
+  local maxRows = s.mobFramesMax
+  local rowsUsed = 0
+  local function row(i)
     local b = self.rows[i]
     if not b then
       b = makeRow(f, i)
       self.rows[i] = b
     end
-    local m = list[i]
-    b.mob = m
-    b.name:SetText(m.name or "?")
-
-    local frac = (m.max and m.max > 0) and (m.hp / m.max) or 1
-    if frac > 1 then frac = 1 elseif frac < 0.01 then frac = 0.01 end
-    local w = b:GetWidth()
-    if not w or w <= 0 then w = WIDTH - 4 end
-    b.hp:SetWidth(w * frac)
-
-    -- Who it is on, and whether that is trouble.
-    local trouble = false
-    if m.onMe then
-      b.who:SetText("|cff5a9bffyou|r")
-      trouble = (not tank)
-    elseif m.who then
-      b.who:SetText(classHex(m.whoClass) .. m.who .. "|r")
-      -- Loose is the watcher's word: it knows co-tanks, pets and the
-      -- one-second grace for a mob that only cast at someone.
-      trouble = tank and m.state == "loose"
-    else
-      b.who:SetText("|cff9d9d9d-|r")
-    end
-
-    if m.pull then
-      local c = T:TankColor(m.pull)
-      b.pct:SetText(T.PctText(m.pull))
-      b.pct:SetTextColor(c[1], c[2], c[3], 1)
-      if m.pull >= s.tankFlashAt then trouble = true end
-    else
-      b.pct:SetText(trouble and "|cfff23333!|r" or "")
-    end
-
-    b.trouble = trouble
-    b.alarm:SetVertexColor(0.95, 0.2, 0.2, trouble and blink or 0)
     b:Show()
+    return b
   end
-  for i = n + 1, table.getn(self.rows) do self.rows[i]:Hide() end
-  f:SetHeight(14 + n * (ROW_H + 1) + 2)
+
+  if collapsed then
+    local room = maxRows - 1
+    local hidden = table.getn(show) - room
+    if hidden < 0 then hidden = 0 end
+    rowsUsed = 1
+    paintSummary(row(1), fine, elsewhere, hidden, tank, total)
+    for i = 1, math.min(table.getn(show), room) do
+      rowsUsed = rowsUsed + 1
+      paintMob(row(rowsUsed), show[i], tank, s, blink)
+    end
+  else
+    for i = 1, math.min(table.getn(show), maxRows) do
+      rowsUsed = i
+      paintMob(row(i), show[i], tank, s, blink)
+    end
+  end
+
+  for i = rowsUsed + 1, table.getn(self.rows) do
+    self.rows[i].mob, self.rows[i].summary = nil, nil
+    self.rows[i]:Hide()
+  end
+  f.title:SetText("Mobs  " .. total .. (collapsed and "  |cff9d9d9d(collapsed)|r" or ""))
+  f:SetHeight(14 + rowsUsed * (ROW_H + 1) + 2)
   if not f:IsShown() then f:Show() end
+end
+
+--- Expand or collapse until the fight ends (a click on the title or on
+--- the summary line).
+function MF:ToggleCollapse()
+  self.flipped = not self.flipped
+  self.lastUpdate = nil
+  self:Update()
 end
 
 --- The fight is over: forget its mobs and start numbering afresh.
 function MF:Reset()
   self.list = {}
+  self.flipped = nil
   nextOrder = 0
 end

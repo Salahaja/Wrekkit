@@ -128,6 +128,10 @@ T.defaults = {
   mobFramesFor = "tank",   -- "tank" | "everyone"
   mobFramesMin = 2,        -- shown from this many mobs
   mobFramesMax = 8,        -- at most this many rows
+  -- Collapsed, mobs that are fine share one line ("All 10 on you") and
+  -- only the ones in trouble get a row.
+  mobFramesCollapse = "auto",  -- "auto" | "always" | "never"
+  mobFramesCollapseAt = 4,     -- auto: collapse above this many mobs
 
   -- target frame
   frame = true,
@@ -213,6 +217,8 @@ function T:Sanitize(s)
   s.mobFramesFor = oneOf(s.mobFramesFor, { "tank", "everyone" }, d.mobFramesFor)
   s.mobFramesMin = math.floor(clamp(s.mobFramesMin, 1, 10, d.mobFramesMin))
   s.mobFramesMax = math.floor(clamp(s.mobFramesMax, 2, 15, d.mobFramesMax))
+  s.mobFramesCollapse = oneOf(s.mobFramesCollapse, { "auto", "always", "never" }, d.mobFramesCollapse)
+  s.mobFramesCollapseAt = math.floor(clamp(s.mobFramesCollapseAt, 1, 15, d.mobFramesCollapseAt))
   s.lastWindow = oneOf(s.lastWindow, { "window", "docked" }, "docked")
   if type(s.window) ~= "table" then s.window = {} end
   local w = s.window

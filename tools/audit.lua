@@ -1160,6 +1160,52 @@ step("threat meter", function()
   if onPriest ~= 1 or onMe ~= 2 then
     error("mob frames show " .. onMe .. " on you and " .. onPriest .. " on the priest")
   end
+  -- Collapsed: one line for the two on you, a row only for the Whelp.
+  local function shownRows()
+    local n = 0
+    for _, r in ipairs(UI.mobs.rows) do if r:IsShown() then n = n + 1 end end
+    return n
+  end
+  T:Settings().mobFramesCollapse = "always"
+  UI.mobs.lastUpdate = nil
+  UI.mobs:Update()
+  if not UI.mobs.rows[1].summary then error("collapsed, the first row should be the summary") end
+  if not string.find(UI.mobs.rows[1].name:GetText(), "2 on you", 1, true)
+     or not string.find(UI.mobs.rows[1].name:GetText(), "1 elsewhere", 1, true) then
+    error("summary reads " .. tostring(UI.mobs.rows[1].name:GetText()))
+  end
+  if shownRows() ~= 2 or not UI.mobs.rows[2].trouble then
+    error("collapsed should show the summary and the loose Whelp only, shows " .. shownRows())
+  end
+  -- Clicking the summary expands for this fight; again collapses.
+  arg1 = "LeftButton"
+  UI.mobs.rows[1]:GetScript("OnClick")()
+  -- Four: the boss from earlier is in the fight too, on nobody.
+  if shownRows() ~= 4 then error("expanding should show all 4, shows " .. shownRows()) end
+  UI.mobs:ToggleCollapse()
+  -- The Whelp comes back: everything fits on the one line.
+  WORLD[whelpGuid .. "target"] = { name = "Auditor", isPlayer = true, class = "WARRIOR" }
+  local realIsUnitC = STUB.UnitIsUnit
+  STUB.UnitIsUnit = function(a, b)
+    return b == "player" and (a == drakes[1] .. "target" or a == drakes[2] .. "target"
+      or a == whelpGuid .. "target")
+  end
+  T.watch = {}
+  NOW = NOW + 0.3
+  UI.mobs.lastUpdate = nil
+  UI.mobs:Update()
+  local line = UI.mobs.rows[1].name:GetText()
+  if shownRows() ~= 1 or not string.find(line, "3 on you", 1, true)
+     or not string.find(line, "1 elsewhere", 1, true) then
+    error("with nothing in trouble it should be the one line: " ..
+      tostring(UI.mobs.rows[1].name:GetText()) .. " / " .. shownRows())
+  end
+  STUB.UnitIsUnit = realIsUnitC
+  WORLD[whelpGuid .. "target"] = WORLD["0xB"]
+  T:Settings().mobFramesCollapse = "never"
+  UI.mobs.lastUpdate = nil
+  UI.mobs:Update()
+
   local casts = {}
   STUB.TargetUnit = function(u) table.insert(casts, "target:" .. u) end
   arg1 = "LeftButton"

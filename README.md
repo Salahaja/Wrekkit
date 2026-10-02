@@ -224,6 +224,22 @@ with someone closing in show the runner-up's % on the right and blink at
 your flash limit. **Click** a frame to target that mob, **right-click** to
 taunt it.
 
+**Collapsed**, the mobs that are fine share one line and only trouble gets
+a row. Tanking ten mobs, the stack is a single blue line -- `All 10 on you`
+-- until one breaks off or someone closes in on one; then that mob, and only
+that mob, appears under it, red and blinking:
+
+```
+Mobs  10 (collapsed)
+8 on you  1 elsewhere
+Onyxian Warder   [██████████]    Mendy      !
+```
+
+*Collapse* is **when many** by default (above *Collapse above*, 4 mobs),
+or **always**, or **never**. Click the title or the summary line to flip it
+for the rest of the fight. More trouble than rows fit shows as `+N` on the
+summary line.
+
 Rows keep the order mobs joined the fight and never reshuffle, so a row is
 where your eye left it; trouble is shown by colour. Mobs come from the
 nameplates *and* from every enemy the combat log has seen this pull, so one
