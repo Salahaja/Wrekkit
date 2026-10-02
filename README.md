@@ -190,10 +190,23 @@ screen edges and a sound -- each switchable.
 
 #### Target frame and nameplates
 
-**Target frame**: a percentage badge (top, bottom, left or right, any size)
-and a border coloured green -> yellow -> orange -> red. It finds pfUI's
-target frame or the stock one on its own; for anything else (Luna, XPerl,
-...) type the frame's name into *Frame name*.
+**Target frame**: your threat % drawn straight on the frame the way
+unit-frame addons draw their own text -- outlined type, coloured green ->
+yellow -> orange -> red, with no box around anything. *Style* picks **number
++ bar** (default: a slim threat bar under the %), **number** alone, or
+**badge** (on a soft dark plate, for busy frames); *Soft glow* adds a faint
+glow in the same colour that breathes when red; *Size* scales it.
+
+**Put it where you like**: tick *Move it (drag)* in settings, or
+`/wrek threat move`. A sample % appears -- even with nothing targeted -- and
+you drag it anywhere; right-click it (or untick) to lock. The spot is saved
+as an offset from the target frame, so it stays put relative to the frame
+across logins, and follows the frame if you move it. *Reset %* (or
+`/wrek threat resetpos`) puts it back just above the frame. Locked, it never
+takes the mouse, so it cannot block a click on the target frame.
+
+It finds pfUI's target frame or the stock one on its own; for anything else
+(Luna, XPerl, ...) type the frame's name into *Frame name*.
 
 **Nameplates**: one setting, *Nameplate addon*, picks whose plates to draw
 on -- **auto** (default) finds ShaguPlates' or pfUI's and uses theirs,
@@ -451,6 +464,8 @@ that series.
 /wrek threat <where>     window | docked | meter | off
 /wrek threat tank        cycle I'm-the-tank: auto, always, never
 /wrek threat test        15s of test data on every threat display
+/wrek threat move        drag the target-frame % where you want it
+/wrek threat resetpos    put the target-frame % back above the frame
 /wrek threat config      threat settings
 /wrek mode threat        the meter shows live threat
 

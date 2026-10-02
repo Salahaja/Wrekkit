@@ -59,80 +59,187 @@ function TF:TargetFrame()
   return nil
 end
 
-local function edge(parent)
-  local t = parent:CreateTexture(nil, "OVERLAY")
-  t:SetTexture(UI.media.white)
-  return t
-end
+--[[ The indicator: the number, a slim bar under it, and a soft glow.
+
+     No box around the target frame. The first version drew four strips
+     around the whole frame and a bordered square for the number, which
+     read as a debug overlay rather than part of the UI. This is drawn the
+     way unit-frame addons draw their own text -- outlined type straight
+     on the art, a hairline bar for the fill, colour doing the talking --
+     so it sits on any target frame without fighting it.
+
+     Three looks (Settings -> Threat -> Style):
+       clean   number with a slim bar under it (default)
+       number  the number alone
+       badge   number on a soft dark plate, for busy frames
+
+     It is placed relative to the target frame, wherever you drag it: the
+     offset is saved, so it follows the frame if the frame moves, and the
+     frame can be the stock one, pfUI's, or any named in settings. ]]
+
+local BASE_W, BASE_H = 54, 22
 
 function TF:CreateIndicator()
   if self.ind then return self.ind end
-  local ind = CreateFrame("Frame", "WrekkitThreatTarget", UIParent)
+  local ind = CreateFrame("Button", "WrekkitThreatTarget", UIParent)
   ind:SetFrameStrata("HIGH")
-  ind:SetWidth(10) ind:SetHeight(10)
+  ind:SetWidth(BASE_W) ind:SetHeight(BASE_H)
+  ind:SetMovable(true)
+  ind:SetClampedToScreen(true)
   ind:Hide()
   self.ind = ind
 
-  -- percentage badge
-  local badge = UI.Panel(ind, W.color.bg, W.color.border)
-  badge:SetWidth(46) badge:SetHeight(18)
-  ind.badge = badge
-  ind.text = UI.Text(badge, 12, W.color.text, "CENTER", UI.fontNum)
-  ind.text:SetPoint("CENTER", badge, "CENTER", 0, 0)
+  -- Soft glow behind the number, coloured by level.
+  ind.glow = ind:CreateTexture(nil, "BACKGROUND")
+  ind.glow:SetTexture(UI.media.glow)
+  ind.glow:SetBlendMode("ADD")
+  ind.glow:SetPoint("CENTER", ind, "CENTER", 0, 2)
 
-  -- border around the target frame: four strips, so the frame itself is
-  -- left untouched underneath
-  ind.edges = { edge(ind), edge(ind), edge(ind), edge(ind) }
+  -- The badge style's plate: dark, translucent, no hard border.
+  ind.plate = ind:CreateTexture(nil, "BORDER")
+  ind.plate:SetTexture(UI.media.white)
+  ind.plate:SetVertexColor(0, 0, 0, 0.55)
+  ind.plate:SetAllPoints(ind)
+
+  ind.text = ind:CreateFontString(nil, "OVERLAY")
+  ind.text:SetFont(UI.font, 14, "OUTLINE")
+  ind.text:SetJustifyH("CENTER")
+  ind.text:SetShadowColor(0, 0, 0, 0.8)
+  ind.text:SetShadowOffset(1, -1)
+
+  -- The bar: a dim track and a fill along it.
+  ind.track = ind:CreateTexture(nil, "ARTWORK")
+  ind.track:SetTexture(UI.media.white)
+  ind.track:SetVertexColor(0, 0, 0, 0.6)
+  ind.fill = ind:CreateTexture(nil, "OVERLAY")
+  ind.fill:SetTexture(UI.media.bar)
+
+  -- Shown only while it is being placed.
+  ind.outline = ind:CreateTexture(nil, "BACKGROUND")
+  ind.outline:SetTexture(UI.media.white)
+  ind.outline:SetVertexColor(W.color.accent[1], W.color.accent[2], W.color.accent[3], 0.18)
+  ind.outline:SetAllPoints(ind)
+  ind.hint = ind:CreateFontString(nil, "OVERLAY")
+  ind.hint:SetFont(UI.font, 10, "OUTLINE")
+  ind.hint:SetPoint("TOP", ind, "BOTTOM", 0, -3)
+  ind.hint:SetTextColor(W.color.accent[1], W.color.accent[2], W.color.accent[3], 1)
+  ind.hint:SetText("drag to place  -  right-click to lock")
+
+  ind:RegisterForDrag("LeftButton")
+  ind:RegisterForClicks("RightButtonUp")
+  ind:SetScript("OnDragStart", function()
+    if TF.moving then ind:StartMoving() end
+  end)
+  ind:SetScript("OnDragStop", function()
+    ind:StopMovingOrSizing()
+    TF:SavePlacement()
+  end)
+  ind:SetScript("OnClick", function()
+    if TF.moving then TF:SetMoving(false) end
+  end)
   return ind
 end
 
---- Fit the border to the frame and put the badge on the chosen side.
---- Re-anchored only when something changed: SetPoint is not free.
-function TF:PlaceIndicator(target)
+--- Size, type and the style's parts. Re-done only when a setting changes.
+function TF:StyleIndicator()
   local ind = self.ind
   local s = T:Settings()
   local sc = s.frameScale
-  if self.indTarget == target and self.indAnchor == s.frameAnchor and self.indScale == sc then
-    return
-  end
-  self.indTarget, self.indAnchor, self.indScale = target, s.frameAnchor, sc
-  ind:ClearAllPoints()
-  ind:SetAllPoints(target)
+  local key = s.frameStyle .. ":" .. sc .. ":" .. tostring(s.frameGlow)
+  if self.indStyle == key then return end
+  self.indStyle = key
 
-  local b = ind.badge
-  b:SetWidth(math.floor(50 * sc + 0.5))
-  b:SetHeight(math.floor(18 * sc + 0.5))
-  b:ClearAllPoints()
-  local a = s.frameAnchor
-  if a == "BOTTOM" then
-    b:SetPoint("TOP", target, "BOTTOM", 0, -2)
-  elseif a == "LEFT" then
-    b:SetPoint("RIGHT", target, "LEFT", -2, 0)
-  elseif a == "RIGHT" then
-    b:SetPoint("LEFT", target, "RIGHT", 2, 0)
+  local w, h = math.floor(BASE_W * sc + 0.5), math.floor(BASE_H * sc + 0.5)
+  ind:SetWidth(w) ind:SetHeight(h)
+  ind.text:SetFont(UI.font, math.floor(14 * sc + 0.5), "OUTLINE")
+  ind.glow:SetWidth(w * 1.9) ind.glow:SetHeight(h * 2.4)
+
+  local bar = (s.frameStyle == "clean")
+  local barH = math.max(2, math.floor(3 * sc + 0.5))
+  ind.text:ClearAllPoints()
+  if bar then
+    ind.text:SetPoint("CENTER", ind, "CENTER", 0, barH)
+    ind.track:ClearAllPoints()
+    ind.track:SetPoint("BOTTOMLEFT", ind, "BOTTOMLEFT", 4, 1)
+    ind.track:SetPoint("BOTTOMRIGHT", ind, "BOTTOMRIGHT", -4, 1)
+    ind.track:SetHeight(barH)
+    ind.fill:ClearAllPoints()
+    ind.fill:SetPoint("TOPLEFT", ind.track, "TOPLEFT", 0, 0)
+    ind.fill:SetPoint("BOTTOMLEFT", ind.track, "BOTTOMLEFT", 0, 0)
+    ind.track:Show() ind.fill:Show()
   else
-    b:SetPoint("BOTTOM", target, "TOP", 0, 2)
+    ind.text:SetPoint("CENTER", ind, "CENTER", 0, 0)
+    ind.track:Hide() ind.fill:Hide()
   end
-
-  local e = ind.edges
-  local th = 2
-  e[1]:ClearAllPoints()
-  e[1]:SetPoint("BOTTOMLEFT", target, "TOPLEFT", -th, 0)
-  e[1]:SetPoint("BOTTOMRIGHT", target, "TOPRIGHT", th, 0)
-  e[1]:SetHeight(th)
-  e[2]:ClearAllPoints()
-  e[2]:SetPoint("TOPLEFT", target, "BOTTOMLEFT", -th, 0)
-  e[2]:SetPoint("TOPRIGHT", target, "BOTTOMRIGHT", th, 0)
-  e[2]:SetHeight(th)
-  e[3]:ClearAllPoints()
-  e[3]:SetPoint("TOPRIGHT", target, "TOPLEFT", 0, 0)
-  e[3]:SetPoint("BOTTOMRIGHT", target, "BOTTOMLEFT", 0, 0)
-  e[3]:SetWidth(th)
-  e[4]:ClearAllPoints()
-  e[4]:SetPoint("TOPLEFT", target, "TOPRIGHT", 0, 0)
-  e[4]:SetPoint("BOTTOMLEFT", target, "BOTTOMRIGHT", 0, 0)
-  e[4]:SetWidth(th)
+  if s.frameStyle == "badge" then ind.plate:Show() else ind.plate:Hide() end
+  if s.frameGlow then ind.glow:Show() else ind.glow:Hide() end
 end
+
+--[[ Where it goes. Dragged once, it keeps that offset from the target
+     frame's centre. Never dragged, it sits just above the frame. With no
+     target frame to hang from -- placing it before anything is targeted --
+     it goes where it was last seen, or the middle of the screen. ]]
+function TF:PlaceIndicator(target)
+  local ind = self.ind
+  local s = T:Settings()
+  local key = tostring(target) .. ":" .. tostring(s.frameX) .. ":" .. tostring(s.frameY)
+  if self.indPlaced == key or (self.moving and self.dragging) then return end
+  self.indPlaced = key
+  ind:ClearAllPoints()
+  if target and s.frameX then
+    ind:SetPoint("CENTER", target, "CENTER", s.frameX, s.frameY)
+  elseif target then
+    ind:SetPoint("BOTTOM", target, "TOP", 0, 4)
+  else
+    ind:SetPoint("CENTER", UIParent, "CENTER", 0, 120)
+  end
+end
+
+--- Store the dragged position as an offset from the target frame.
+function TF:SavePlacement()
+  local ind = self.ind
+  local target = self:TargetFrame() or self.lastTarget
+  if not ind or not target then return end
+  local ix, iy = ind:GetCenter()
+  local tx, ty = target:GetCenter()
+  if not (ix and tx) then return end
+  -- Into the indicator's own units: the target frame may be scaled.
+  local k = (target:GetEffectiveScale() or 1) / (ind:GetEffectiveScale() or 1)
+  local s = T:Settings()
+  s.frameX = math.floor(ix - tx * k + 0.5)
+  s.frameY = math.floor(iy - ty * k + 0.5)
+  self.indPlaced = nil
+end
+
+--- Forget the dragged position: back to just above the frame.
+function TF:ResetPlacement()
+  local s = T:Settings()
+  s.frameX, s.frameY = nil, nil
+  self.indPlaced = nil
+  self:UpdateIndicator()
+end
+
+--[[ Placement mode: the indicator shows a sample reading, takes the mouse,
+     and says how to finish. Out of it, the indicator ignores the mouse
+     entirely, so it can never eat a click meant for the target frame. ]]
+function TF:SetMoving(on)
+  self.moving = on and true or nil
+  local ind = self:CreateIndicator()
+  ind:EnableMouse(self.moving and true or false)
+  if self.moving then
+    ind.outline:Show() ind.hint:Show()
+    W.Print("drag the threat % where you want it; right-click it to lock.")
+  else
+    ind.outline:Hide() ind.hint:Hide()
+    self:SavePlacement()
+    W.Print("threat % locked in place.")
+  end
+  self.indPlaced = nil
+  self:UpdateIndicator()
+  if UI.settings and UI.settings.Refresh then UI.settings:Refresh() end
+end
+
+local SAMPLE_COLOR = { 1.00, 0.55, 0.10 }
 
 function TF:UpdateIndicator()
   local s = T:Settings()
@@ -143,37 +250,42 @@ function TF:UpdateIndicator()
     local _
     pct, color, _, text = T:Display(cur)
   end
-  local target = pct and self:TargetFrame()
-  if not target then
+  if self.moving and not pct then
+    pct, color, text = 82, SAMPLE_COLOR, "82%"
+  end
+  local target = self:TargetFrame()
+  if target then self.lastTarget = target end
+  if not pct or (not target and not self.moving) then
     if ind and ind:IsShown() then ind:Hide() end
     return
   end
+
   ind = self:CreateIndicator()
+  if not self.moving then
+    ind.outline:Hide() ind.hint:Hide()
+  end
+  self:StyleIndicator()
   self:PlaceIndicator(target)
 
-  if s.framePercent then
-    ind.badge:Show()
-    ind.text:SetText(text)
-    ind.text:SetTextColor(color[1], color[2], color[3], 1)
-    ind.badge:SetBorderColor(color, 0.9)
-  else
-    ind.badge:Hide()
+  ind.text:SetText(text)
+  ind.text:SetTextColor(color[1], color[2], color[3], 1)
+
+  if s.frameStyle == "clean" then
+    local f = (pct or 0) / 100
+    if f > 1 then f = 1 elseif f < 0.02 then f = 0.02 end
+    local trackW = ind.track:GetWidth() or (ind:GetWidth() - 8)
+    if not trackW or trackW <= 0 then trackW = ind:GetWidth() - 8 end
+    ind.fill:SetWidth(trackW * f)
+    ind.fill:SetVertexColor(color[1], color[2], color[3], 1)
   end
 
-  -- Red pulses; anything calmer is a steady line.
-  local alpha = 0.85
-  if color == T.RED then
-    alpha = 0.55 + 0.45 * math.abs(math.sin(GetTime() * 5))
+  if s.frameGlow then
+    -- Red breathes; anything calmer glows steady and faint.
+    local a = 0.35
+    if color == T.RED then a = 0.35 + 0.35 * math.abs(math.sin(GetTime() * 4)) end
+    ind.glow:SetVertexColor(color[1], color[2], color[3], a)
   end
-  for _, e in ipairs(ind.edges) do
-    if s.frameGlow then
-      e:SetVertexColor(color[1], color[2], color[3], alpha)
-      e:Show()
-    else
-      e:Hide()
-    end
-  end
-  ind:Show()
+  if not ind:IsShown() then ind:Show() end
 end
 
 ----------------------------------------------------------------------

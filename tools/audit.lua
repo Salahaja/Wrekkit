@@ -981,11 +981,27 @@ step("threat meter", function()
 
   local run = SlashCmdList["WREKKIT"]
   for _, c in ipairs({ "threat", "threat", "threat docked", "threat meter", "threat tank",
-                       "threat tank", "threat test", "threat config", "threat disable",
+                       "threat tank", "threat test", "threat move", "threat move", "threat resetpos", "threat config", "threat disable",
                        "threat enable", "threat bogus", "mode threat", "mode damage",
                        "threat window" }) do
     run(c)
   end
+
+  -- The target-frame %: every style, dragged, saved, reset.
+  local TFm = UI.threatFrames
+  T:OnMessage("TWTv4=Fuff:1:3400:100:1;Auditor:0:3000:88:1;")
+  for _, style in ipairs({ "number", "badge", "clean" }) do
+    T:Settings().frameStyle = style
+    TFm:UpdateIndicator()
+  end
+  TFm:SetMoving(true)
+  TFm.ind:GetScript("OnDragStart")()
+  TFm.ind:GetScript("OnDragStop")()
+  if T:Settings().frameX == nil then error("dragging the % did not save where it went") end
+  TFm.ind:GetScript("OnClick")()
+  if TFm.moving then error("right-click did not lock the %") end
+  TFm:ResetPlacement()
+  if T:Settings().frameX ~= nil then error("reset did not forget the dragged place") end
 
   T:ResetSettings()
   if T:Settings().tankMode ~= "auto" then error("defaults did not come back") end

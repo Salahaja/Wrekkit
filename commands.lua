@@ -64,6 +64,8 @@ local HELP = {
   { "/wrek threat <where>", "window | docked | meter | off" },
   { "/wrek threat tank", "I'm the tank: auto, always, never (cycles)" },
   { "/wrek threat test", "15s of test data, to place frames and plates" },
+  { "/wrek threat move", "drag the target-frame % where you want it" },
+  { "/wrek threat resetpos", "put the target-frame % back above the frame" },
   { "/wrek threat config", "threat settings" },
   { "/wrek lock", "lock the meter in place" },
   { "/wrek minimap", "toggle the minimap button" },
@@ -327,13 +329,18 @@ local function handler(msg)
         off = "never: you get damage-dealer warnings.",
       }
       W.Print("I'm the tank: " .. said[s.tankMode])
+    elseif sub == "move" or sub == "unlock" or sub == "lock" then
+      W.ui.threatFrames:SetMoving(not W.ui.threatFrames.moving)
+    elseif sub == "resetpos" then
+      W.ui.threatFrames:ResetPlacement()
+      W.Print("threat % is back above the target frame.")
     elseif sub == "test" or sub == "demo" or sub == "preview" then
       T:Demo(15)
       W.Print("threat preview for 15 seconds.")
     elseif sub == "config" or sub == "settings" then
       W.ui.settings:Show("threat")
     else
-      W.Print("/wrek threat [window | docked | meter | off | tank | test | config | enable | disable]")
+      W.Print("/wrek threat [window | docked | meter | off | tank | move | resetpos | test | config | enable | disable]")
     end
 
   elseif cmd == "debug" then

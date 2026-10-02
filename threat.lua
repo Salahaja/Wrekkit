@@ -105,10 +105,11 @@ T.defaults = {
 
   -- target frame
   frame = true,
-  framePercent = true,
-  frameGlow = true,
-  frameAnchor = "TOP",     -- TOP | BOTTOM | LEFT | RIGHT
+  frameStyle = "clean",    -- "clean" (number + bar) | "number" | "badge"
+  frameGlow = true,        -- soft glow behind the number
   frameScale = 1.0,
+  -- frameX / frameY: where it was dragged, from the target frame's centre.
+  -- Unset until it is dragged, which puts it just above the frame.
   frameName = "",          -- empty: find pfUI's or the stock one
 
   -- nameplates
@@ -154,7 +155,12 @@ function T:Sanitize(s)
   s.basis = oneOf(s.basis, { "pull", "tank" }, d.basis)
   s.display = oneOf(s.display, { "window", "docked", "meter", "off" }, d.display)
   s.show = oneOf(s.show, { "always", "group", "combat" }, d.show)
-  s.frameAnchor = oneOf(s.frameAnchor, { "TOP", "BOTTOM", "LEFT", "RIGHT" }, d.frameAnchor)
+  s.frameStyle = oneOf(s.frameStyle, { "clean", "number", "badge" }, d.frameStyle)
+  s.frameAnchor, s.framePercent = nil, nil    -- replaced by dragging and Style
+  if s.frameX ~= nil or s.frameY ~= nil then
+    s.frameX, s.frameY = tonumber(s.frameX), tonumber(s.frameY)
+    if not (s.frameX and s.frameY) then s.frameX, s.frameY = nil, nil end
+  end
   s.plateAnchor = oneOf(s.plateAnchor, { "TOP", "BOTTOM", "LEFT", "RIGHT" }, d.plateAnchor)
   s.plateColor = oneOf(s.plateColor, { "text", "bar", "none" }, d.plateColor)
   s.plateStyle = oneOf(s.plateStyle, { "auto", "shagu", "stock" }, d.plateStyle)
@@ -166,7 +172,7 @@ function T:Sanitize(s)
   if s.dangerAt < s.warnAt then s.dangerAt = s.warnAt end
   s.tankWarnAt = clamp(s.tankWarnAt, 30, 120, d.tankWarnAt)
   s.textSize = math.floor(clamp(s.textSize, 14, 48, d.textSize))
-  s.frameScale = clamp(s.frameScale, 0.5, 2, d.frameScale)
+  s.frameScale = clamp(s.frameScale, 0.6, 2.5, d.frameScale)
   s.plateMemory = clamp(s.plateMemory, 0, 30, d.plateMemory)
   s.plateSize = math.floor(clamp(s.plateSize, 7, 20, d.plateSize))
   s.opacity = clamp(s.opacity, 0.2, 1, d.opacity)

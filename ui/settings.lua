@@ -539,7 +539,8 @@ function S:BuildThreat()
     T:Sanitize(ts())
     T:InvalidateCaches()
     if UI.threat.frame then UI.threat:ApplyLayout() end
-    UI.threatFrames.indTarget = nil
+    UI.threatFrames.indStyle = nil
+    UI.threatFrames.indPlaced = nil
     UI.threatFrames:Update()
     UI.threat:UpdateVisibility()
   end
@@ -678,24 +679,29 @@ function S:BuildThreat()
 
   get, set = opt("frame")
   check(self, "Show on target frame", get, set)
-  get, set = opt("frameGlow")
-  check(self, "Coloured border", get, set)
-  get, set = opt("framePercent")
-  check(self, "Percent badge", get, set)
-
-  get, set = pick("frameAnchor")
-  choice(self, "Badge side",
+  get, set = pick("frameStyle")
+  choice(self, "Style",
     {
-      { value = "TOP", label = "top" },
-      { value = "BOTTOM", label = "bottom" },
-      { value = "LEFT", label = "left" },
-      { value = "RIGHT", label = "right" },
-    }, get, set)
+      { value = "clean", label = "number + bar" },
+      { value = "number", label = "number" },
+      { value = "badge", label = "badge" },
+    }, get, set,
+    { "number + bar: the % with a slim threat bar", "under it. badge: on a soft dark plate, for",
+      "busy frames." })
 
-  stepper(self, "Badge size",
+  get, set = opt("frameGlow")
+  check(self, "Soft glow", get, set, { "A faint glow behind the %, in its colour.", "It breathes when red." })
+
+  stepper(self, "Size",
     function() return math.floor(ts().frameScale * 100 + 0.5) end,
     function(v) ts().frameScale = v / 100; redraw() end,
-    50, 200, 10, pct)
+    60, 250, 10, pct)
+
+  check(self, "Move it (drag)",
+    function() return UI.threatFrames.moving == true end,
+    function(v) UI.threatFrames:SetMoving(v) end,
+    { "Shows a sample % you can drag anywhere.", "Its place is saved relative to the target",
+      "frame. Right-click it, or untick, to lock." })
 
   textField(self, "Frame name",
     function() return ts().frameName end,
@@ -754,6 +760,12 @@ function S:BuildThreat()
     W.Guard("threat preview", function() W.threat:Demo(15) end)
   end)
   demoBtn:SetPoint("LEFT", row, "LEFT", 0, 0)
+  local placeBtn = UI.Button(row, "Reset %", 64, 20, function()
+    W.Guard("threat reset placement", function()
+      UI.threatFrames:ResetPlacement()
+      W.Print("threat % is back above the target frame.")
+    end)
+  end)
   local resetBtn = UI.Button(row, "Defaults", 64, 20, function()
     W.Guard("threat defaults", function()
       T:ResetSettings()
@@ -763,10 +775,11 @@ function S:BuildThreat()
       W.Print("threat settings are back to their defaults.")
     end)
   end)
-  resetBtn:SetPoint("LEFT", demoBtn, "RIGHT", 5, 0)
+  placeBtn:SetPoint("LEFT", demoBtn, "RIGHT", 5, 0)
+  resetBtn:SetPoint("LEFT", placeBtn, "RIGHT", 5, 0)
   local hint = UI.Text(row, 10, W.color.textDim)
   hint:SetPoint("LEFT", resetBtn, "RIGHT", 8, 0)
-  hint:SetText("Preview: 15s of test data everywhere")
+  hint:SetText("Preview: 15s of test data")
 
   self.building = "meter"
 end
