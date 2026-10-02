@@ -112,6 +112,11 @@ T.defaults = {
   flashScreen = false,     -- pulse the screen edges as well
   flashSpeed = 3,          -- blinks a second
 
+  -- mobs you are not targeting, watched through their nameplates
+  watchMobs = true,        -- read each mob's own target (needs SuperWoW)
+  mobSummary = true,       -- "4 held - 1 slipping - 1 loose" under the %
+  coTanks = "",            -- names whose mobs are not loose, comma-separated
+
   -- target frame
   frame = true,
   frameStyle = "clean",    -- "clean" (number + bar) | "number" | "badge"
@@ -189,6 +194,7 @@ function T:Sanitize(s)
   s.plateSize = math.floor(clamp(s.plateSize, 7, 20, d.plateSize))
   s.opacity = clamp(s.opacity, 0.2, 1, d.opacity)
   if type(s.frameName) ~= "string" then s.frameName = "" end
+  if type(s.coTanks) ~= "string" then s.coTanks = "" end
   s.lastWindow = oneOf(s.lastWindow, { "window", "docked" }, "docked")
   if type(s.window) ~= "table" then s.window = {} end
   local w = s.window
@@ -860,6 +866,13 @@ function T:ForMob(key, guid)
     return 100, RED, true, "LOST"
   end
 
+  -- A mob on someone it should not be on beats any percentage.
+  local w = guid and self.watch[guid]
+  if w and w.confirmed and now - w.at <= STALE then
+    if w.state == "loose" then return 100, RED, true, "LOOSE" end
+    if w.state == "onme" then return 100, RED, true, "AGGRO" end
+  end
+
   local live = self:Live()
   if live and live.key == key and live.me then
     return self:Display(live)
@@ -901,8 +914,10 @@ function T:Alarm()
       if now - m.at <= STALE and (not worst or m.pull > worst) then worst = m.pull end
     end
     if worst and worst >= s.tankFlashAt then return worst, RED end
+    if self:CountWatch("loose") > 0 then return 100, RED end
     return nil
   end
+  if self:CountWatch("onme") > 0 then return 100, RED end
   if not me then return nil end
   if me.tank then return 100, RED end
   -- Always the distance to pulling, whatever the display shows: that is
@@ -914,8 +929,132 @@ end
 
 --- Anything a nameplate could show? Lets the plate pass skip its work.
 function T:AnythingForPlates()
-  return self.current ~= nil or next(self.memory) ~= nil
-      or next(self.tankMobs) ~= nil or next(self.lost) ~= nil
+  if self.current ~= nil or next(self.memory) ~= nil
+     or next(self.tankMobs) ~= nil or next(self.lost) ~= nil then
+    return true
+  end
+  -- In a fight the plates are where loose mobs are found, data or not.
+  local s = self:Settings()
+  return s.watchMobs and UnitAffectingCombat and UnitAffectingCombat("player") and true or false
+end
+
+----------------------------------------------------------------------
+-- mobs you are not targeting
+----------------------------------------------------------------------
+
+--[[ The server tells a tank about the mobs they HOLD. A mob that has
+     already gone to a healer is not one of them, so it never appears --
+     and that is the one a tank most needs to see. SuperWoW lets a guid
+     stand for a unit, and "<guid>target" for what that unit is targeting,
+     which answers the question directly for every mob with a nameplate.
+
+     A mob is
+       loose   tanking, it is on a player in your group who is not you
+               (or one of the co-tanks named in settings)
+       onme    not tanking, it is on you
+     and only counts once it has stayed that way for LOOSE_CONFIRM: mobs
+     flick their target to whoever they cast at, and a fireball at a
+     priest is not a loose mob. ]]
+local LOOSE_CONFIRM = 1.0
+T.watch = {}         -- guid -> { state, who, name, since, at, confirmed }
+
+local coTankList, coTankFor = {}, nil
+local function isCoTank(name)
+  local raw = T:Settings().coTanks
+  if raw ~= coTankFor then
+    coTankFor = raw
+    coTankList = {}
+    for n in string.gfind(raw, "[^,%s]+") do coTankList[string.lower(n)] = true end
+  end
+  return name and coTankList[string.lower(name)] or false
+end
+
+--- Look at one mob, by guid, and return "loose" / "onme" once confirmed.
+function T:WatchMob(guid, mobName)
+  local s = self:Settings()
+  if not s.enabled or not s.watchMobs or not guid then return nil end
+  local now = GetTime()
+  local state, who
+
+  local inFight = UnitAffectingCombat and UnitAffectingCombat(guid)
+  local hostile = not UnitCanAttack or UnitCanAttack("player", guid)
+  if inFight and hostile then
+    local tok = guid .. "target"
+    if UnitExists(tok) then
+      if UnitIsUnit(tok, "player") then
+        if not self:IsTank() then state = "onme" end
+      elseif self:IsTank() and UnitIsPlayer(tok) == 1 then
+        who = UnitName(tok)
+        if who and not isCoTank(who) and W.capture:InGroup(who) then state = "loose" end
+      end
+    end
+  end
+
+  local w = self.watch[guid]
+  if not state then
+    if w then self.watch[guid] = nil end
+    return nil
+  end
+  if not w or w.state ~= state or w.who ~= who then
+    w = { state = state, who = who, since = now }
+    self.watch[guid] = w
+  end
+  w.at, w.name = now, mobName or w.name
+  if not w.confirmed and now - w.since >= LOOSE_CONFIRM then
+    w.confirmed = true
+    if state == "loose" and s.warnLostAggro then
+      self:Alert("LOOSE: " .. (w.name or "a mob") .. " on " .. (who or "?"), "danger")
+    elseif state == "onme" and s.warnPulled and not (self.current and self.current.guid == guid) then
+      -- Your target says so through its own table; this is for the rest.
+      self:Alert("AGGRO! " .. (w.name or "a mob") .. " is on you", "danger")
+    end
+  end
+  return w.confirmed and state or nil
+end
+
+--- How many confirmed mobs are in a state right now.
+function T:CountWatch(state)
+  local n, now = 0, GetTime()
+  for _, w in pairs(self.watch) do
+    if w.confirmed and w.state == state and now - w.at <= STALE then n = n + 1 end
+  end
+  return n
+end
+
+--[[ The tank's picture in one line: how many mobs are held, how many of
+     those someone is closing in on, how many are loose. Returns the text
+     and its colour, or nil when there is only the one mob -- the % says
+     everything then. ]]
+function T:MobSummary()
+  local s = self:Settings()
+  if not s.enabled or not s.mobSummary or not self:IsTank() then return nil end
+  local now = GetTime()
+  local held, slipping = 0, 0
+  for _, m in pairs(self.tankMobs) do
+    if now - m.at <= STALE then
+      held = held + 1
+      if m.pull >= s.tankWarnAt then slipping = slipping + 1 end
+    end
+  end
+  local loose = self:CountWatch("loose")
+  if held + loose <= 1 then return nil end
+  local parts = { held .. " held" }
+  if slipping > 0 then table.insert(parts, "|cffff8c1a" .. slipping .. " slipping|r") end
+  if loose > 0 then table.insert(parts, "|cfff23333" .. loose .. " loose|r") end
+  local color = (loose > 0 and RED) or (slipping > 0 and ORANGE) or T.TANK_COLOR
+  return table.concat(parts, "  "), color
+end
+
+--- Confirmed loose mobs, for the window: { name, who }.
+function T:LooseMobs()
+  local out, now = {}, GetTime()
+  for _, w in pairs(self.watch) do
+    if w.confirmed and w.state == "loose" and now - w.at <= STALE then
+      table.insert(out, { name = w.name or "?", who = w.who or "?" })
+    end
+  end
+  table.sort(out, function(a, b) return a.name < b.name end)
+  return out
 end
 
 ----------------------------------------------------------------------
@@ -1021,6 +1160,9 @@ function T:Prune()
   for k, t in pairs(self.died) do
     if now - t > STALE then self.died[k] = nil end
   end
+  for g, w in pairs(self.watch) do
+    if now - w.at > STALE then self.watch[g] = nil end
+  end
   if not self.demoUntil then
     for low, m in pairs(self.tankMobs) do
       if now - m.at > STALE then self.tankMobs[low] = nil end
@@ -1033,6 +1175,7 @@ end
      every name it ever saw. ]]
 function T:OnCombatEnd()
   self.fired = {}
+  self.watch = {}
   self.heldKey = nil
   self.lastTM = nil
   if not self.demoUntil then

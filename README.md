@@ -179,9 +179,32 @@ your target, and:
 - shows the runner-up's distance on the target frame and on every held
   mob's nameplate, instead of your own number
 
+**Mobs you are not targeting.** On a pull of two, five or seven mobs, the
+one that matters is rarely the one you have targeted, so all of them are
+watched:
+
+- **Held but slipping**: the server reports every mob you hold. Each one's
+  nameplate shows how close its runner-up is, and **blinks** once that
+  reaches your flash limit. The target frame shows a one-line count under
+  the %: `5 held  2 slipping  1 loose`.
+- **Already loose**: a mob that has gone to a healer is not one you hold,
+  so the server cannot list it. Wrekkit reads every mob's *own* target from
+  its nameplate (SuperWoW lets a mob's GUID stand for the mob), and a mob
+  that stays on a group member other than you for a second is **LOOSE**:
+  `LOOSE` blinking on its plate, a *Loose* section in the window naming who
+  it is on, an alert -- **"LOOSE: Whelp on Mendy"** -- and the flash. The
+  one-second wait is so a mob throwing one fireball at a priest is not
+  called loose. Name your co-tanks under *Co-tanks* and their mobs are left
+  alone.
+
+This needs nameplates switched on (the `V` key) and SuperWoW; without
+SuperWoW the held-mob list and its alerts still work, loose detection does
+not.
+
 Not tanking, you get the opposite: warnings as *you* approach the line, and
-**"AGGRO! <mob> is on you"** if one turns on you, with `AGGRO` on the
-target frame.
+**"AGGRO! <mob> is on you"** if one turns on you -- targeted or not, the
+plates catch the rest -- with `AGGRO` on the target frame or on that mob's
+plate.
 
 Warnings fire once on the way *up* past a line and re-arm only after
 dropping 5 points below it, so a number hovering on a line cannot repeat
@@ -248,7 +271,8 @@ has four tabs, each about one thing:
 | Meter | compact mode, text size, row height, opacity, in-combat fade, toolbar, lock |
 | Recording | what is recorded, per-second basis, log range, history, the crash journal, freeing memory |
 | Sharing | sharing your logs, the channel, live raid sync |
-| Threat | everything above under *Threat meter* |
+| Threat | the threat meter, warnings, flashing, tanking |
+| Frames & plates | the target-frame % and the nameplates |
 
 Saved settings are checked at every login and anything out of range -- an
 older build's value, a hand edit -- is put back inside what its control can

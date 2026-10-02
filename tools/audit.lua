@@ -1015,6 +1015,65 @@ step("threat meter", function()
   T:Settings().tankMode = "off"
   T.heldKey, T.fired = nil, {}
 
+  -- Mobs nobody targeted: one goes loose on the priest, seen by its plate.
+  T:Settings().tankMode = "on"
+  local whelpGuid = "0xF00000000000BEEF"
+  WORLD[whelpGuid] = { name = "Whelp", isPlayer = false, maxHealth = 5000, health = 5000 }
+  WORLD[whelpGuid .. "target"] = WORLD["0xB"]
+  W.capture.groupMembers["Elfpriest"] = true
+  local wplate = makeFrame("Button", nil, STUB.WorldFrame)
+  wplate._guid = whelpGuid
+  wplate._shown = true
+  local wborder = wplate:CreateTexture()
+  wborder:SetTexture("Interface\\Tooltips\\Nameplate-Border")
+  local wname = wplate:CreateFontString()
+  wname:SetText("Whelp")
+  wplate._regions = { wborder, wplate:CreateTexture(), wname }
+  wplate._kids = { makeFrame("StatusBar", nil, wplate) }
+  table.insert(STUB.WorldFrame._kids, wplate)
+  alerts = {}
+  T.Alert = function(self, text, level) table.insert(alerts, text) end
+  UI.threatFrames:UpdatePlates()
+  if T:CountWatch("loose") ~= 0 then error("a mob counted loose before it stayed loose") end
+  NOW = NOW + 1.2
+  UI.threatFrames:UpdatePlates()
+  if T:CountWatch("loose") ~= 1 then error("the Whelp on the priest is not counted loose") end
+  if wplate.wrekThreat.text:GetText() ~= "LOOSE" then error("its plate does not say LOOSE") end
+  if not string.find(table.concat(alerts, "|"), "LOOSE: Whelp on Elfpriest", 1, true) then
+    error("no LOOSE alert: " .. table.concat(alerts, " | "))
+  end
+  T.tankMobs[1] = { creature = "Drake", name = "Fuff", perc = 99, pull = 90, at = NOW }
+  T.tankMobs[2] = { creature = "Drake", name = "Fuff", perc = 40, pull = 36, at = NOW }
+  local summary = T:MobSummary()
+  if not (summary and string.find(summary, "2 held", 1, true) and string.find(summary, "1 loose", 1, true)) then
+    error("summary reads: " .. tostring(summary))
+  end
+  if not T:Alarm() then error("a loose mob should flash") end
+  UI.threat:Refresh()
+  local looseRows = 0
+  for _, it in ipairs(UI.threat.list.data) do if it.loose then looseRows = looseRows + 1 end end
+  if looseRows ~= 1 then error("the window does not list the loose mob") end
+  UI.threatFrames:UpdateIndicator()
+
+  -- Not tanking, a mob nobody targeted turns on you.
+  T:Settings().tankMode = "off"
+  T.watch, T.tankMobs = {}, {}
+  local realIsUnit = STUB.UnitIsUnit
+  STUB.UnitIsUnit = function(a, b) return a == whelpGuid .. "target" and b == "player" end
+  alerts = {}
+  UI.threatFrames:UpdatePlates()
+  NOW = NOW + 1.2
+  UI.threatFrames:UpdatePlates()
+  if wplate.wrekThreat.text:GetText() ~= "AGGRO" then error("a mob on you should say AGGRO") end
+  if not string.find(table.concat(alerts, "|"), "AGGRO! Whelp is on you", 1, true) then
+    error("no AGGRO alert: " .. table.concat(alerts, " | "))
+  end
+  STUB.UnitIsUnit = realIsUnit
+  WORLD[whelpGuid .. "target"] = nil
+  T.Alert = realAlert
+  T.watch = {}
+  wplate._shown = false
+
   -- The target-frame %: every style, dragged, saved, reset.
   local TFm = UI.threatFrames
   T:OnMessage("TWTv4=Fuff:1:3400:100:1;Auditor:0:3000:88:1;")

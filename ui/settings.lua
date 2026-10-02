@@ -199,7 +199,8 @@ function S:Create()
   local prev
   for _, t in ipairs(S.TABS) do
     local key = t[1]
-    local b = UI.Button(tabRow, t[2], 84, 20, function() S:SetTab(key) end)
+    local b = UI.Button(tabRow, t[2], (key == "plates") and 104 or 84, 20,
+      function() S:SetTab(key) end)
     if prev then b:SetPoint("LEFT", prev, "RIGHT", 4, 0)
     else b:SetPoint("LEFT", tabRow, "LEFT", 0, 0) end
     self.tabs[key] = b
@@ -720,7 +721,21 @@ function S:BuildThreat()
   check(self, "A mob turned away", get, set,
     { "LOST AGGRO, with the mob's name, and LOST", "on its nameplate for a few seconds." })
 
+  get, set = opt("watchMobs")
+  check(self, "Watch mobs I'm not targeting", get, set,
+    { "Reads every mob's own target from its", "nameplate: LOOSE on one hitting a group",
+      "member, AGGRO (not tanking) on one hitting", "you. Needs nameplates on and SuperWoW." })
+
+  get, set = opt("mobSummary")
+  check(self, "Mob count under the %", get, set,
+    { "\"4 held  1 slipping  1 loose\" under the", "target-frame %, with more than one mob." })
+
+  textField(self, "Co-tanks",
+    function() return ts().coTanks end,
+    function(v) ts().coTanks = v or "" end)
+
   ------------------------------------------------------------------
+  self.building = "plates"
   heading(self, "Target frame")
 
   get, set = opt("frame")
@@ -799,6 +814,8 @@ function S:BuildThreat()
     0, 30, 1,
     function(v) return v .. "s" end)
 
+  -- The buttons belong with the threat meter, at the foot of its tab.
+  self.building = "threat"
   local row = CreateFrame("Frame", nil, self.body)
   row:SetHeight(22)
   place(self, row, false, true, 4)
@@ -836,6 +853,7 @@ S.TABS = {
   { "recording", "Recording" },
   { "sharing", "Sharing" },
   { "threat", "Threat" },
+  { "plates", "Frames & plates" },
 }
 
 function S:SetTab(tab)

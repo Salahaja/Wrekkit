@@ -114,6 +114,12 @@ function TF:CreateIndicator()
   ind.fill = ind:CreateTexture(nil, "OVERLAY")
   ind.fill:SetTexture(UI.media.bar)
 
+  -- The tank's other mobs, in one line: "4 held  1 slipping  1 loose".
+  ind.summary = ind:CreateFontString(nil, "OVERLAY")
+  ind.summary:SetFont(UI.font, 10, "OUTLINE")
+  ind.summary:SetPoint("TOP", ind, "BOTTOM", 0, -1)
+  ind.summary:Hide()
+
   -- Shown only while it is being placed.
   ind.outline = ind:CreateTexture(nil, "BACKGROUND")
   ind.outline:SetTexture(UI.media.white)
@@ -152,6 +158,7 @@ function TF:StyleIndicator()
   local w, h = math.floor(BASE_W * sc + 0.5), math.floor(BASE_H * sc + 0.5)
   ind:SetWidth(w) ind:SetHeight(h)
   ind.text:SetFont(UI.font, math.floor(14 * sc + 0.5), "OUTLINE")
+  ind.summary:SetFont(UI.font, math.floor(10 * sc + 0.5), "OUTLINE")
   ind.glow:SetWidth(w * 1.9) ind.glow:SetHeight(h * 2.4)
 
   local bar = (s.frameStyle == "clean")
@@ -270,6 +277,18 @@ function TF:UpdateIndicator()
   ind.text:SetText(text)
   ind.text:SetTextColor(color[1], color[2], color[3], 1)
 
+  local summary, sumColor = T:MobSummary()
+  if self.moving and not summary then summary, sumColor = "4 held  1 slipping", T.TANK_COLOR end
+  if summary and not self.moving then
+    ind.summary:SetText(summary)
+    ind.summary:SetTextColor(sumColor[1], sumColor[2], sumColor[3], 1)
+    ind.summary:Show()
+  elseif self.moving then
+    ind.summary:Hide()
+  else
+    ind.summary:Hide()
+  end
+
   if s.frameStyle == "clean" then
     local f = (pct or 0) / 100
     if f > 1 then f = 1 elseif f < 0.02 then f = 0.02 end
@@ -374,6 +393,16 @@ local function plateKey(plate)
   return "name:" .. name, nil
 end
 
+--- The name written on a plate, for messages about mobs not targeted.
+local function plateName(plate)
+  if plate.wrekNameText == nil then
+    local _, _, nameText = plate:GetRegions()
+    plate.wrekNameText = (nameText and nameText.GetText) and nameText or false
+  end
+  local fs = plate.wrekNameText
+  return fs and fs:GetText()
+end
+
 local function plateOverlay(plate)
   local o = plate.wrekThreat
   if o then return o end
@@ -440,6 +469,8 @@ function TF:UpdatePlate(plate, s)
     return
   end
   local key, guid = plateKey(plate)
+  -- Every mob in view is looked at, targeted or not: that is the point.
+  if guid then T:WatchMob(guid, plateName(plate)) end
   local pct, color, fresh, text
   if key then pct, color, fresh, text = T:ForMob(key, guid) end
   if not pct then
@@ -473,7 +504,16 @@ function TF:UpdatePlate(plate, s)
     else
       o.text:SetTextColor(color[1], color[2], color[3], 1)
     end
-    o:SetAlpha(fresh and 1 or 0.55)
+    --[[ Blink a mob that needs you and is not the one you are looking at:
+         loose, on you, lost, or -- tanking -- with someone at the flash
+         limit. The target has the target-frame % for that. ]]
+    local urgent = fresh and color == T.RED and s.flash
+    if urgent and T.current and T.current.key == key then urgent = false end
+    if urgent then
+      o:SetAlpha(0.3 + 0.7 * TF:Blink())
+    else
+      o:SetAlpha(fresh and 1 or 0.55)
+    end
     if not o:IsShown() then o:Show() end
   elseif plate.wrekThreat and plate.wrekThreat:IsShown() then
     plate.wrekThreat:Hide()

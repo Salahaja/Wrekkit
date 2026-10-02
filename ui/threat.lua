@@ -93,6 +93,17 @@ function TW.Rows(cur)
       table.insert(items, it)
     end
   end
+
+  -- Mobs already off you: the server cannot list these, the plates can.
+  if T:IsTank() then
+    local loose = T:LooseMobs()
+    if table.getn(loose) > 0 then
+      table.insert(items, { header = "|cfff23333Loose|r" })
+      for _, l in ipairs(loose) do
+        table.insert(items, { loose = l, _frac = 1 })
+      end
+    end
+  end
   return items
 end
 
@@ -111,6 +122,15 @@ local function rowTooltip(frame, item)
     GameTooltip:AddLine(item.melee and "(you are in melee range)." or
       "(you are out of melee range).", DIM[1], DIM[2], DIM[3])
     GameTooltip:AddDoubleLine("Threat needed", W.Comma(item.threat), LABEL[1], LABEL[2], LABEL[3], 1, 1, 1)
+    GameTooltip:Show()
+    return
+  end
+
+  if item.loose then
+    GameTooltip:AddLine(item.loose.name, 1, 1, 1)
+    GameTooltip:AddLine("Loose: attacking " .. item.loose.who .. ".", 0.95, 0.2, 0.2)
+    GameTooltip:AddLine("Seen through its nameplate, so it needs", DIM[1], DIM[2], DIM[3])
+    GameTooltip:AddLine("nameplates on and SuperWoW.", DIM[1], DIM[2], DIM[3])
     GameTooltip:Show()
     return
   end
@@ -164,6 +184,15 @@ function TW.Paint(row, item, index)
     local value = s.showThreat and W.Short(item.threat) or ""
     row:SetData(nil, "|cffd44f53-- pull aggro --|r", value,
       T.PctText(item.shown), item._frac, PULL_COLOR, 40)
+    return
+  end
+
+  if item.loose then
+    local l = item.loose
+    local cc = W.ClassColor(W.capture.rosterClass[l.who])
+    local who = string.format("|cff%02x%02x%02x%s|r", math.floor(cc[1] * 255),
+      math.floor(cc[2] * 255), math.floor(cc[3] * 255), l.who)
+    row:SetData(nil, l.name, who, "LOOSE", 1, T.RED, 40)
     return
   end
 
