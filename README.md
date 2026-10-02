@@ -101,6 +101,22 @@ menu (right-click the title). That choice is remembered — it stays hidden
 next login until you bring it back with `/wrek` or the minimap button, which
 the addon tells you when you close it.
 
+### Looks
+
+Wrekkit dresses itself to match the rest of your UI, built from the same
+art the game and its UI addons use -- not boxes of its own:
+
+| Look | |
+| --- | --- |
+| **Blizzard** | the stock UI's own pieces: tooltip borders on the meter, threat window, mob frames and taunt bar; the parchment dialog border and header plate on Settings and the Report; dropdown menus with the gold highlight bar and check mark; the red panel buttons; the stock checkboxes; the red X close button; the chat window's size grabber; the target frame's status-bar texture; gold titles; the action bar's cooldown sweep on the taunt button |
+| **pfUI** | pfUI / ShaguPlates: dark backdrops, one-pixel borders, flat bars. With pfUI loaded it calls pfUI's *own* backdrop function and uses pfUI's bar texture and font, so Wrekkit follows your pfUI settings exactly |
+| **modern** | Wrekkit's own flat dark panels |
+
+**auto** (default) picks pfUI when pfUI or ShaguPlates is loaded, Blizzard
+otherwise. Change it under Settings -> Meter -> *Look*; it asks to reload,
+because a look is how a frame is built, not a coat painted over it.
+Nameplate threat text uses the same face as the plates it sits on.
+
 ### Live meter
 
 Deliberately spare, so it can sit on screen during a pull.
@@ -179,9 +195,79 @@ your target, and:
 - shows the runner-up's distance on the target frame and on every held
   mob's nameplate, instead of your own number
 
+**Mobs you are not targeting.** On a pull of two, five or seven mobs, the
+one that matters is rarely the one you have targeted, so all of them are
+watched:
+
+- **Held but slipping**: the server reports every mob you hold. Each one's
+  nameplate shows how close its runner-up is, and **blinks** once that
+  reaches your flash limit. The target frame shows a one-line count under
+  the %: `5 held  2 slipping  1 loose`.
+- **Already loose**: a mob that has gone to a healer is not one you hold,
+  so the server cannot list it. Wrekkit reads every mob's *own* target from
+  its nameplate (SuperWoW lets a mob's GUID stand for the mob), and a mob
+  that stays on a group member other than you for a second is **LOOSE**:
+  `LOOSE` blinking on its plate, a *Loose* section in the window naming who
+  it is on, an alert -- **"LOOSE: Whelp on Mendy"** -- and the flash. The
+  one-second wait is so a mob throwing one fireball at a priest is not
+  called loose. Name your co-tanks under *Co-tanks* and their mobs are left
+  alone.
+
+This needs nameplates switched on (the `V` key) and SuperWoW; without
+SuperWoW the held-mob list and its alerts still work, loose detection does
+not.
+
+**Taunting it back.** When a mob you were tanking turns away, or one goes
+loose, a small **Taunt** bar pops up with a button per mob (newest first, up
+to three): your taunt's icon, the mob, who it is on, and the cooldown
+counting down on the icon. **Click to taunt it**; right-click to dismiss.
+With SuperWoW the taunt goes straight at that mob and your target stays
+where it was (*Taunt without retargeting*); without it, the mob is targeted
+first. If Taunt is on cooldown it uses Mocking Blow; Growl for druids. A
+server with its own taunt: type its name under *Taunt spell*. A mob that
+comes back to you, dies, or is ten seconds old leaves the bar by itself.
+
+The same action is on a key -- *Key Bindings -> Wrekkit -> Taunt the mob
+that got away* -- and on `/wrek taunt`, so a macro or an action-bar button
+works too. Drag the bar by its title to move it, or place it alongside the
+target-frame % with `/wrek threat move`; where you leave it is saved.
+
+**Mob frames.** One small frame per mob in the fight, stacked: its name,
+its health, and **who it is hitting** -- `you` in blue, anyone else by name
+in their class colour. Five mobs on you and a patrol walks into the healer:
+that row turns red and blinks, with the healer's name on it. Mobs held but
+with someone closing in show the runner-up's % on the right and blink at
+your flash limit. **Click** a frame to target that mob, **right-click** to
+taunt it.
+
+**Collapsed**, the mobs that are fine share one line and only trouble gets
+a row. Tanking ten mobs, the stack is a single blue line -- `All 10 on you`
+-- until one breaks off or someone closes in on one; then that mob, and only
+that mob, appears under it, red and blinking:
+
+```
+Mobs  10 (collapsed)
+8 on you  1 elsewhere
+Onyxian Warder   [██████████]    Mendy      !
+```
+
+*Collapse* is **when many** by default (above *Collapse above*, 4 mobs),
+or **always**, or **never**. Click the title or the summary line to flip it
+for the rest of the fight. More trouble than rows fit shows as `+N` on the
+summary line.
+
+Rows keep the order mobs joined the fight and never reshuffle, so a row is
+where your eye left it; trouble is shown by colour. Mobs come from the
+nameplates *and* from every enemy the combat log has seen this pull, so one
+with no plate in view is still listed while the client knows it. Settings
+(Frames & plates -> Mob frames): on/off, *when tanking* (default) or
+*always*, from how many mobs (2), at most how many rows (8). Drag the title
+to move the stack, or place it with `/wrek threat move`. Needs SuperWoW.
+
 Not tanking, you get the opposite: warnings as *you* approach the line, and
-**"AGGRO! <mob> is on you"** if one turns on you, with `AGGRO` on the
-target frame.
+**"AGGRO! <mob> is on you"** if one turns on you -- targeted or not, the
+plates catch the rest -- with `AGGRO` on the target frame or on that mob's
+plate.
 
 Warnings fire once on the way *up* past a line and re-arm only after
 dropping 5 points below it, so a number hovering on a line cannot repeat
@@ -248,7 +334,8 @@ has four tabs, each about one thing:
 | Meter | compact mode, text size, row height, opacity, in-combat fade, toolbar, lock |
 | Recording | what is recorded, per-second basis, log range, history, the crash journal, freeing memory |
 | Sharing | sharing your logs, the channel, live raid sync |
-| Threat | everything above under *Threat meter* |
+| Threat | the threat meter, warnings, flashing, tanking |
+| Frames & plates | the target-frame % and the nameplates |
 
 Saved settings are checked at every login and anything out of range -- an
 older build's value, a hand edit -- is put back inside what its control can
@@ -487,7 +574,8 @@ that series.
 /wrek threat <where>     window | docked | meter | off
 /wrek threat tank        cycle I'm-the-tank: auto, always, never
 /wrek threat test        15s of test data on every threat display
-/wrek threat move        drag the target-frame % where you want it
+/wrek threat move        place the target-frame %, taunt bar and mob frames
+/wrek taunt              taunt the mob that got away (macro / key)
 /wrek threat resetpos    put the target-frame % back above the frame
 /wrek threat config      threat settings
 /wrek mode threat        the meter shows live threat

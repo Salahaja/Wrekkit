@@ -29,6 +29,18 @@ local S = UI.settings
      text. Only the text inside them does. So the window never grew taller
      at a larger setting -- it grew tighter, and the labels ran into the
      values beside them. ]]
+if type(StaticPopupDialogs) == "table" then
+  StaticPopupDialogs["WREKKIT_RELOAD_SKIN"] = {
+    text = "Wrekkit's new look applies after reloading the UI.\nReload now?",
+    button1 = "Reload",
+    button2 = "Later",
+    OnAccept = function() if ReloadUI then ReloadUI() end end,
+    timeout = 30,
+    whileDead = 1,
+    hideOnEscape = 1,
+  }
+end
+
 local COLS = 2
 local COL_GAP = 18
 
@@ -169,6 +181,7 @@ function S:Create()
     minW = windowWidth(), minH = 200,
     -- Above both windows: it is opened from them and must not hide behind.
     strata = "DIALOG",
+    skin = "dialog",
   })
   self.frame = f
   UI.CloseOnEscape("WrekkitSettings")
@@ -199,7 +212,8 @@ function S:Create()
   local prev
   for _, t in ipairs(S.TABS) do
     local key = t[1]
-    local b = UI.Button(tabRow, t[2], 84, 20, function() S:SetTab(key) end)
+    local b = UI.Button(tabRow, t[2], (key == "plates") and 104 or 84, 20,
+      function() S:SetTab(key) end)
     if prev then b:SetPoint("LEFT", prev, "RIGHT", 4, 0)
     else b:SetPoint("LEFT", tabRow, "LEFT", 0, 0) end
     self.tabs[key] = b
@@ -217,6 +231,29 @@ function S:Create()
 
   ------------------------------------------------------------------
   heading(self, "Appearance")
+
+  choice(self, "Look",
+    {
+      { value = "auto", label = "auto" },
+      { value = "blizzard", label = "Blizzard" },
+      { value = "pfui", label = "pfUI" },
+      { value = "modern", label = "modern" },
+    },
+    function() return W.db.skin or "auto" end,
+    function(v)
+      W.db.skin = v
+      if UI.ResolveSkin() ~= UI.skin then
+        if StaticPopup_Show and StaticPopupDialogs then
+          StaticPopup_Show("WREKKIT_RELOAD_SKIN")
+        else
+          W.Print("the new look applies after /reload.")
+        end
+      end
+    end,
+    { "Blizzard: the game's own frames -- tooltip", "and dialog borders, panel buttons, stock",
+      "checkboxes, gold titles. pfUI: pfUI's dark", "one-pixel style, and its own textures and",
+      "font when pfUI is loaded. auto: pfUI with", "pfUI or ShaguPlates, else Blizzard.",
+      "Applies after a /reload." })
 
   check(self, "Compact meter",
     function() return meter:Settings().compact == true end,
@@ -720,7 +757,35 @@ function S:BuildThreat()
   check(self, "A mob turned away", get, set,
     { "LOST AGGRO, with the mob's name, and LOST", "on its nameplate for a few seconds." })
 
+  get, set = opt("watchMobs")
+  check(self, "Watch mobs I'm not targeting", get, set,
+    { "Reads every mob's own target from its", "nameplate: LOOSE on one hitting a group",
+      "member, AGGRO (not tanking) on one hitting", "you. Needs nameplates on and SuperWoW." })
+
+  get, set = opt("mobSummary")
+  check(self, "Mob count under the %", get, set,
+    { "\"4 held  1 slipping  1 loose\" under the", "target-frame %, with more than one mob." })
+
+  textField(self, "Co-tanks",
+    function() return ts().coTanks end,
+    function(v) ts().coTanks = v or "" end)
+
+  get, set = opt("tauntPopup")
+  check(self, "Taunt popup", get, set,
+    { "A button for each mob that got away: click", "to taunt it, right-click to dismiss. Also",
+      "on a key (Key Bindings -> Wrekkit) and", "/wrek taunt for a macro." })
+
+  get, set = opt("tauntKeepTarget")
+  check(self, "Taunt without retargeting", get, set,
+    { "With SuperWoW the taunt goes straight at", "the mob and your target stays put. Off, or",
+      "without SuperWoW, the mob is targeted first." })
+
+  textField(self, "Taunt spell",
+    function() return ts().tauntSpell end,
+    function(v) ts().tauntSpell = v or ""; T.tauntCache = nil end)
+
   ------------------------------------------------------------------
+  self.building = "plates"
   heading(self, "Target frame")
 
   get, set = opt("frame")
@@ -758,6 +823,7 @@ function S:BuildThreat()
 
   get, set = opt("plates")
   check(self, "Show on nameplates", get, set)
+
 
   get, set = pick("plateStyle")
   choice(self, "Nameplate addon",
@@ -799,6 +865,52 @@ function S:BuildThreat()
     0, 30, 1,
     function(v) return v .. "s" end)
 
+  ------------------------------------------------------------------
+  heading(self, "Mob frames")
+
+  get, set = opt("mobFrames")
+  check(self, "Mob frames", get, set,
+    { "A small frame per mob in the fight: its", "health, and who it is hitting. Click to",
+      "target, right-click to taunt. A mob loose", "on someone else blinks red. Needs SuperWoW." })
+
+  get, set = pick("mobFramesFor")
+  choice(self, "Show them",
+    {
+      { value = "tank", label = "when tanking" },
+      { value = "everyone", label = "always" },
+    }, get, set)
+
+  stepper(self, "From",
+    function() return ts().mobFramesMin end,
+    function(v) ts().mobFramesMin = v; redraw() end,
+    1, 10, 1,
+    function(v) return v .. (v == 1 and " mob" or " mobs") end)
+
+  get, set = pick("mobFramesCollapse")
+  choice(self, "Collapse",
+    {
+      { value = "auto", label = "when many" },
+      { value = "always", label = "always" },
+      { value = "never", label = "never" },
+    }, get, set,
+    { "Collapsed, mobs on you share one line --", "\"All 10 on you\" -- and only a mob that",
+      "breaks off, or that someone is close to", "pulling, gets a row of its own. Click the",
+      "title to flip it for this fight." })
+
+  stepper(self, "Collapse above",
+    function() return ts().mobFramesCollapseAt end,
+    function(v) ts().mobFramesCollapseAt = v; redraw() end,
+    1, 15, 1,
+    function(v) return v .. " mobs" end)
+
+  stepper(self, "At most",
+    function() return ts().mobFramesMax end,
+    function(v) ts().mobFramesMax = v; redraw() end,
+    2, 15, 1,
+    function(v) return v .. " rows" end)
+
+  -- The buttons belong with the threat meter, at the foot of its tab.
+  self.building = "threat"
   local row = CreateFrame("Frame", nil, self.body)
   row:SetHeight(22)
   place(self, row, false, true, 4)
@@ -836,6 +948,7 @@ S.TABS = {
   { "recording", "Recording" },
   { "sharing", "Sharing" },
   { "threat", "Threat" },
+  { "plates", "Frames & plates" },
 }
 
 function S:SetTab(tab)

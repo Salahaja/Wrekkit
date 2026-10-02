@@ -285,6 +285,7 @@ function R:Create()
     -- Above the live meter: they overlap constantly, and the meter is the
     -- one you want behind.
     strata = "HIGH",
+    skin = "dialog",
   })
   self.frame = f
   UI.BindGeometry(f, W.db.report)

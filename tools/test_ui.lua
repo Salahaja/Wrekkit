@@ -188,8 +188,9 @@ CreateFrame = function(kind, name, parent)
     GetFrameLevel = function() return 1 end,
     SetToplevel = function() end,
     SetBackdrop = function() end,
-    SetBackdropColor = function() end,
-    SetBackdropBorderColor = function() end,
+    -- Recorded: a skinned window shows its opacity through these.
+    SetBackdropColor = function(self, r, g, b, a) self._bdA = a end,
+    SetBackdropBorderColor = function(self, r, g, b, a) self._bdBorderA = a end,
     GetCenter = function() return 400, 300 end,
     GetEffectiveScale = function() return 1 end,
     SetScale = function() end,
@@ -197,6 +198,7 @@ CreateFrame = function(kind, name, parent)
     SetHitRectInsets = function() end,
     SetNormalTexture = function() end,
     SetHighlightTexture = function() end,
+    SetPushedTexture = function() end,
     GetParent = function(self) return self._parent end,
     SetParent = function() end,
     SetID = function() end,
@@ -374,11 +376,20 @@ dofile("ui/settings.lua")
 dofile("ui/peers.lua")
 dofile("ui/threat.lua")
 dofile("ui/threatframes.lua")
+dofile("ui/taunt.lua")
+dofile("ui/mobs.lua")
 dofile("minimap.lua")
 dofile("commands.lua")
 
 WrekkitDB = nil
 Wrekkit.InitDB()
+-- WREKKIT_SKIN=blizzard|pfui|modern runs every step under that skin.
+if (os.getenv("WREKKIT_SKIN") or "") ~= "" then
+  Wrekkit.db.skin = os.getenv("WREKKIT_SKIN")
+  CooldownFrame_SetTimer = function() end
+  Wrekkit.ui.ApplySkin()
+  print("  skin: " .. Wrekkit.ui.skin)
+end
 Wrekkit.capture:Start()
 
 ----------------------------------------------------------------------
@@ -932,12 +943,14 @@ step("every texture path resolves to a real file", function()
        check the source against the table. ]]
   local UIm = Wrekkit.ui.media
   for key, path in pairs(UIm) do
-    local file = string.gsub(path, "^.*\\", "")
-    local fh = io.open("textures/" .. file .. ".tga", "rb")
-    if not fh then
+    -- The game's own art (a skin's status bar) ships with the client.
+    if not string.find(path, "^Interface\\AddOns\\Wrekkit") then path = nil end
+    local file = path and string.gsub(path, "^.*\\", "")
+    local fh = file and io.open("textures/" .. file .. ".tga", "rb")
+    if file and not fh then
       error("UI.media." .. key .. " -> textures/" .. file .. ".tga does not exist")
     end
-    fh:close()
+    if fh then fh:close() end
   end
 
   -- Every UI.media.<key> mentioned in the source must exist in the table.
@@ -2120,6 +2133,14 @@ step("every scope renders without erroring", function()
   pickScope("all")
 end)
 
+
+--- The opacity a window is drawn at: its flat panel's alpha, or under a
+--- skin, its backdrop border's (the backdrop carries opacity there).
+local function drawnAlpha(f)
+  if f._skinned then return f._bdBorderA or 1 end
+  return f.bg._a or 1
+end
+
 --[[ Opacity fades the CHROME only.
 
      frame:SetAlpha would have been one line, and wrong: it fades everything
@@ -2138,13 +2159,20 @@ step("window opacity fades the panel, bar and border", function()
     return tex._a
   end
 
+  if win._skinned then
+    if math.abs(drawnAlpha(win) - 0.4) > 0.001 then
+      error("skinned backdrop alpha is " .. tostring(drawnAlpha(win)))
+    end
+  else
   if math.abs(alphaOf(win.bg, "panel") - 0.4) > 0.001 then
     error("panel alpha is " .. tostring(win.bg._a))
   end
   if math.abs(alphaOf(win.barBg, "title bar") - 0.4) > 0.001 then
     error("title bar alpha is " .. tostring(win.barBg._a))
   end
-  for _, e in ipairs(win.edges or {}) do
+  end
+  -- Skinned, the hairline edges are hidden; the backdrop is the border.
+  for _, e in ipairs((not win._skinned) and win.edges or {}) do
     if math.abs((e._a or 1) - 0.4) > 0.001 then
       error("a border edge is at " .. tostring(e._a))
     end
@@ -2185,9 +2213,9 @@ end)
 step("the meter applies its saved opacity on layout", function()
   UI.meter:Settings().opacity = 0.5
   UI.meter:ApplyLayout()
-  if math.abs((UI.meter.frame.bg._a or 1) - 0.5) > 0.001 then
+  if math.abs(drawnAlpha(UI.meter.frame) - 0.5) > 0.001 then
     error("ApplyLayout did not apply the setting: " ..
-      tostring(UI.meter.frame.bg._a))
+      tostring(drawnAlpha(UI.meter.frame)))
   end
   UI.meter:Settings().opacity = 1
   UI.meter:ApplyLayout()
@@ -2320,15 +2348,15 @@ end)
 step("each window's opacity reaches its frame", function()
   UI.report:Show()
   UI.SetReportOpacity(0.4)
-  if math.abs((UI.report.frame.bg._a or 1) - 0.4) > 0.001 then
-    error("report opacity not applied: " .. tostring(UI.report.frame.bg._a))
+  if math.abs(drawnAlpha(UI.report.frame) - 0.4) > 0.001 then
+    error("report opacity not applied: " .. tostring(drawnAlpha(UI.report.frame)))
   end
   UI.SetReportOpacity(1)
   if Wrekkit.db.reportOpacity ~= nil then error("full opacity should not be stored") end
 
   UI.threat:SetDisplay("window")
   UI.threat:SetOpacity(0.5)
-  if math.abs((UI.threat.frame.bg._a or 1) - 0.5) > 0.001 then
+  if math.abs(drawnAlpha(UI.threat.frame) - 0.5) > 0.001 then
     error("threat window opacity not applied")
   end
   UI.threat:SetDisplay("docked")
@@ -2336,7 +2364,7 @@ step("each window's opacity reaches its frame", function()
   if math.abs(UI.meter:Settings().opacity - 0.6) > 0.001 then
     error("docked, the threat window's opacity should set the meter's too")
   end
-  if math.abs((UI.threat.frame.bg._a or 1) - 0.6) > 0.001 then
+  if math.abs(drawnAlpha(UI.threat.frame) - 0.6) > 0.001 then
     error("docked threat window does not match the meter")
   end
   UI.threat:SetOpacity(1)

@@ -91,10 +91,13 @@ declare(WOW, [[
   GetItemInfo IsInGuild GetCursorPosition Minimap IsShiftKeyDown
   WorldFrame PlaySound UnitIsDead UnitCanAttack getglobal
   GetNumShapeshiftForms GetShapeshiftFormInfo
+  GetSpellName GetSpellTexture GetSpellCooldown CastSpell CastSpellByName
+  TargetUnit TargetByName
   this event arg1 arg2 arg3 arg4 arg5 arg6 arg7 arg8 arg9
 ]])
 
 declare(FRAMEXML, [[
+  CooldownFrame_SetTimer ReloadUI
   DEFAULT_CHAT_FRAME GameTooltip SlashCmdList StaticPopupDialogs
   StaticPopup_Show UISpecialFrames
   UNKNOWN MouseIsOver
@@ -338,6 +341,7 @@ local function makeFrame(kind, name, parent)
   m.SetHitRectInsets = function() end
   m.SetNormalTexture = function() end
   m.SetHighlightTexture = function() end
+  m.SetPushedTexture = function() end
   m.GetParent = function(self) return self._parent end
   m.SetParent = function() end
   m.SetID = function() end
@@ -624,6 +628,11 @@ end
 step("initialise", function()
   WrekkitDB = nil
   W.InitDB()
+  if (os.getenv("WREKKIT_SKIN") or "") ~= "" then
+    W.db.skin = os.getenv("WREKKIT_SKIN")
+    STUB.CooldownFrame_SetTimer = function() end
+    W.ui.ApplySkin()
+  end
   W.capture:Start()
   W.sync:Start()
 end)
@@ -1015,6 +1024,233 @@ step("threat meter", function()
   T:Settings().tankMode = "off"
   T.heldKey, T.fired = nil, {}
 
+  -- Mobs nobody targeted: one goes loose on the priest, seen by its plate.
+  T:Settings().tankMode = "on"
+  local whelpGuid = "0xF00000000000BEEF"
+  WORLD[whelpGuid] = { name = "Whelp", isPlayer = false, maxHealth = 5000, health = 5000 }
+  WORLD[whelpGuid .. "target"] = WORLD["0xB"]
+  W.capture.groupMembers["Elfpriest"] = true
+  local wplate = makeFrame("Button", nil, STUB.WorldFrame)
+  wplate._guid = whelpGuid
+  wplate._shown = true
+  local wborder = wplate:CreateTexture()
+  wborder:SetTexture("Interface\\Tooltips\\Nameplate-Border")
+  local wname = wplate:CreateFontString()
+  wname:SetText("Whelp")
+  wplate._regions = { wborder, wplate:CreateTexture(), wname }
+  wplate._kids = { makeFrame("StatusBar", nil, wplate) }
+  table.insert(STUB.WorldFrame._kids, wplate)
+  alerts = {}
+  T.Alert = function(self, text, level) table.insert(alerts, text) end
+  UI.threatFrames:UpdatePlates()
+  if T:CountWatch("loose") ~= 0 then error("a mob counted loose before it stayed loose") end
+  NOW = NOW + 1.2
+  UI.threatFrames:UpdatePlates()
+  if T:CountWatch("loose") ~= 1 then error("the Whelp on the priest is not counted loose") end
+  if wplate.wrekThreat.text:GetText() ~= "LOOSE" then error("its plate does not say LOOSE") end
+  if not string.find(table.concat(alerts, "|"), "LOOSE: Whelp on Elfpriest", 1, true) then
+    error("no LOOSE alert: " .. table.concat(alerts, " | "))
+  end
+  T.tankMobs[1] = { creature = "Drake", name = "Fuff", perc = 99, pull = 90, at = NOW }
+  T.tankMobs[2] = { creature = "Drake", name = "Fuff", perc = 40, pull = 36, at = NOW }
+  local summary = T:MobSummary()
+  if not (summary and string.find(summary, "2 held", 1, true) and string.find(summary, "1 loose", 1, true)) then
+    error("summary reads: " .. tostring(summary))
+  end
+  if not T:Alarm() then error("a loose mob should flash") end
+
+  -- The taunt popup: the loose Whelp is offered, clicking taunts it.
+  local book = {
+    { "Heroic Strike", "Interface\\Icons\\Ability_Rogue_Ambush" },
+    { "Taunt", "Interface\\Icons\\Spell_Nature_Reincarnation" },
+    { "Mocking Blow", "Interface\\Icons\\Ability_Warrior_PunishingBlow" },
+  }
+  local cooldown = {}
+  local casts = {}
+  STUB.GetSpellName = function(i) return book[i] and book[i][1] end
+  STUB.GetSpellTexture = function(i) return book[i] and book[i][2] end
+  STUB.GetSpellCooldown = function(i) local c = cooldown[i] return c and NOW or 0, c or 0, 1 end
+  STUB.CastSpellByName = function(name, unit) table.insert(casts, name .. "@" .. tostring(unit)) end
+  STUB.CastSpell = function(i) table.insert(casts, "book" .. i) end
+  STUB.TargetUnit = function(u) table.insert(casts, "target:" .. tostring(u)) end
+  STUB.TargetByName = function(n) table.insert(casts, "name:" .. tostring(n)) end
+  T.tauntCache = nil
+  local queue = T:Taunts()
+  if table.getn(queue) ~= 1 or queue[1].guid ~= whelpGuid then error("the loose Whelp was not offered to taunt") end
+  UI.taunt:Update()
+  if not UI.taunt.frame:IsShown() then error("the taunt popup did not appear") end
+  if UI.taunt.rows[1].label:GetText() ~= "Taunt Whelp" then error("popup reads " .. tostring(UI.taunt.rows[1].label:GetText())) end
+  arg1 = "LeftButton"
+  UI.taunt.rows[1]:GetScript("OnClick")()
+  if casts[1] ~= "Taunt@" .. whelpGuid then error("clicking did not taunt the Whelp by guid: " .. tostring(casts[1])) end
+  if table.getn(T:Taunts()) ~= 0 then error("a taunted mob stayed in the popup") end
+  UI.taunt:Update()
+  if UI.taunt.frame:IsShown() then error("the popup stayed up with nothing to taunt") end
+
+  -- Taunt on cooldown: Mocking Blow instead. Neither ready: told so.
+  cooldown[2] = 8
+  T:QueueTaunt(whelpGuid, "Whelp", "Elfpriest", "loose")
+  T:TauntNext()
+  if casts[2] ~= "Mocking Blow@" .. whelpGuid then error("no fallback to Mocking Blow: " .. tostring(casts[2])) end
+  cooldown[3] = 4
+  T:QueueTaunt(whelpGuid, "Whelp", "Elfpriest", "loose")
+  UI.taunt:Update()
+  if T:TauntNext() then error("taunted with everything on cooldown") end
+  cooldown = {}
+
+  -- Keeping the target off: the mob is targeted, then the spell cast.
+  T:Settings().tauntKeepTarget = false
+  casts = {}
+  Wrekkit_TauntBinding()
+  if casts[1] ~= "target:" .. whelpGuid or casts[2] ~= "book2" then
+    error("retarget path: " .. table.concat(casts, ", "))
+  end
+  T:Settings().tauntKeepTarget = true
+
+  -- Right-click dismisses; the slash command with nothing queued says so.
+  T:QueueTaunt(whelpGuid, "Whelp", "Elfpriest", "loose")
+  UI.taunt:Update()
+  arg1 = "RightButton"
+  UI.taunt.rows[1]:GetScript("OnClick")()
+  if table.getn(T:Taunts()) ~= 0 then error("right-click did not dismiss") end
+  SlashCmdList["WREKKIT"]("taunt")
+
+  -- A mob lost from tank mode's list is offered by its full guid.
+  T.guidByLow[0xBEEF] = whelpGuid
+  T:LostAggro(0xBEEF, "Whelp", nil, NOW)
+  if not T:Taunts()[1] or T:Taunts()[1].guid ~= whelpGuid then error("a lost mob was not offered with its guid") end
+  UI.taunt:Update()
+  UI.taunt:SavePosition()
+  if T:Settings().tauntX == nil then error("the popup's place was not saved") end
+  UI.taunt:RestorePosition()
+  T.taunts, T.lost = {}, {}
+  UI.threat:Refresh()
+  local looseRows = 0
+  for _, it in ipairs(UI.threat.list.data) do if it.loose then looseRows = looseRows + 1 end end
+  if looseRows ~= 1 then error("the window does not list the loose mob") end
+  UI.threatFrames:UpdateIndicator()
+
+  -- Mob frames: two drakes on you, the Whelp loose on the priest.
+  local drakes = { "0xF00000000000D001", "0xF00000000000D002" }
+  local realIsUnitMF = STUB.UnitIsUnit
+  STUB.UnitIsUnit = function(a, b)
+    return b == "player" and (a == drakes[1] .. "target" or a == drakes[2] .. "target")
+  end
+  for i, g in ipairs(drakes) do
+    WORLD[g] = { name = "Drake " .. i, isPlayer = false, maxHealth = 8000, health = 4000 * i }
+    WORLD[g .. "target"] = { name = "Auditor", isPlayer = true, class = "WARRIOR" }
+    local dp = makeFrame("Button", nil, STUB.WorldFrame)
+    dp._guid = g
+    dp._shown = true
+    local db = dp:CreateTexture()
+    db:SetTexture("Interface\\Tooltips\\Nameplate-Border")
+    dp._regions = { db }
+    dp._kids = { makeFrame("StatusBar", nil, dp) }
+    table.insert(STUB.WorldFrame._kids, dp)
+  end
+  UI.threatFrames:UpdatePlates()
+  UI.mobs.lastUpdate = nil
+  UI.mobs:Update()
+  if not UI.mobs.frame or not UI.mobs.frame:IsShown() then error("mob frames did not appear for 3 mobs") end
+  local onPriest, onMe = 0, 0
+  for _, row in ipairs(UI.mobs.rows) do
+    if row:IsShown() and row.mob then
+      local who = row.who:GetText() or ""
+      if string.find(who, "Elfpriest", 1, true) then
+        onPriest = onPriest + 1
+        if not row.trouble then error("the loose Whelp's row is not highlighted") end
+      elseif string.find(who, "you", 1, true) then
+        onMe = onMe + 1
+      end
+    end
+  end
+  if onPriest ~= 1 or onMe ~= 2 then
+    error("mob frames show " .. onMe .. " on you and " .. onPriest .. " on the priest")
+  end
+  -- Collapsed: one line for the two on you, a row only for the Whelp.
+  local function shownRows()
+    local n = 0
+    for _, r in ipairs(UI.mobs.rows) do if r:IsShown() then n = n + 1 end end
+    return n
+  end
+  T:Settings().mobFramesCollapse = "always"
+  UI.mobs.lastUpdate = nil
+  UI.mobs:Update()
+  if not UI.mobs.rows[1].summary then error("collapsed, the first row should be the summary") end
+  if not string.find(UI.mobs.rows[1].name:GetText(), "2 on you", 1, true)
+     or not string.find(UI.mobs.rows[1].name:GetText(), "1 elsewhere", 1, true) then
+    error("summary reads " .. tostring(UI.mobs.rows[1].name:GetText()))
+  end
+  if shownRows() ~= 2 or not UI.mobs.rows[2].trouble then
+    error("collapsed should show the summary and the loose Whelp only, shows " .. shownRows())
+  end
+  -- Clicking the summary expands for this fight; again collapses.
+  arg1 = "LeftButton"
+  UI.mobs.rows[1]:GetScript("OnClick")()
+  -- Four: the boss from earlier is in the fight too, on nobody.
+  if shownRows() ~= 4 then error("expanding should show all 4, shows " .. shownRows()) end
+  UI.mobs:ToggleCollapse()
+  -- The Whelp comes back: everything fits on the one line.
+  WORLD[whelpGuid .. "target"] = { name = "Auditor", isPlayer = true, class = "WARRIOR" }
+  local realIsUnitC = STUB.UnitIsUnit
+  STUB.UnitIsUnit = function(a, b)
+    return b == "player" and (a == drakes[1] .. "target" or a == drakes[2] .. "target"
+      or a == whelpGuid .. "target")
+  end
+  T.watch = {}
+  NOW = NOW + 0.3
+  UI.mobs.lastUpdate = nil
+  UI.mobs:Update()
+  local line = UI.mobs.rows[1].name:GetText()
+  if shownRows() ~= 1 or not string.find(line, "3 on you", 1, true)
+     or not string.find(line, "1 elsewhere", 1, true) then
+    error("with nothing in trouble it should be the one line: " ..
+      tostring(UI.mobs.rows[1].name:GetText()) .. " / " .. shownRows())
+  end
+  STUB.UnitIsUnit = realIsUnitC
+  WORLD[whelpGuid .. "target"] = WORLD["0xB"]
+  T:Settings().mobFramesCollapse = "never"
+  UI.mobs.lastUpdate = nil
+  UI.mobs:Update()
+
+  local casts = {}
+  STUB.TargetUnit = function(u) table.insert(casts, "target:" .. u) end
+  arg1 = "LeftButton"
+  UI.mobs.rows[1]:GetScript("OnClick")()
+  if not casts[1] then error("clicking a mob frame did not target it") end
+  arg1 = "RightButton"
+  UI.mobs.rows[1]:GetScript("OnClick")()
+  T:Settings().mobFramesFor = "tank"
+  T:Settings().tankMode = "off"
+  UI.mobs.lastUpdate = nil
+  UI.mobs:Update()
+  if UI.mobs.frame:IsShown() then error("mob frames shown to a non-tank set to tank-only") end
+  T:Settings().tankMode = "on"
+  UI.mobs:SavePosition()
+  UI.mobs:RestorePosition()
+  UI.mobs:Reset()
+  STUB.UnitIsUnit = realIsUnitMF
+  for _, g in ipairs(drakes) do WORLD[g] = nil WORLD[g .. "target"] = nil end
+
+  -- Not tanking, a mob nobody targeted turns on you.
+  T:Settings().tankMode = "off"
+  T.watch, T.tankMobs = {}, {}
+  local realIsUnit = STUB.UnitIsUnit
+  STUB.UnitIsUnit = function(a, b) return a == whelpGuid .. "target" and b == "player" end
+  alerts = {}
+  UI.threatFrames:UpdatePlates()
+  NOW = NOW + 1.2
+  UI.threatFrames:UpdatePlates()
+  if wplate.wrekThreat.text:GetText() ~= "AGGRO" then error("a mob on you should say AGGRO") end
+  if not string.find(table.concat(alerts, "|"), "AGGRO! Whelp is on you", 1, true) then
+    error("no AGGRO alert: " .. table.concat(alerts, " | "))
+  end
+  STUB.UnitIsUnit = realIsUnit
+  WORLD[whelpGuid .. "target"] = nil
+  T.Alert = realAlert
+  T.watch = {}
+  wplate._shown = false
+
   -- The target-frame %: every style, dragged, saved, reset.
   local TFm = UI.threatFrames
   T:OnMessage("TWTv4=Fuff:1:3400:100:1;Auditor:0:3000:88:1;")
@@ -1037,6 +1273,32 @@ step("threat meter", function()
   STUB.GetNumPartyMembers, STUB.UnitExists, STUB.UnitName = realParty, realExists, realName
   STUB.SendAddonMessage = realSend
   WORLD["target"] = nil
+end)
+
+step("skins: pfUI's own backdrop is used when pfUI is loaded", function()
+  local UI = W.ui
+  local was = UI.skin
+  local called = 0
+  STUB.pfUI = { api = { CreateBackdrop = function(f) called = called + 1 f.backdrop = makeFrame("Frame") end },
+                media = { ["img:bar"] = "Interface\\AddOns\\pfUI\\img\\bar" } }
+  W.db.skin = "auto"
+  if UI.ResolveSkin() ~= "pfui" then error("auto did not pick pfui with pfUI loaded") end
+  UI.skin = "pfui"
+  local f = makeFrame("Frame")
+  UI.Backdrop(f, "window")
+  if called ~= 1 then error("pfUI.api.CreateBackdrop was not used") end
+  UI.BackdropAlpha(f, 0.5)
+  for _, kind in ipairs({ "blizzard", "pfui" }) do
+    UI.skin = kind
+    STUB.pfUI = nil
+    local g = makeFrame("Frame")
+    for _, k in ipairs({ "window", "dialog", "small" }) do UI.Backdrop(g, k) UI.BackdropAlpha(g, 0.6) end
+    UI.SkinBlizzardButton(UI.Button(UIParent, "x", 40, 20))
+    UI.SkinPfuiButton(UI.Button(UIParent, "x", 40, 20))
+  end
+  STUB.pfUI = nil
+  W.db.skin = "auto"
+  UI.skin = was
 end)
 
 step("the other combat events", function()
