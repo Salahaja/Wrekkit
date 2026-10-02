@@ -1168,7 +1168,47 @@ step("threat meter", function()
   if onPriest ~= 1 or onMe ~= 2 then
     error("mob frames show " .. onMe .. " on you and " .. onPriest .. " on the priest")
   end
+  -- Your target is marked, and every row with a reading shows its %.
+  local realExistsMF = STUB.UnitExists
+  STUB.UnitExists = function(u)
+    if u == "target" then return 1, drakes[1] end
+    return realExistsMF(u)
+  end
+  T.tankMobs[0xD002] = { creature = "Drake 2", name = "Fuff", perc = 88, pull = 80, at = NOW }
+  UI.mobs.lastUpdate = nil
+  UI.mobs:Update()
+  local marked, drake2pct = 0, nil
+  for _, row in ipairs(UI.mobs.rows) do
+    if row:IsShown() and row.mob then
+      if row.selected then
+        marked = marked + 1
+        if row.mob.guid ~= drakes[1] then error("the wrong row is marked as the target") end
+      end
+      if row.mob.guid == drakes[2] then drake2pct = row.pct:GetText() end
+    end
+  end
+  if marked ~= 1 then error(marked .. " rows marked as the target, not 1") end
+  if drake2pct ~= "80%" then error("a held mob's row shows " .. tostring(drake2pct) .. ", not 80%") end
+  -- Collapsed, the target keeps its row even when nothing is wrong with it.
+  T:Settings().mobFramesCollapse = "always"
+  UI.mobs.lastUpdate = nil
+  UI.mobs:Update()
+  local targetRow = false
+  for _, row in ipairs(UI.mobs.rows) do
+    if row:IsShown() and row.mob and row.mob.guid == drakes[1] then targetRow = true end
+  end
+  if not targetRow then error("collapsed, the targeted mob lost its row") end
+  T:Settings().mobFramesCollapse = "auto"
+  STUB.UnitExists = realExistsMF
+  T.tankMobs[0xD002] = nil
+
   -- Collapsed: one line for the two on you, a row only for the Whelp.
+  -- Nothing targeted here: a target would keep a row of its own.
+  local realExistsC = STUB.UnitExists
+  STUB.UnitExists = function(u)
+    if u == "target" then return nil end
+    return realExistsC(u)
+  end
   local function shownRows()
     local n = 0
     for _, r in ipairs(UI.mobs.rows) do if r:IsShown() then n = n + 1 end end
@@ -1211,6 +1251,7 @@ step("threat meter", function()
   STUB.UnitIsUnit = realIsUnitC
   WORLD[whelpGuid .. "target"] = WORLD["0xB"]
   T:Settings().mobFramesCollapse = "never"
+  STUB.UnitExists = realExistsC
   UI.mobs.lastUpdate = nil
   UI.mobs:Update()
 
