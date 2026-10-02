@@ -251,10 +251,23 @@ Mobs  10 (collapsed)
 Onyxian Warder   [██████████]    Mendy      !
 ```
 
+A mob also comes back out of the summary line -- steady, not blinking --
+as soon as anyone has **80% of your threat** on it (*Show a mob from*,
+Frames & plates -> Mob frames), so you see it coming before it is trouble.
+Tanking, the % column on a held mob is that share of your threat; it turns
+orange and then red as it nears pulling, and blinks at your warning line.
+
 *Collapse* is **when many** by default (above *Collapse above*, 4 mobs),
 or **always**, or **never**. Click the title or the summary line to flip it
 for the rest of the fight. More trouble than rows fit shows as `+N` on the
 summary line.
+
+The mob you have **targeted** is marked with a gold outline and a gold edge
+on the left, and keeps its row even when the stack is collapsed. The right
+column is the **threat %** for every mob that has one: your own on your
+target (the runner-up's when you are tanking), the runner-up's on every
+other mob you hold, and your last reading on a mob you tabbed off -- dimmed,
+because it is no longer live. A `!` means the mob is loose or on you.
 
 Rows keep the order mobs joined the fight and never reshuffle, so a row is
 where your eye left it; trouble is shown by colour. Mobs come from the

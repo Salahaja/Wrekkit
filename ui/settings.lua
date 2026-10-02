@@ -903,6 +903,12 @@ function S:BuildThreat()
     1, 15, 1,
     function(v) return v .. " mobs" end)
 
+  stepper(self, "Show a mob from",
+    function() return ts().mobFramesExpandAt end,
+    function(v) ts().mobFramesExpandAt = v; redraw() end,
+    30, 130, 5,
+    function(v) return v .. "% of mine" end)
+
   stepper(self, "At most",
     function() return ts().mobFramesMax end,
     function(v) ts().mobFramesMax = v; redraw() end,

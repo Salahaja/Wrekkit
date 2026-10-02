@@ -92,6 +92,7 @@ declare(WOW, [[
   WorldFrame PlaySound UnitIsDead UnitCanAttack getglobal
   GetNumShapeshiftForms GetShapeshiftFormInfo
   GetSpellName GetSpellTexture GetSpellCooldown CastSpell CastSpellByName
+  GetPlayerBuff GetPlayerBuffTexture
   TargetUnit TargetByName
   this event arg1 arg2 arg3 arg4 arg5 arg6 arg7 arg8 arg9
 ]])
@@ -1167,7 +1168,70 @@ step("threat meter", function()
   if onPriest ~= 1 or onMe ~= 2 then
     error("mob frames show " .. onMe .. " on you and " .. onPriest .. " on the priest")
   end
+  -- Your target is marked, and every row with a reading shows its %.
+  local realExistsMF = STUB.UnitExists
+  STUB.UnitExists = function(u)
+    if u == "target" then return 1, drakes[1] end
+    return realExistsMF(u)
+  end
+  NOW = NOW + 0.3
+  T.tankMobs[0xD002] = { creature = "Drake 2", name = "Fuff", perc = 88, pull = 80, at = NOW }
+  UI.mobs.lastUpdate = nil
+  UI.mobs:Update()
+  local marked, drake2pct = 0, nil
+  for _, row in ipairs(UI.mobs.rows) do
+    if row:IsShown() and row.mob then
+      if row.selected then
+        marked = marked + 1
+        if row.mob.guid ~= drakes[1] then error("the wrong row is marked as the target") end
+      end
+      if row.mob.guid == drakes[2] then drake2pct = row.pct:GetText() end
+    end
+  end
+  if marked ~= 1 then error(marked .. " rows marked as the target, not 1") end
+  if drake2pct ~= "88%" then error("a held mob's row shows " .. tostring(drake2pct) .. ", not its 88% share") end
+  -- Collapsed, the target keeps its row even when nothing is wrong with it.
+  T:Settings().mobFramesCollapse = "always"
+  UI.mobs.lastUpdate = nil
+  UI.mobs:Update()
+  local targetRow = false
+  for _, row in ipairs(UI.mobs.rows) do
+    if row:IsShown() and row.mob and row.mob.guid == drakes[1] then targetRow = true end
+  end
+  if not targetRow then error("collapsed, the targeted mob lost its row") end
+  -- Collapsed, a held mob with someone at 80% of your threat comes back out
+  -- -- without blinking, which is for real trouble -- and goes back below it.
+  local function drake2Row()
+    for _, row in ipairs(UI.mobs.rows) do
+      if row:IsShown() and row.mob and row.mob.guid == drakes[2] then return row end
+    end
+  end
+  local r2 = drake2Row()
+  if not r2 then error("a mob at 88% of your threat stayed collapsed") end
+  if r2.trouble then error("a mob at 88% share but 80% to pull should not blink") end
+  NOW = NOW + 0.3
+  T.tankMobs[0xD002] = { creature = "Drake 2", name = "Fuff", perc = 70, pull = 64, at = NOW }
+  UI.mobs.lastUpdate = nil
+  UI.mobs:Update()
+  if drake2Row() then error("a mob at 70% of your threat came out of the summary") end
+  T:Settings().mobFramesExpandAt = 65
+  NOW = NOW + 0.3
+  T.tankMobs[0xD002].at = NOW
+  UI.mobs.lastUpdate = nil
+  UI.mobs:Update()
+  if not drake2Row() then error("with the line at 65%, 70% should show") end
+  T:Settings().mobFramesExpandAt = 80
+  T:Settings().mobFramesCollapse = "auto"
+  STUB.UnitExists = realExistsMF
+  T.tankMobs[0xD002] = nil
+
   -- Collapsed: one line for the two on you, a row only for the Whelp.
+  -- Nothing targeted here: a target would keep a row of its own.
+  local realExistsC = STUB.UnitExists
+  STUB.UnitExists = function(u)
+    if u == "target" then return nil end
+    return realExistsC(u)
+  end
   local function shownRows()
     local n = 0
     for _, r in ipairs(UI.mobs.rows) do if r:IsShown() then n = n + 1 end end
@@ -1210,6 +1274,7 @@ step("threat meter", function()
   STUB.UnitIsUnit = realIsUnitC
   WORLD[whelpGuid .. "target"] = WORLD["0xB"]
   T:Settings().mobFramesCollapse = "never"
+  STUB.UnitExists = realExistsC
   UI.mobs.lastUpdate = nil
   UI.mobs:Update()
 
@@ -1273,6 +1338,28 @@ step("threat meter", function()
   STUB.GetNumPartyMembers, STUB.UnitExists, STUB.UnitName = realParty, realExists, realName
   STUB.SendAddonMessage = realSend
   WORLD["target"] = nil
+end)
+
+step("tank detection: Righteous Fury, every way a client may report it", function()
+  local T = W.threat
+  local realClass, realBuff = STUB.UnitClass, STUB.UnitBuff
+  STUB.UnitClass = function(u) return "Paladin", "PALADIN" end
+  local function with(buffs)
+    STUB.UnitBuff = function(u, i) local b = buffs[i] if b then return b[1], 1, b[2] end end
+    T.roleAt = nil
+    return T:DetectTank()
+  end
+  T:Settings().tankMode = "auto"
+  if with({ { "Interface\\Icons\\Spell_Holy_SealOfFury" } }) ~= true then error("stock icon path not seen") end
+  if with({ { "interface\\icons\\spell_holy_sealoffury" } }) ~= true then error("lower-case icon path not seen") end
+  if with({ { "Interface\\Icons\\Something_Else", 25780 } }) ~= true then error("spell id not seen") end
+  if with({ { "Interface\\Icons\\Spell_Holy_Devotionaura" } }) ~= false then error("an aura counted as Fury") end
+  if with({}) ~= false then error("no buffs counted as Fury") end
+  with({ { "Interface\\Icons\\Spell_Holy_SealOfFury" } })
+  T:ExplainRole()
+  SlashCmdList["WREKKIT"]("threat role")
+  STUB.UnitClass, STUB.UnitBuff = realClass, realBuff
+  T.roleAt = nil
 end)
 
 step("skins: pfUI's own backdrop is used when pfUI is loaded", function()

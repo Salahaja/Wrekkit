@@ -86,7 +86,17 @@ local function consider(guid, now)
   -- What tank mode and the watcher already know about it.
   local low = T.LowGuid(guid)
   local held = low and T.tankMobs[low]
-  m.pull = (held and now - held.at <= 3) and held.pull or nil
+  local fresh = held and now - held.at <= 3
+  m.pull = fresh and held.pull or nil
+  -- The runner-up's threat as a share of yours: tank mode's figure, or,
+  -- on your own target while you hold it, the live table's.
+  m.share = fresh and held.perc or nil
+  local live = T:Live()
+  if live and live.guid == guid and live.me and live.me.tank then
+    local runner = T:Runner(live)
+    m.share = runner and runner.perc or 0
+    m.pull = runner and runner.pull or m.pull
+  end
   -- Through the same watcher as the plates, so a mob with no plate in
   -- view is still caught going loose, and alerted once.
   m.state = T:WatchMob(guid, m.name)
@@ -150,15 +160,43 @@ local function makeRow(parent, i)
   b.alarm = UI.Fill(b, { 0.95, 0.2, 0.2 }, 0, "ARTWORK")
   b.hl = UI.Fill(b, W.color.text, 0, "OVERLAY")
 
+  --[[ The mob you have targeted: a gold outline and a gold edge on the
+       left, the way the stock UI marks a selected entry. ]]
+  b.sel = {}
+  for k = 1, 4 do
+    local t = b:CreateTexture(nil, "OVERLAY")
+    t:SetTexture(UI.media.white)
+    t:SetVertexColor(W.color.accent[1], W.color.accent[2], W.color.accent[3], 0.9)
+    b.sel[k] = t
+  end
+  b.sel[1]:SetPoint("TOPLEFT", b, "TOPLEFT", 0, 0)
+  b.sel[1]:SetPoint("TOPRIGHT", b, "TOPRIGHT", 0, 0)
+  b.sel[1]:SetHeight(1)
+  b.sel[2]:SetPoint("BOTTOMLEFT", b, "BOTTOMLEFT", 0, 0)
+  b.sel[2]:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", 0, 0)
+  b.sel[2]:SetHeight(1)
+  b.sel[3]:SetPoint("TOPLEFT", b, "TOPLEFT", 0, 0)
+  b.sel[3]:SetPoint("BOTTOMLEFT", b, "BOTTOMLEFT", 0, 0)
+  b.sel[3]:SetWidth(3)
+  b.sel[4]:SetPoint("TOPRIGHT", b, "TOPRIGHT", 0, 0)
+  b.sel[4]:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", 0, 0)
+  b.sel[4]:SetWidth(1)
+  b.SetSelected = function(self, on)
+    self.selected = on
+    for _, t in ipairs(self.sel) do
+      if on then t:Show() else t:Hide() end
+    end
+  end
+
   b.name = UI.Text(b, 10, W.color.text)
-  b.name:SetPoint("LEFT", b, "LEFT", 4, 0)
-  b.name:SetWidth(108)
+  b.name:SetPoint("LEFT", b, "LEFT", 6, 0)
+  b.name:SetWidth(104)
   b.who = UI.Text(b, 10, W.color.text, "RIGHT")
-  b.who:SetPoint("RIGHT", b, "RIGHT", -34, 0)
-  b.who:SetWidth(70)
+  b.who:SetPoint("RIGHT", b, "RIGHT", -38, 0)
+  b.who:SetWidth(66)
   b.pct = UI.Text(b, 10, W.color.textDim, "RIGHT", UI.fontNum)
-  b.pct:SetPoint("RIGHT", b, "RIGHT", -3, 0)
-  b.pct:SetWidth(30)
+  b.pct:SetPoint("RIGHT", b, "RIGHT", -4, 0)
+  b.pct:SetWidth(34)
 
   b:SetScript("OnEnter", function() b.hl:SetVertexColor(1, 1, 1, 0.06) end)
   b:SetScript("OnLeave", function() b.hl:SetVertexColor(1, 1, 1, 0) end)
@@ -247,8 +285,9 @@ function MF:Wanted(count)
 end
 
 local SAMPLE = {
-  { name = "Onyxian Whelp", hp = 80, max = 100, who = nil, onMe = true, pull = 40, sample = true },
-  { name = "Onyxian Whelp", hp = 55, max = 100, who = nil, onMe = true, pull = 88, sample = true },
+  { name = "Onyxian Whelp", hp = 80, max = 100, who = nil, onMe = true, pull = 40, sample = true,
+    selected = true },
+  { name = "Onyxian Whelp", hp = 55, max = 100, who = nil, onMe = true, pull = 88, share = 97, sample = true },
   { name = "Onyxian Warder", hp = 100, max = 100, who = "Mendy", whoClass = "PRIEST",
     onMe = false, state = "loose", sample = true },
 }
@@ -257,6 +296,7 @@ local SAMPLE = {
 
      Tanking, a mob is
        trouble   loose on someone, or held with someone at the warning line
+       watch     on you, but someone has mobFramesExpandAt% of your threat
        fine      on you
        elsewhere on a co-tank, a pet, or nobody
      Not tanking, a mob on YOU is the trouble and the rest are elsewhere. ]]
@@ -264,6 +304,9 @@ local function classify(m, tank, s)
   if tank then
     if m.state == "loose" then return "trouble" end
     if m.pull and m.pull >= s.tankWarnAt then return "trouble" end
+    -- Not in trouble yet, but someone has a good share of your threat on
+    -- it: it comes out of the summary line so you can see it coming.
+    if m.share and m.share >= s.mobFramesExpandAt then return "watch" end
     if m.onMe then return "fine" end
     return "elsewhere"
   end
@@ -283,8 +326,33 @@ function MF:Collapsed(count)
   return want
 end
 
-local function paintMob(b, m, tank, s, blink)
+--[[ The threat % for a mob's row: whatever the plates would show for it --
+     your own % on your target (or the runner-up's, tanking), the runner-up
+     on any other mob you hold, or your last reading on one you tabbed off,
+     dimmed. LOOSE / AGGRO / LOST already show as the row's colour and its
+     target, so the column keeps to numbers and a "!". ]]
+local function threatText(m, tank)
+  if m.sample then
+    if m.state == "loose" then return "!", T.RED, true end
+    return T.PctText(m.share or m.pull or 0), T:TankColor(m.pull or 0), true
+  end
+  -- Tanking, a held mob reads as the runner-up's share of YOUR threat --
+  -- the number the "show a mob from" line is set in -- coloured by how
+  -- close that is to pulling.
+  if tank and m.share and m.state ~= "loose" then
+    return T.PctText(m.share), T:TankColor(m.pull or m.share / 1.1), true
+  end
+  local pct, color, fresh, text = T:ForMob(m.guid, m.guid)
+  if not pct then return nil end
+  if text == "LOOSE" or text == "AGGRO" or text == "LOST" then
+    return "!", T.RED, true
+  end
+  return text, color, fresh
+end
+
+local function paintMob(b, m, tank, s, blink, targetGuid)
   b.mob, b.summary = m, nil
+  b:SetSelected(m.selected or (targetGuid ~= nil and m.guid == targetGuid))
   b.name:SetText(m.name or "?")
   b.hp:Show()
   local frac = (m.max and m.max > 0) and (m.hp / m.max) or 1
@@ -302,10 +370,10 @@ local function paintMob(b, m, tank, s, blink)
     b.who:SetText("|cff9d9d9d-|r")
   end
 
-  if m.pull then
-    local c = T:TankColor(m.pull)
-    b.pct:SetText(T.PctText(m.pull))
-    b.pct:SetTextColor(c[1], c[2], c[3], 1)
+  local text, c, fresh = threatText(m, tank)
+  if text then
+    b.pct:SetText(text)
+    b.pct:SetTextColor(c[1], c[2], c[3], fresh and 1 or 0.5)
   else
     b.pct:SetText(trouble and "|cfff23333!|r" or "")
   end
@@ -318,6 +386,7 @@ end
      you" in blue is the line a tank wants to read and then ignore. ]]
 local function paintSummary(b, fine, elsewhere, hidden, tank, total)
   b.mob, b.summary, b.trouble = nil, true, false
+  b:SetSelected(false)
   b.hp:Hide()
   b.alarm:SetVertexColor(0, 0, 0, 0)
   local text
@@ -365,11 +434,20 @@ function MF:Update()
   local collapsed = self:Collapsed(total)
   self.collapsed = collapsed
 
-  -- What gets a row: everything, or the summary line and the trouble.
+  -- Your target, so its row can be marked -- and kept when collapsed.
+  local targetGuid
+  if UnitExists then
+    local exists, g = UnitExists("target")
+    if exists and type(g) == "string" then targetGuid = g end
+  end
+
+  -- What gets a row: everything, or the summary line, the trouble and
+  -- the mob you have targeted.
   local show, fine, elsewhere = {}, 0, 0
   for _, m in ipairs(list) do
     local kind = classify(m, tank, s)
-    if not collapsed or kind == "trouble" then
+    local isTarget = m.selected or (targetGuid ~= nil and m.guid == targetGuid)
+    if not collapsed or kind == "trouble" or kind == "watch" or isTarget then
       table.insert(show, m)
     elseif kind == "fine" then
       fine = fine + 1
@@ -398,12 +476,12 @@ function MF:Update()
     paintSummary(row(1), fine, elsewhere, hidden, tank, total)
     for i = 1, math.min(table.getn(show), room) do
       rowsUsed = rowsUsed + 1
-      paintMob(row(rowsUsed), show[i], tank, s, blink)
+      paintMob(row(rowsUsed), show[i], tank, s, blink, targetGuid)
     end
   else
     for i = 1, math.min(table.getn(show), maxRows) do
       rowsUsed = i
-      paintMob(row(i), show[i], tank, s, blink)
+      paintMob(row(i), show[i], tank, s, blink, targetGuid)
     end
   end
 

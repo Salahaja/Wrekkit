@@ -1,0 +1,41 @@
+# Publish a release when a version tag (v1.2.3) is pushed.
+#
+# Builds Wrekkit-<version>.zip with the addon inside a folder named
+# "Wrekkit" -- the client only loads an addon whose folder matches its .toc,
+# which GitHub's own "Source code" archives do not -- and attaches it to a
+# release whose notes are .github/release-notes.md.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the tag matches the .toc
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          toc="$(sed -n 's/^## Version: *//p' Wrekkit.toc | tr -d '\r')"
+          echo "tag $tag, toc $toc"
+          test "$tag" = "$toc"
+          echo "VERSION=$toc" >> "$GITHUB_ENV"
+
+      - name: Build the addon zip
+        run: |
+          mkdir -p dist/Wrekkit
+          rsync -a --exclude '.git*' --exclude '.github' --exclude 'tools' --exclude 'dist' ./ dist/Wrekkit/
+          cd dist && zip -qr "Wrekkit-${VERSION}.zip" Wrekkit
+          unzip -l "Wrekkit-${VERSION}.zip" | tail -1
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: Wrekkit ${{ env.VERSION }}
+          body_path: .github/release-notes.md
+          files: dist/Wrekkit-${{ env.VERSION }}.zip
