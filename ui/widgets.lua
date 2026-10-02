@@ -42,6 +42,160 @@ local function unpackColor(c, a)
 end
 
 ----------------------------------------------------------------------
+-- skins
+----------------------------------------------------------------------
+
+--[[ How the windows are dressed. Three looks, all built from art the
+     game or its UI addons already use, so Wrekkit sits among them rather
+     than looking pasted on:
+
+       blizzard  the stock UI's own pieces: tooltip borders on the HUD
+                 windows, the parchment dialog border on Settings and the
+                 Report, dropdown menus with the gold highlight bar and
+                 check mark, the red panel buttons, the stock checkbox,
+                 the X close button, the chat-frame size grabber, the
+                 target-frame status bar, gold titles
+       pfui      pfUI / ShaguPlates: a dark backdrop, a one-pixel border,
+                 flat bars. With pfUI loaded its OWN CreateBackdrop, bar
+                 texture and font are used, so your pfUI settings carry
+                 over exactly
+       modern    Wrekkit's flat dark panels
+
+     "auto" (the default) is pfui when pfUI or ShaguPlates is loaded and
+     blizzard otherwise. Chosen once at load, before any frame is built:
+     a skin is how a frame is made, not a coat over it, so changing it
+     asks for a /reload. ]]
+
+UI.skin = "modern"
+
+local BLIZZ_GOLD = { 1.00, 0.82, 0.00 }
+local PFUI_ACCENT = { 0.20, 1.00, 0.80 }
+
+function UI.ResolveSkin()
+  local want = W.db and W.db.skin or "auto"
+  if want == "blizzard" or want == "pfui" or want == "modern" then return want end
+  if pfUI or ShaguPlates then return "pfui" end
+  return "blizzard"
+end
+
+local function setColor(dst, src)
+  dst[1], dst[2], dst[3] = src[1], src[2], src[3]
+end
+
+--- Pick the skin and set the media and colours it implies. Runs once,
+--- after the saved settings load and before any window exists.
+function UI.ApplySkin()
+  UI.skin = UI.ResolveSkin()
+  if UI.skin == "blizzard" then
+    UI.media.bar = "Interface\\TargetingFrame\\UI-StatusBar"
+    setColor(W.color.accent, BLIZZ_GOLD)
+    setColor(W.color.accentHi, { 1, 1, 1 })
+    setColor(W.color.text, { 1, 1, 1 })
+    setColor(W.color.textDim, { 0.82, 0.82, 0.82 })
+  elseif UI.skin == "pfui" then
+    local pf = pfUI and pfUI.media
+    UI.media.bar = (pf and pf["img:bar"]) or "Interface\\AddOns\\Wrekkit\\textures\\bar-fill"
+    if pfUI and pfUI.font_default then UI.font = pfUI.font_default end
+    setColor(W.color.accent, PFUI_ACCENT)
+    setColor(W.color.accentHi, { 1, 1, 1 })
+  end
+end
+
+local BLIZZ_TOOLTIP = {
+  bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+  edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+  tile = true, tileSize = 16, edgeSize = 16,
+  insets = { left = 4, right = 4, top = 4, bottom = 4 },
+}
+local BLIZZ_DIALOG = {
+  bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+  edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+  tile = true, tileSize = 32, edgeSize = 32,
+  insets = { left = 11, right = 12, top = 12, bottom = 11 },
+}
+local BLIZZ_SMALL = {
+  bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+  edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+  tile = true, tileSize = 8, edgeSize = 10,
+  insets = { left = 3, right = 3, top = 3, bottom = 3 },
+}
+local PFUI_FLAT = {
+  bgFile = "Interface\\AddOns\\Wrekkit\\textures\\white",
+  edgeFile = "Interface\\AddOns\\Wrekkit\\textures\\white",
+  tile = false, edgeSize = 1,
+  insets = { left = 1, right = 1, top = 1, bottom = 1 },
+}
+
+--- How far a skinned frame's content must sit inside its edge.
+function UI.SkinInset(kind)
+  if UI.skin == "blizzard" then
+    if kind == "dialog" then return 11 end
+    if kind == "small" then return 3 end
+    return 4
+  end
+  if UI.skin == "pfui" then return 1 end
+  return 1
+end
+
+--[[ Dress a frame in the skin's backdrop. kind:
+       window  a HUD window: meter, threat, mob frames, taunt bar, menus
+       dialog  Settings, the Report, confirmations
+       small   inputs and inner panes
+     Returns true when a backdrop was applied (modern draws its own). The
+     alpha is the window-opacity setting, applied to the backdrop only. ]]
+function UI.Backdrop(f, kind, alpha)
+  if UI.skin == "modern" or not f.SetBackdrop then return false end
+  alpha = alpha or 1
+  f._skinKind = kind or "window"
+  if UI.skin == "pfui" then
+    if pfUI and pfUI.api and pfUI.api.CreateBackdrop and not f._pfDone then
+      -- pfUI's own: its border size, colours and shadow, as configured.
+      local ok = pcall(pfUI.api.CreateBackdrop, f, nil, nil, 0.85)
+      if ok then
+        f._pfDone = true
+        f._skinned = true
+        return true
+      end
+    end
+    f:SetBackdrop(PFUI_FLAT)
+    f:SetBackdropColor(0, 0, 0, 0.75 * alpha)
+    f:SetBackdropBorderColor(0.18, 0.18, 0.18, alpha)
+  else
+    if kind == "dialog" then
+      f:SetBackdrop(BLIZZ_DIALOG)
+      f:SetBackdropColor(1, 1, 1, alpha)
+    elseif kind == "small" then
+      f:SetBackdrop(BLIZZ_SMALL)
+      f:SetBackdropColor(0.05, 0.05, 0.07, 0.9 * alpha)
+    else
+      f:SetBackdrop(BLIZZ_TOOLTIP)
+      f:SetBackdropColor(0.05, 0.05, 0.08, 0.92 * alpha)
+    end
+    f:SetBackdropBorderColor(0.80, 0.80, 0.80, alpha)
+  end
+  f._skinned = true
+  return true
+end
+
+--- Re-apply a skinned frame's backdrop at a new opacity.
+function UI.BackdropAlpha(f, alpha)
+  if not f._skinned or f._pfDone then
+    if f._pfDone and f.backdrop and f.backdrop.SetAlpha then f.backdrop:SetAlpha(alpha) end
+    return
+  end
+  local kind = f._skinKind
+  if UI.skin == "pfui" then
+    f:SetBackdropColor(0, 0, 0, 0.75 * alpha)
+    f:SetBackdropBorderColor(0.18, 0.18, 0.18, alpha)
+  else
+    if kind == "dialog" then f:SetBackdropColor(1, 1, 1, alpha)
+    elseif kind == "small" then f:SetBackdropColor(0.05, 0.05, 0.07, 0.9 * alpha)
+    else f:SetBackdropColor(0.05, 0.05, 0.08, 0.92 * alpha) end
+    f:SetBackdropBorderColor(0.80, 0.80, 0.80, alpha)
+  end
+end
+
+----------------------------------------------------------------------
 -- primitives
 ----------------------------------------------------------------------
 
@@ -70,7 +224,7 @@ end
 --- A panel: filled background plus a 1px outline drawn as four edges. Four
 --- textures beats SetBackdrop here because backdrop edge files tile visibly
 --- at non-power-of-two sizes.
-function UI.Panel(parent, color, borderColor, name)
+function UI.Panel(parent, color, borderColor, name, skinKind)
   local f = CreateFrame("Frame", name, parent)
   f.bg = UI.Fill(f, color or W.color.panel)
 
@@ -97,11 +251,26 @@ function UI.Panel(parent, color, borderColor, name)
   f.edges = edges
 
   f.SetBorderColor = function(self, c, a)
-    for _, e in ipairs(self.edges) do e:SetVertexColor(unpackColor(c, a)) end
     self._borderColor = c
     self._borderAlpha = a
+    if self._skinned then
+      -- A skinned border stays the skin's grey; a highlight shows as a tint.
+      if not self._pfDone and c ~= W.color.border then
+        self:SetBackdropBorderColor(unpackColor(c, a))
+      elseif not self._pfDone then
+        UI.BackdropAlpha(self, self._opacity or 1)
+      end
+      return
+    end
+    for _, e in ipairs(self.edges) do e:SetVertexColor(unpackColor(c, a)) end
   end
   f._borderColor = bc
+
+  -- Skinned, the backdrop replaces the flat fill and the hairlines.
+  if skinKind ~= "none" and UI.Backdrop(f, skinKind or "small") then
+    f.bg:Hide()
+    for _, e in ipairs(edges) do e:Hide() end
+  end
   return f
 end
 
@@ -204,8 +373,89 @@ function UI.Button(parent, label, width, height, onClick)
   end)
   if onClick then b:SetScript("OnClick", onClick) end
 
+  if UI.skin == "blizzard" then UI.SkinBlizzardButton(b)
+  elseif UI.skin == "pfui" then UI.SkinPfuiButton(b) end
+
   b:SetActive(false)
   return b
+end
+
+--[[ The stock red panel button (UIPanelButtonTemplate), in three slices
+     so it never stretches its end caps, with the gold label that goes
+     white under the mouse. A tab that is selected sits pressed in. ]]
+local PANEL_UP = "Interface\\Buttons\\UI-Panel-Button-Up"
+local PANEL_DOWN = "Interface\\Buttons\\UI-Panel-Button-Down"
+local PANEL_HL = "Interface\\Buttons\\UI-Panel-Button-Highlight"
+
+local function threeSlice(b, layer, file)
+  local l = b:CreateTexture(nil, layer)
+  l:SetTexture(file)
+  l:SetTexCoord(0, 0.09375, 0, 0.6875)
+  l:SetWidth(12)
+  l:SetPoint("TOPLEFT", b, "TOPLEFT", 0, 0)
+  l:SetPoint("BOTTOMLEFT", b, "BOTTOMLEFT", 0, 0)
+  local r = b:CreateTexture(nil, layer)
+  r:SetTexture(file)
+  r:SetTexCoord(0.53125, 0.625, 0, 0.6875)
+  r:SetWidth(12)
+  r:SetPoint("TOPRIGHT", b, "TOPRIGHT", 0, 0)
+  r:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", 0, 0)
+  local m = b:CreateTexture(nil, layer)
+  m:SetTexture(file)
+  m:SetTexCoord(0.09375, 0.53125, 0, 0.6875)
+  m:SetPoint("TOPLEFT", l, "TOPRIGHT", 0, 0)
+  m:SetPoint("BOTTOMRIGHT", r, "BOTTOMLEFT", 0, 0)
+  return { l, m, r }
+end
+
+local function setSlices(slices, file)
+  for _, t in ipairs(slices) do t:SetTexture(file) end
+end
+
+function UI.SkinBlizzardButton(b)
+  b.bg:Hide()
+  b.underline:Hide()
+  b.slices = threeSlice(b, "BACKGROUND", PANEL_UP)
+  b.glow = threeSlice(b, "HIGHLIGHT", PANEL_HL)
+  for _, t in ipairs(b.glow) do t:SetBlendMode("ADD") t:SetAlpha(0) end
+  b.label:SetTextColor(unpackColor(BLIZZ_GOLD))
+
+  b.SetActive = function(self, on)
+    self._active = on
+    setSlices(self.slices, on and PANEL_DOWN or PANEL_UP)
+    self.label:SetTextColor(unpackColor(on and { 1, 1, 1 } or BLIZZ_GOLD))
+  end
+  b:SetScript("OnMouseDown", function() setSlices(b.slices, PANEL_DOWN) end)
+  b:SetScript("OnMouseUp", function() if not b._active then setSlices(b.slices, PANEL_UP) end end)
+  b:SetScript("OnEnter", function()
+    for _, t in ipairs(b.glow) do t:SetAlpha(1) end
+    b.label:SetTextColor(1, 1, 1, 1)
+  end)
+  b:SetScript("OnLeave", function()
+    for _, t in ipairs(b.glow) do t:SetAlpha(0) end
+    if not b._active then b.label:SetTextColor(unpackColor(BLIZZ_GOLD)) end
+  end)
+end
+
+--- pfUI's button: the dark backdrop with a one-pixel edge that lights in
+--- the accent colour under the mouse or when selected.
+function UI.SkinPfuiButton(b)
+  b.bg:Hide()
+  UI.Backdrop(b, "small")
+  b.underline:SetHeight(1)
+  b.SetActive = function(self, on)
+    self._active = on
+    if on then self.underline:Show() else self.underline:Hide() end
+    self.label:SetTextColor(unpackColor(on and W.color.text or W.color.textDim))
+  end
+  b:SetScript("OnEnter", function()
+    if not b._pfDone then b:SetBackdropBorderColor(unpackColor(W.color.accent)) end
+    b.label:SetTextColor(unpackColor(W.color.text))
+  end)
+  b:SetScript("OnLeave", function()
+    if not b._pfDone then b:SetBackdropBorderColor(0.18, 0.18, 0.18, 1) end
+    if not b._active then b.label:SetTextColor(unpackColor(W.color.textDim)) end
+  end)
 end
 
 --[[ Small square icon button with a lit/unlit state.
@@ -292,6 +542,8 @@ end
 
 local ROW_H = 18
 local MENU_PAD = 4
+-- Room inside a skinned border; read when the menu is first built.
+local function menuPad() return (UI.skin == "blizzard") and 9 or MENU_PAD end
 
 local function ensureMenu()
   if menuFrame then return menuFrame end
@@ -303,7 +555,7 @@ local function ensureMenu()
   menuCatcher:SetScript("OnClick", function() UI.CloseMenu() end)
   menuCatcher:Hide()
 
-  menuFrame = UI.Panel(UIParent, W.color.panel, W.color.borderHi)
+  menuFrame = UI.Panel(UIParent, W.color.panel, W.color.borderHi, nil, "window")
   menuFrame:SetFrameStrata("FULLSCREEN_DIALOG")
   menuFrame:EnableMouse(true)
   menuFrame:Hide()
@@ -318,30 +570,47 @@ local function menuRow(index)
   local existing = menuRows[index]
   if existing then return existing end
 
+  local pad = menuPad()
   local b = CreateFrame("Button", nil, menuFrame)
   b:SetHeight(ROW_H)
-  b:SetPoint("TOPLEFT", menuFrame, "TOPLEFT", MENU_PAD,
-    -(MENU_PAD + (index - 1) * ROW_H))
-  b:SetPoint("TOPRIGHT", menuFrame, "TOPRIGHT", -MENU_PAD,
-    -(MENU_PAD + (index - 1) * ROW_H))
+  b:SetPoint("TOPLEFT", menuFrame, "TOPLEFT", pad,
+    -(pad + (index - 1) * ROW_H))
+  b:SetPoint("TOPRIGHT", menuFrame, "TOPRIGHT", -pad,
+    -(pad + (index - 1) * ROW_H))
 
-  b.hl = UI.Fill(b, W.color.accent, 0, "BACKGROUND")
   b.label = UI.Text(b, 11, W.color.text)
   b.label:SetPoint("LEFT", b, "LEFT", 16, 0)
 
-  b.tick = b:CreateTexture(nil, "OVERLAY")
-  b.tick:SetTexture(UI.media.white)
-  b.tick:SetVertexColor(unpackColor(W.color.accent))
-  b.tick:SetWidth(3) b.tick:SetHeight(ROW_H - 8)
-  b.tick:SetPoint("LEFT", b, "LEFT", 5, 0)
+  if UI.skin == "blizzard" then
+    -- A dropdown list as the stock UI draws one: the gold bar under the
+    -- mouse and the check mark beside the chosen entry.
+    b.hl = b:CreateTexture(nil, "BACKGROUND")
+    b.hl:SetTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight")
+    b.hl:SetBlendMode("ADD")
+    b.hl:SetAllPoints(b)
+    b.hl:SetAlpha(0)
+    b.tick = b:CreateTexture(nil, "OVERLAY")
+    b.tick:SetTexture("Interface\\Buttons\\UI-CheckBox-Check")
+    b.tick:SetWidth(16) b.tick:SetHeight(16)
+    b.tick:SetPoint("LEFT", b, "LEFT", -1, 0)
+    b.hl.SetVertexColor = function(self, r, g, bb, a) self:SetAlpha(a or 0) end
+  else
+    b.hl = UI.Fill(b, W.color.accent, 0, "BACKGROUND")
+    b.tick = b:CreateTexture(nil, "OVERLAY")
+    b.tick:SetTexture(UI.media.white)
+    b.tick:SetVertexColor(unpackColor(W.color.accent))
+    b.tick:SetWidth(3) b.tick:SetHeight(ROW_H - 8)
+    b.tick:SetPoint("LEFT", b, "LEFT", 5, 0)
+  end
 
   b:SetScript("OnEnter", function()
     if not b._disabled then
-      b.hl:SetVertexColor(unpackColor(W.color.accent, 0.16))
+      b.hl:SetVertexColor(W.color.accent[1], W.color.accent[2], W.color.accent[3],
+        (UI.skin == "blizzard") and 1 or 0.16)
     end
   end)
   b:SetScript("OnLeave", function()
-    b.hl:SetVertexColor(unpackColor(W.color.accent, 0))
+    b.hl:SetVertexColor(W.color.accent[1], W.color.accent[2], W.color.accent[3], 0)
   end)
 
   menuRows[index] = b
@@ -360,7 +629,7 @@ function UI.Menu(parent, anchorTo, items, onPick, width)
 
   local n = table.getn(items)
   f:SetWidth(width or 150)
-  f:SetHeight(n * ROW_H + MENU_PAD * 2)
+  f:SetHeight(n * ROW_H + menuPad() * 2)
   f:ClearAllPoints()
   f:SetPoint("TOPLEFT", anchorTo, "BOTTOMLEFT", 0, -2)
   -- A long menu opened low on the screen would run off the bottom.
@@ -380,7 +649,7 @@ function UI.Menu(parent, anchorTo, items, onPick, width)
       b.label:SetTextColor(unpackColor(item.disabled and W.color.textFaint or W.color.text))
     end
     if item.checked and not item.header then b.tick:Show() else b.tick:Hide() end
-    b.hl:SetVertexColor(unpackColor(W.color.accent, 0))
+    b.hl:SetVertexColor(W.color.accent[1], W.color.accent[2], W.color.accent[3], 0)
 
     if b._disabled then
       b:SetScript("OnClick", nil)
@@ -569,7 +838,7 @@ function UI.ScrollList(parent, rowHeight, makeRow)
   list.data = {}
   list.makeRow = makeRow or UI.Row
 
-  local track = UI.Panel(list, W.color.bg, W.color.bg)
+  local track = UI.Panel(list, W.color.bg, W.color.bg, nil, "none")
   track:SetWidth(4)
   track:SetPoint("TOPRIGHT", list, "TOPRIGHT", 0, 0)
   track:SetPoint("BOTTOMRIGHT", list, "BOTTOMRIGHT", 0, 0)
@@ -697,7 +966,9 @@ function UI.Window(name, width, height, title, opts)
   opts = opts or {}
   -- The global name matters: UISpecialFrames closes frames by name, so a
   -- nameless window can never be dismissed with Escape.
-  local f = UI.Panel(UIParent, W.color.bg, W.color.border, name)
+  local kind = opts.skin or "window"
+  local f = UI.Panel(UIParent, W.color.bg, W.color.border, name, kind)
+  local inset = f._skinned and UI.SkinInset(kind) or 1
   f:SetWidth(width) f:SetHeight(height)
   f:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
   -- Strata decides which window wins when they overlap. The report has to
@@ -713,8 +984,8 @@ function UI.Window(name, width, height, title, opts)
   -- title bar
   local bar = CreateFrame("Frame", nil, f)
   bar:SetHeight(opts.barHeight or 26)
-  bar:SetPoint("TOPLEFT", f, "TOPLEFT", 1, -1)
-  bar:SetPoint("TOPRIGHT", f, "TOPRIGHT", -1, -1)
+  bar:SetPoint("TOPLEFT", f, "TOPLEFT", inset, -inset)
+  bar:SetPoint("TOPRIGHT", f, "TOPRIGHT", -inset, -inset)
   f.barBg = UI.Fill(bar, W.color.panel)
 
   local sheen = bar:CreateTexture(nil, "ARTWORK")
@@ -738,6 +1009,31 @@ function UI.Window(name, width, height, title, opts)
   f.subtitle = UI.Text(bar, 10, W.color.textDim)
   f.subtitle:SetPoint("LEFT", f.title, "RIGHT", 8, 0)
 
+  --[[ Skinned chrome. The flat title-bar fill and its sheen go; Blizzard
+       titles are gold, and a dialog wears the parchment header plate the
+       stock options windows carry, with its title set into it. ]]
+  if UI.skin ~= "modern" then
+    sheen:Hide()
+    f.barBg:SetVertexColor(0, 0, 0, (UI.skin == "pfui") and 0.35 or 0)
+    rule:SetVertexColor(1, 1, 1, (UI.skin == "pfui") and 0.08 or 0.12)
+  end
+  if UI.skin == "blizzard" then
+    f.title:SetTextColor(unpackColor(BLIZZ_GOLD))
+    if kind == "dialog" then
+      local header = f:CreateTexture(nil, "ARTWORK")
+      header:SetTexture("Interface\\DialogFrame\\UI-DialogBox-Header")
+      header:SetWidth(300) header:SetHeight(64)
+      header:SetPoint("TOP", f, "TOP", 0, 12)
+      f.header = header
+      f.title:ClearAllPoints()
+      f.title:SetPoint("TOP", header, "TOP", 0, -14)
+      f.title:SetJustifyH("CENTER")
+      f.subtitle:ClearAllPoints()
+      f.subtitle:SetPoint("LEFT", bar, "LEFT", 8, -2)
+      mark:Hide()
+    end
+  end
+
   -- drag
   bar:EnableMouse(true)
   bar:RegisterForDrag("LeftButton")
@@ -751,24 +1047,44 @@ function UI.Window(name, width, height, title, opts)
   local close = CreateFrame("Button", nil, bar)
   close:SetWidth(20) close:SetHeight(20)
   close:SetPoint("RIGHT", bar, "RIGHT", -4, 0)
-  local cx = UI.Text(close, 13, W.color.textDim, "CENTER")
-  cx:SetPoint("CENTER", close, "CENTER", 0, 0)
-  cx:SetText("x")
-  close:SetScript("OnEnter", function() cx:SetTextColor(unpackColor(W.color.accent)) end)
-  close:SetScript("OnLeave", function() cx:SetTextColor(unpackColor(W.color.textDim)) end)
+  if UI.skin == "blizzard" then
+    -- The stock red X, as on every Blizzard window.
+    local sz = (kind == "dialog") and 28 or 22
+    close:SetWidth(sz) close:SetHeight(sz)
+    close:ClearAllPoints()
+    close:SetPoint("RIGHT", bar, "RIGHT", 2, 0)
+    close:SetNormalTexture("Interface\\Buttons\\UI-Panel-MinimizeButton-Up")
+    close:SetPushedTexture("Interface\\Buttons\\UI-Panel-MinimizeButton-Down")
+    close:SetHighlightTexture("Interface\\Buttons\\UI-Panel-MinimizeButton-Highlight")
+  else
+    local cx = UI.Text(close, 13, W.color.textDim, "CENTER")
+    cx:SetPoint("CENTER", close, "CENTER", 0, 0)
+    cx:SetText("x")
+    close:SetScript("OnEnter", function() cx:SetTextColor(unpackColor(W.color.accent)) end)
+    close:SetScript("OnLeave", function() cx:SetTextColor(unpackColor(W.color.textDim)) end)
+  end
   close:SetScript("OnClick", function() f:Hide() end)
   f.closeButton = close
 
-  -- resize grip: three stacked diagonal pips in the corner
+  -- resize grip
   local grip = CreateFrame("Button", nil, f)
   grip:SetWidth(14) grip:SetHeight(14)
-  grip:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -2, 2)
-  for i = 1, 3 do
-    local p = grip:CreateTexture(nil, "OVERLAY")
-    p:SetTexture(UI.media.white)
-    p:SetVertexColor(unpackColor(W.color.borderHi))
-    p:SetWidth(2 + (3 - i) * 3) p:SetHeight(1)
-    p:SetPoint("BOTTOMRIGHT", grip, "BOTTOMRIGHT", -1, i * 3 - 2)
+  grip:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -inset - 1, inset + 1)
+  if UI.skin == "blizzard" then
+    -- The chat window's size grabber.
+    grip:SetWidth(16) grip:SetHeight(16)
+    grip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+    grip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+    grip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+  else
+    -- three stacked diagonal pips in the corner
+    for i = 1, 3 do
+      local p = grip:CreateTexture(nil, "OVERLAY")
+      p:SetTexture(UI.media.white)
+      p:SetVertexColor(unpackColor(W.color.borderHi))
+      p:SetWidth(2 + (3 - i) * 3) p:SetHeight(1)
+      p:SetPoint("BOTTOMRIGHT", grip, "BOTTOMRIGHT", -1, i * 3 - 2)
+    end
   end
   grip:RegisterForDrag("LeftButton")
   grip:SetScript("OnDragStart", function() f:StartSizing("BOTTOMRIGHT") end)
@@ -782,7 +1098,7 @@ function UI.Window(name, width, height, title, opts)
   -- body
   local body = CreateFrame("Frame", nil, f)
   body:SetPoint("TOPLEFT", bar, "BOTTOMLEFT", 0, -1)
-  body:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -1, 1)
+  body:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -inset, inset)
   f.body = body
   f.bar = bar
 
@@ -816,6 +1132,15 @@ function UI.Window(name, width, height, title, opts)
     if alpha < 0 then alpha = 0 end
     if alpha > 1 then alpha = 1 end
     self._opacity = alpha
+
+    -- Skinned: the backdrop carries the opacity, edge and all.
+    if self._skinned then
+      UI.BackdropAlpha(self, alpha)
+      if self.barBg and self.barBg._color and UI.skin == "pfui" then
+        self.barBg:SetVertexColor(0, 0, 0, 0.35 * alpha)
+      end
+      return
+    end
 
     if self.bg and self.bg._color then
       self.bg:SetVertexColor(unpackColor(self.bg._color, alpha))
@@ -882,19 +1207,44 @@ function UI.Check(parent, label, get, set, tip)
   local b = CreateFrame("Button", nil, parent)
   b:SetHeight(18)
 
-  local box = UI.Panel(b, W.color.bg, W.color.border)
-  box:SetWidth(13)
-  box:SetHeight(13)
-  box:SetPoint("LEFT", b, "LEFT", 0, 0)
+  local box, tick
+  if UI.skin == "blizzard" then
+    -- The stock checkbox, as every Blizzard options panel draws it.
+    box = CreateFrame("Frame", nil, b)
+    box:SetWidth(20) box:SetHeight(20)
+    box:SetPoint("LEFT", b, "LEFT", -3, 0)
+    local up = box:CreateTexture(nil, "ARTWORK")
+    up:SetTexture("Interface\\Buttons\\UI-CheckBox-Up")
+    up:SetAllPoints(box)
+    local hl = box:CreateTexture(nil, "HIGHLIGHT")
+    hl:SetTexture("Interface\\Buttons\\UI-CheckBox-Highlight")
+    hl:SetBlendMode("ADD")
+    hl:SetAllPoints(box)
+    hl:SetAlpha(0)
+    tick = box:CreateTexture(nil, "OVERLAY")
+    tick:SetTexture("Interface\\Buttons\\UI-CheckBox-Check")
+    tick:SetAllPoints(box)
+    box.SetBorderColor = function(self, c)
+      hl:SetAlpha((c == W.color.accent) and 1 or 0)
+    end
+  else
+    box = UI.Panel(b, W.color.bg, W.color.border, nil, "none")
+    box:SetWidth(13)
+    box:SetHeight(13)
+    box:SetPoint("LEFT", b, "LEFT", 0, 0)
+    if UI.skin == "pfui" then
+      box.bg:SetVertexColor(0, 0, 0, 0.75)
+      box:SetBorderColor({ 0.18, 0.18, 0.18 })
+    end
+    tick = box:CreateTexture(nil, "OVERLAY")
+    tick:SetTexture(UI.media.white)
+    tick:SetVertexColor(unpackColor(W.color.accent))
+    tick:SetPoint("TOPLEFT", box, "TOPLEFT", 3, -3)
+    tick:SetPoint("BOTTOMRIGHT", box, "BOTTOMRIGHT", -3, 3)
+  end
 
-  local tick = box:CreateTexture(nil, "OVERLAY")
-  tick:SetTexture(UI.media.white)
-  tick:SetVertexColor(unpackColor(W.color.accent))
-  tick:SetPoint("TOPLEFT", box, "TOPLEFT", 3, -3)
-  tick:SetPoint("BOTTOMRIGHT", box, "BOTTOMRIGHT", -3, 3)
-
-  local text = UI.Text(b, 11, W.color.text)
-  text:SetPoint("LEFT", box, "RIGHT", 7, 0)
+  local text = UI.Text(b, 11, (UI.skin == "blizzard") and BLIZZ_GOLD or W.color.text)
+  text:SetPoint("LEFT", box, "RIGHT", (UI.skin == "blizzard") and 3 or 7, 0)
   text:SetText(label or "")
 
   -- Exposed so a test can assert on what is DRAWN rather than on the state
@@ -922,7 +1272,7 @@ function UI.Check(parent, label, get, set, tip)
     end
   end)
   b:SetScript("OnLeave", function()
-    box:SetBorderColor(W.color.border)
+    box:SetBorderColor((UI.skin == "pfui") and { 0.18, 0.18, 0.18 } or W.color.border)
     if GameTooltip then GameTooltip:Hide() end
   end)
 

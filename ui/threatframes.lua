@@ -407,6 +407,13 @@ local function plateName(plate)
   return fs and fs:GetText()
 end
 
+--- The face plate text is set in: the game's own (or pfUI's) with a skin,
+--- so it matches the plate's name and level beside it.
+function TF.PlateFont()
+  if UI.skin == "modern" then return UI.fontNum end
+  return UI.font
+end
+
 local function plateOverlay(plate)
   local o = plate.wrekThreat
   if o then return o end
@@ -419,7 +426,7 @@ local function plateOverlay(plate)
   -- A plain font string, not UI.Text: those follow the addon's text-size
   -- setting, and the plates have a size setting of their own.
   o.text = o:CreateFontString(nil, "OVERLAY")
-  o.text:SetFont(UI.fontNum, 11, "OUTLINE")
+  o.text:SetFont(TF.PlateFont(), 11, "OUTLINE")
   o.text:SetJustifyH("CENTER")
   o.text:SetPoint("CENTER", o, "CENTER", 0, 0)
   plate.wrekThreat = o
@@ -489,7 +496,7 @@ function TF:UpdatePlate(plate, s)
     local o = plateOverlay(plate)
     if o.size ~= s.plateSize then
       o.size = s.plateSize
-      o.text:SetFont(UI.fontNum, s.plateSize, "OUTLINE")
+      o.text:SetFont(TF.PlateFont(), s.plateSize, "OUTLINE")
       o:SetHeight(s.plateSize + 4)
     end
     -- Re-anchored when the side changes or the plate addon swaps bars.

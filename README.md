@@ -101,6 +101,22 @@ menu (right-click the title). That choice is remembered — it stays hidden
 next login until you bring it back with `/wrek` or the minimap button, which
 the addon tells you when you close it.
 
+### Looks
+
+Wrekkit dresses itself to match the rest of your UI, built from the same
+art the game and its UI addons use -- not boxes of its own:
+
+| Look | |
+| --- | --- |
+| **Blizzard** | the stock UI's own pieces: tooltip borders on the meter, threat window, mob frames and taunt bar; the parchment dialog border and header plate on Settings and the Report; dropdown menus with the gold highlight bar and check mark; the red panel buttons; the stock checkboxes; the red X close button; the chat window's size grabber; the target frame's status-bar texture; gold titles; the action bar's cooldown sweep on the taunt button |
+| **pfUI** | pfUI / ShaguPlates: dark backdrops, one-pixel borders, flat bars. With pfUI loaded it calls pfUI's *own* backdrop function and uses pfUI's bar texture and font, so Wrekkit follows your pfUI settings exactly |
+| **modern** | Wrekkit's own flat dark panels |
+
+**auto** (default) picks pfUI when pfUI or ShaguPlates is loaded, Blizzard
+otherwise. Change it under Settings -> Meter -> *Look*; it asks to reload,
+because a look is how a frame is built, not a coat painted over it.
+Nameplate threat text uses the same face as the plates it sits on.
+
 ### Live meter
 
 Deliberately spare, so it can sit on screen during a pull.

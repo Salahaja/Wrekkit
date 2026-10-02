@@ -132,10 +132,11 @@ local function classHex(class)
 end
 
 local function makeRow(parent, i)
+  local pad = MF.pad or 0
   local b = CreateFrame("Button", nil, parent)
   b:SetHeight(ROW_H)
-  b:SetPoint("TOPLEFT", parent, "TOPLEFT", 2, -(14 + (i - 1) * (ROW_H + 1)))
-  b:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -2, -(14 + (i - 1) * (ROW_H + 1)))
+  b:SetPoint("TOPLEFT", parent, "TOPLEFT", 2 + pad, -(14 + pad + (i - 1) * (ROW_H + 1)))
+  b:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -2 - pad, -(14 + pad + (i - 1) * (ROW_H + 1)))
   b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
 
   b.bg = UI.Fill(b, W.color.panelHi, 0.9)
@@ -192,11 +193,14 @@ function MF:Create()
   f:EnableMouse(true)
   f:Hide()
   f.bg = UI.Fill(f, W.color.bg, 0.8)
+  if UI.Backdrop(f, "window") then f.bg:Hide() end
+  local pad = f._skinned and UI.SkinInset("window") or 0
+  self.pad = pad
 
   local title = CreateFrame("Button", nil, f)
   title:SetHeight(13)
-  title:SetPoint("TOPLEFT", f, "TOPLEFT", 0, 0)
-  title:SetPoint("TOPRIGHT", f, "TOPRIGHT", 0, 0)
+  title:SetPoint("TOPLEFT", f, "TOPLEFT", pad, -pad)
+  title:SetPoint("TOPRIGHT", f, "TOPRIGHT", -pad, -pad)
   title:RegisterForDrag("LeftButton")
   title:RegisterForClicks("LeftButtonUp")
   title:SetScript("OnClick", function() W.Guard("mob frames toggle", function() MF:ToggleCollapse() end) end)
@@ -408,7 +412,7 @@ function MF:Update()
     self.rows[i]:Hide()
   end
   f.title:SetText("Mobs  " .. total .. (collapsed and "  |cff9d9d9d(collapsed)|r" or ""))
-  f:SetHeight(14 + rowsUsed * (ROW_H + 1) + 2)
+  f:SetHeight(14 + rowsUsed * (ROW_H + 1) + 2 + 2 * (self.pad or 0))
   if not f:IsShown() then f:Show() end
 end
 

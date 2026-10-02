@@ -15,6 +15,8 @@ f:SetScript("OnEvent", function()
     if arg1 ~= "Wrekkit" then return end
 
     W.InitDB()
+    -- Before any frame exists: the skin decides how frames are built.
+    W.Guard("skin", function() W.ui.ApplySkin() end)
     W.capture:Start()
     W.sync:Start()
     W.threat:Start()

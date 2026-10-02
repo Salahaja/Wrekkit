@@ -97,6 +97,7 @@ declare(WOW, [[
 ]])
 
 declare(FRAMEXML, [[
+  CooldownFrame_SetTimer ReloadUI
   DEFAULT_CHAT_FRAME GameTooltip SlashCmdList StaticPopupDialogs
   StaticPopup_Show UISpecialFrames
   UNKNOWN MouseIsOver
@@ -340,6 +341,7 @@ local function makeFrame(kind, name, parent)
   m.SetHitRectInsets = function() end
   m.SetNormalTexture = function() end
   m.SetHighlightTexture = function() end
+  m.SetPushedTexture = function() end
   m.GetParent = function(self) return self._parent end
   m.SetParent = function() end
   m.SetID = function() end
@@ -626,6 +628,11 @@ end
 step("initialise", function()
   WrekkitDB = nil
   W.InitDB()
+  if (os.getenv("WREKKIT_SKIN") or "") ~= "" then
+    W.db.skin = os.getenv("WREKKIT_SKIN")
+    STUB.CooldownFrame_SetTimer = function() end
+    W.ui.ApplySkin()
+  end
   W.capture:Start()
   W.sync:Start()
 end)
@@ -1266,6 +1273,32 @@ step("threat meter", function()
   STUB.GetNumPartyMembers, STUB.UnitExists, STUB.UnitName = realParty, realExists, realName
   STUB.SendAddonMessage = realSend
   WORLD["target"] = nil
+end)
+
+step("skins: pfUI's own backdrop is used when pfUI is loaded", function()
+  local UI = W.ui
+  local was = UI.skin
+  local called = 0
+  STUB.pfUI = { api = { CreateBackdrop = function(f) called = called + 1 f.backdrop = makeFrame("Frame") end },
+                media = { ["img:bar"] = "Interface\\AddOns\\pfUI\\img\\bar" } }
+  W.db.skin = "auto"
+  if UI.ResolveSkin() ~= "pfui" then error("auto did not pick pfui with pfUI loaded") end
+  UI.skin = "pfui"
+  local f = makeFrame("Frame")
+  UI.Backdrop(f, "window")
+  if called ~= 1 then error("pfUI.api.CreateBackdrop was not used") end
+  UI.BackdropAlpha(f, 0.5)
+  for _, kind in ipairs({ "blizzard", "pfui" }) do
+    UI.skin = kind
+    STUB.pfUI = nil
+    local g = makeFrame("Frame")
+    for _, k in ipairs({ "window", "dialog", "small" }) do UI.Backdrop(g, k) UI.BackdropAlpha(g, 0.6) end
+    UI.SkinBlizzardButton(UI.Button(UIParent, "x", 40, 20))
+    UI.SkinPfuiButton(UI.Button(UIParent, "x", 40, 20))
+  end
+  STUB.pfUI = nil
+  W.db.skin = "auto"
+  UI.skin = was
 end)
 
 step("the other combat events", function()

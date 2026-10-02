@@ -29,10 +29,11 @@ local ROW_H = 26
 local WIDTH = 200
 
 local function makeRow(parent, i)
+  local pad = TB.pad or 0
   local b = CreateFrame("Button", nil, parent)
   b:SetHeight(ROW_H)
-  b:SetPoint("TOPLEFT", parent, "TOPLEFT", 3, -(16 + (i - 1) * (ROW_H + 2)))
-  b:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -3, -(16 + (i - 1) * (ROW_H + 2)))
+  b:SetPoint("TOPLEFT", parent, "TOPLEFT", 3 + pad, -(16 + pad + (i - 1) * (ROW_H + 2)))
+  b:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -3 - pad, -(16 + pad + (i - 1) * (ROW_H + 2)))
   b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
 
   b.bg = UI.Fill(b, W.color.panelHi, 0.9)
@@ -49,6 +50,15 @@ local function makeRow(parent, i)
   b.cd:SetVertexColor(0, 0, 0, 0.6)
   b.cd:SetPoint("BOTTOMLEFT", b.icon, "BOTTOMLEFT", 0, 0)
   b.cd:SetPoint("BOTTOMRIGHT", b.icon, "BOTTOMRIGHT", 0, 0)
+  -- With a skin, the action bar's own clock sweep (CooldownFrameTemplate)
+  -- replaces the flat shade.
+  if UI.skin ~= "modern" and CooldownFrame_SetTimer then
+    local ok, sweep = pcall(CreateFrame, "Model", nil, b, "CooldownFrameTemplate")
+    if ok and sweep then
+      sweep:SetAllPoints(b.icon)
+      b.sweep = sweep
+    end
+  end
   b.cdText = b:CreateFontString(nil, "OVERLAY")
   b.cdText:SetFont(UI.fontNum, 12, "OUTLINE")
   b.cdText:SetPoint("CENTER", b.icon, "CENTER", 0, 0)
@@ -98,11 +108,14 @@ function TB:Create()
   f:EnableMouse(true)
   f:Hide()
   f.bg = UI.Fill(f, W.color.bg, 0.85)
+  if UI.Backdrop(f, "window") then f.bg:Hide() end
+  local pad = f._skinned and UI.SkinInset("window") or 0
+  self.pad = pad
 
   local title = CreateFrame("Button", nil, f)
   title:SetHeight(14)
-  title:SetPoint("TOPLEFT", f, "TOPLEFT", 0, 0)
-  title:SetPoint("TOPRIGHT", f, "TOPRIGHT", 0, 0)
+  title:SetPoint("TOPLEFT", f, "TOPLEFT", pad, -pad)
+  title:SetPoint("TOPRIGHT", f, "TOPRIGHT", -pad, -pad)
   title:RegisterForDrag("LeftButton")
   title:SetScript("OnDragStart", function() f:StartMoving() end)
   title:SetScript("OnDragStop", function()
@@ -174,10 +187,19 @@ function TB:Update()
         b.cdText:SetText("")
         b.icon:SetVertexColor(1, 1, 1)
       else
-        b.cd:Show()
-        b.cd:SetHeight(math.max(1, (ROW_H - 4) * math.min(1, wait / 10)))
         b.cdText:SetText(string.format("%d", math.ceil(wait)))
         b.icon:SetVertexColor(0.6, 0.6, 0.6)
+        if b.sweep and shown and GetSpellCooldown then
+          local start, duration = GetSpellCooldown(shown.index, "spell")
+          if b.sweepStart ~= start then
+            b.sweepStart = start
+            pcall(CooldownFrame_SetTimer, b.sweep, start, duration, 1)
+          end
+          b.cd:Hide()
+        else
+          b.cd:Show()
+          b.cd:SetHeight(math.max(1, (ROW_H - 4) * math.min(1, wait / 10)))
+        end
       end
       b.edge:SetAlpha(blink)
       b:Show()
@@ -186,7 +208,7 @@ function TB:Update()
       b:Hide()
     end
   end
-  f:SetHeight(16 + n * (ROW_H + 2) + 2)
+  f:SetHeight(16 + n * (ROW_H + 2) + 2 + 2 * (self.pad or 0))
   if not f:IsShown() then f:Show() end
 end
 

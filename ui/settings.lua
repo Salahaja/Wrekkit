@@ -29,6 +29,18 @@ local S = UI.settings
      text. Only the text inside them does. So the window never grew taller
      at a larger setting -- it grew tighter, and the labels ran into the
      values beside them. ]]
+if type(StaticPopupDialogs) == "table" then
+  StaticPopupDialogs["WREKKIT_RELOAD_SKIN"] = {
+    text = "Wrekkit's new look applies after reloading the UI.\nReload now?",
+    button1 = "Reload",
+    button2 = "Later",
+    OnAccept = function() if ReloadUI then ReloadUI() end end,
+    timeout = 30,
+    whileDead = 1,
+    hideOnEscape = 1,
+  }
+end
+
 local COLS = 2
 local COL_GAP = 18
 
@@ -169,6 +181,7 @@ function S:Create()
     minW = windowWidth(), minH = 200,
     -- Above both windows: it is opened from them and must not hide behind.
     strata = "DIALOG",
+    skin = "dialog",
   })
   self.frame = f
   UI.CloseOnEscape("WrekkitSettings")
@@ -218,6 +231,29 @@ function S:Create()
 
   ------------------------------------------------------------------
   heading(self, "Appearance")
+
+  choice(self, "Look",
+    {
+      { value = "auto", label = "auto" },
+      { value = "blizzard", label = "Blizzard" },
+      { value = "pfui", label = "pfUI" },
+      { value = "modern", label = "modern" },
+    },
+    function() return W.db.skin or "auto" end,
+    function(v)
+      W.db.skin = v
+      if UI.ResolveSkin() ~= UI.skin then
+        if StaticPopup_Show and StaticPopupDialogs then
+          StaticPopup_Show("WREKKIT_RELOAD_SKIN")
+        else
+          W.Print("the new look applies after /reload.")
+        end
+      end
+    end,
+    { "Blizzard: the game's own frames -- tooltip", "and dialog borders, panel buttons, stock",
+      "checkboxes, gold titles. pfUI: pfUI's dark", "one-pixel style, and its own textures and",
+      "font when pfUI is loaded. auto: pfUI with", "pfUI or ShaguPlates, else Blizzard.",
+      "Applies after a /reload." })
 
   check(self, "Compact meter",
     function() return meter:Settings().compact == true end,

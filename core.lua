@@ -221,6 +221,7 @@ W.defaults = {
   shareChannel = "AUTO",   -- AUTO | RAID | PARTY | GUILD
   acceptShares = true,     -- take encounters other Wrekkit users send
   fontScale = 1.0,         -- global text size multiplier
+  skin = "auto",           -- auto | blizzard | pfui | modern (see ui/widgets)
   resumeWindow = 1200,     -- seconds; rejoin the previous session within this
   sessionBarrier = 0,      -- sessions ending at or before this never resume
   autoSave = true,         -- append each encounter to disk as it finishes
@@ -276,6 +277,7 @@ function W.SanitizeDB(db)
   end
   if db.dpsBasis ~= nil and db.dpsBasis ~= "active" then db.dpsBasis = nil end
   if db.reportOpacity ~= nil then clampSetting(db, "reportOpacity", 0.2, 1, 1) end
+  oneOf(db, "skin", { "auto", "blizzard", "pfui", "modern" }, "auto")
 
   local m = db.meter
   if type(m) == "table" then
