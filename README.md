@@ -216,6 +216,22 @@ that got away* -- and on `/wrek taunt`, so a macro or an action-bar button
 works too. Drag the bar by its title to move it, or place it alongside the
 target-frame % with `/wrek threat move`; where you leave it is saved.
 
+**Mob frames.** One small frame per mob in the fight, stacked: its name,
+its health, and **who it is hitting** -- `you` in blue, anyone else by name
+in their class colour. Five mobs on you and a patrol walks into the healer:
+that row turns red and blinks, with the healer's name on it. Mobs held but
+with someone closing in show the runner-up's % on the right and blink at
+your flash limit. **Click** a frame to target that mob, **right-click** to
+taunt it.
+
+Rows keep the order mobs joined the fight and never reshuffle, so a row is
+where your eye left it; trouble is shown by colour. Mobs come from the
+nameplates *and* from every enemy the combat log has seen this pull, so one
+with no plate in view is still listed while the client knows it. Settings
+(Frames & plates -> Mob frames): on/off, *when tanking* (default) or
+*always*, from how many mobs (2), at most how many rows (8). Drag the title
+to move the stack, or place it with `/wrek threat move`. Needs SuperWoW.
+
 Not tanking, you get the opposite: warnings as *you* approach the line, and
 **"AGGRO! <mob> is on you"** if one turns on you -- targeted or not, the
 plates catch the rest -- with `AGGRO` on the target frame or on that mob's
@@ -526,7 +542,7 @@ that series.
 /wrek threat <where>     window | docked | meter | off
 /wrek threat tank        cycle I'm-the-tank: auto, always, never
 /wrek threat test        15s of test data on every threat display
-/wrek threat move        drag the target-frame % and the taunt bar
+/wrek threat move        place the target-frame %, taunt bar and mob frames
 /wrek taunt              taunt the mob that got away (macro / key)
 /wrek threat resetpos    put the target-frame % back above the frame
 /wrek threat config      threat settings

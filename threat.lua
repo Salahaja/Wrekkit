@@ -123,6 +123,12 @@ T.defaults = {
   tauntKeepTarget = true,  -- cast at the mob without changing target
   -- tauntX / tauntY: where the popup was dragged, from screen centre
 
+  -- mob frames: a small frame per mob in the fight, with who it is on
+  mobFrames = true,
+  mobFramesFor = "tank",   -- "tank" | "everyone"
+  mobFramesMin = 2,        -- shown from this many mobs
+  mobFramesMax = 8,        -- at most this many rows
+
   -- target frame
   frame = true,
   frameStyle = "clean",    -- "clean" (number + bar) | "number" | "badge"
@@ -203,6 +209,10 @@ function T:Sanitize(s)
   if type(s.coTanks) ~= "string" then s.coTanks = "" end
   if type(s.tauntSpell) ~= "string" then s.tauntSpell = "" end
   s.tauntX, s.tauntY = tonumber(s.tauntX), tonumber(s.tauntY)
+  s.mobsX, s.mobsY = tonumber(s.mobsX), tonumber(s.mobsY)
+  s.mobFramesFor = oneOf(s.mobFramesFor, { "tank", "everyone" }, d.mobFramesFor)
+  s.mobFramesMin = math.floor(clamp(s.mobFramesMin, 1, 10, d.mobFramesMin))
+  s.mobFramesMax = math.floor(clamp(s.mobFramesMax, 2, 15, d.mobFramesMax))
   s.lastWindow = oneOf(s.lastWindow, { "window", "docked" }, "docked")
   if type(s.window) ~= "table" then s.window = {} end
   local w = s.window
@@ -1348,6 +1358,7 @@ function T:OnCombatEnd()
   self.watch = {}
   self.guidByLow = {}
   self.taunts = {}
+  if W.ui and W.ui.mobs then W.ui.mobs:Reset() end
   self.heldKey = nil
   self.lastTM = nil
   if not self.demoUntil then

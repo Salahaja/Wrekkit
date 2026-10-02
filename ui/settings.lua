@@ -788,6 +788,7 @@ function S:BuildThreat()
   get, set = opt("plates")
   check(self, "Show on nameplates", get, set)
 
+
   get, set = pick("plateStyle")
   choice(self, "Nameplate addon",
     {
@@ -827,6 +828,33 @@ function S:BuildThreat()
     function(v) ts().plateMemory = v end,
     0, 30, 1,
     function(v) return v .. "s" end)
+
+  ------------------------------------------------------------------
+  heading(self, "Mob frames")
+
+  get, set = opt("mobFrames")
+  check(self, "Mob frames", get, set,
+    { "A small frame per mob in the fight: its", "health, and who it is hitting. Click to",
+      "target, right-click to taunt. A mob loose", "on someone else blinks red. Needs SuperWoW." })
+
+  get, set = pick("mobFramesFor")
+  choice(self, "Show them",
+    {
+      { value = "tank", label = "when tanking" },
+      { value = "everyone", label = "always" },
+    }, get, set)
+
+  stepper(self, "From",
+    function() return ts().mobFramesMin end,
+    function(v) ts().mobFramesMin = v; redraw() end,
+    1, 10, 1,
+    function(v) return v .. (v == 1 and " mob" or " mobs") end)
+
+  stepper(self, "At most",
+    function() return ts().mobFramesMax end,
+    function(v) ts().mobFramesMax = v; redraw() end,
+    2, 15, 1,
+    function(v) return v .. " rows" end)
 
   -- The buttons belong with the threat meter, at the foot of its tab.
   self.building = "threat"

@@ -375,6 +375,7 @@ dofile("ui/peers.lua")
 dofile("ui/threat.lua")
 dofile("ui/threatframes.lua")
 dofile("ui/taunt.lua")
+dofile("ui/mobs.lua")
 dofile("minimap.lua")
 dofile("commands.lua")
 

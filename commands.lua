@@ -64,7 +64,7 @@ local HELP = {
   { "/wrek threat <where>", "window | docked | meter | off" },
   { "/wrek threat tank", "I'm the tank: auto, always, never (cycles)" },
   { "/wrek threat test", "15s of test data, to place frames and plates" },
-  { "/wrek threat move", "drag the target-frame % and the taunt popup" },
+  { "/wrek threat move", "place the target-frame %, taunt bar and mob frames" },
   { "/wrek taunt", "taunt the mob that got away (for a macro)" },
   { "/wrek threat resetpos", "put the target-frame % back above the frame" },
   { "/wrek threat config", "threat settings" },

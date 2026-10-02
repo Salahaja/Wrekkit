@@ -1123,6 +1123,62 @@ step("threat meter", function()
   if looseRows ~= 1 then error("the window does not list the loose mob") end
   UI.threatFrames:UpdateIndicator()
 
+  -- Mob frames: two drakes on you, the Whelp loose on the priest.
+  local drakes = { "0xF00000000000D001", "0xF00000000000D002" }
+  local realIsUnitMF = STUB.UnitIsUnit
+  STUB.UnitIsUnit = function(a, b)
+    return b == "player" and (a == drakes[1] .. "target" or a == drakes[2] .. "target")
+  end
+  for i, g in ipairs(drakes) do
+    WORLD[g] = { name = "Drake " .. i, isPlayer = false, maxHealth = 8000, health = 4000 * i }
+    WORLD[g .. "target"] = { name = "Auditor", isPlayer = true, class = "WARRIOR" }
+    local dp = makeFrame("Button", nil, STUB.WorldFrame)
+    dp._guid = g
+    dp._shown = true
+    local db = dp:CreateTexture()
+    db:SetTexture("Interface\\Tooltips\\Nameplate-Border")
+    dp._regions = { db }
+    dp._kids = { makeFrame("StatusBar", nil, dp) }
+    table.insert(STUB.WorldFrame._kids, dp)
+  end
+  UI.threatFrames:UpdatePlates()
+  UI.mobs.lastUpdate = nil
+  UI.mobs:Update()
+  if not UI.mobs.frame or not UI.mobs.frame:IsShown() then error("mob frames did not appear for 3 mobs") end
+  local onPriest, onMe = 0, 0
+  for _, row in ipairs(UI.mobs.rows) do
+    if row:IsShown() and row.mob then
+      local who = row.who:GetText() or ""
+      if string.find(who, "Elfpriest", 1, true) then
+        onPriest = onPriest + 1
+        if not row.trouble then error("the loose Whelp's row is not highlighted") end
+      elseif string.find(who, "you", 1, true) then
+        onMe = onMe + 1
+      end
+    end
+  end
+  if onPriest ~= 1 or onMe ~= 2 then
+    error("mob frames show " .. onMe .. " on you and " .. onPriest .. " on the priest")
+  end
+  local casts = {}
+  STUB.TargetUnit = function(u) table.insert(casts, "target:" .. u) end
+  arg1 = "LeftButton"
+  UI.mobs.rows[1]:GetScript("OnClick")()
+  if not casts[1] then error("clicking a mob frame did not target it") end
+  arg1 = "RightButton"
+  UI.mobs.rows[1]:GetScript("OnClick")()
+  T:Settings().mobFramesFor = "tank"
+  T:Settings().tankMode = "off"
+  UI.mobs.lastUpdate = nil
+  UI.mobs:Update()
+  if UI.mobs.frame:IsShown() then error("mob frames shown to a non-tank set to tank-only") end
+  T:Settings().tankMode = "on"
+  UI.mobs:SavePosition()
+  UI.mobs:RestorePosition()
+  UI.mobs:Reset()
+  STUB.UnitIsUnit = realIsUnitMF
+  for _, g in ipairs(drakes) do WORLD[g] = nil WORLD[g .. "target"] = nil end
+
   -- Not tanking, a mob nobody targeted turns on you.
   T:Settings().tankMode = "off"
   T.watch, T.tankMobs = {}, {}
