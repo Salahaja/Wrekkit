@@ -275,6 +275,7 @@ function W.SanitizeDB(db)
     clampSetting(db, "liveSyncInterval", 10, 120, 30)
   end
   if db.dpsBasis ~= nil and db.dpsBasis ~= "active" then db.dpsBasis = nil end
+  if db.reportOpacity ~= nil then clampSetting(db, "reportOpacity", 0.2, 1, 1) end
 
   local m = db.meter
   if type(m) == "table" then

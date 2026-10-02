@@ -249,12 +249,20 @@ function S:Create()
     10, 32, 1,
     function(v) return v .. "px" end)
 
-  slider(self, "Window opacity",
+  slider(self, "Meter opacity",
     function() return math.floor(((meter:Settings().opacity or 1) * 100) + 0.5) end,
     function(v)
       meter:Settings().opacity = v / 100
       meter:ApplyLayout()
+      -- The docked threat window wears the meter's opacity.
+      if UI.threat.frame then UI.threat:ApplyLayout() end
     end,
+    20, 100, 5,
+    function(v) return v .. "%" end)
+
+  slider(self, "Report opacity",
+    function() return math.floor(((W.db.reportOpacity or 1) * 100) + 0.5) end,
+    function(v) UI.SetReportOpacity(v / 100) end,
     20, 100, 5,
     function(v) return v .. "%" end)
 
@@ -627,6 +635,12 @@ function S:BuildThreat()
     function(v) ts().interval = v / 1000 end,
     250, 2000, 250,
     function(v) return string.format("%.2fs", v / 1000) end)
+
+  slider(self, "Threat window opacity  (docked: follows the meter)",
+    function() return math.floor(ts().opacity * 100 + 0.5) end,
+    function(v) ts().opacity = v / 100; redraw() end,
+    20, 100, 5,
+    function(v) return v .. "%" end)
 
   get, set = opt("showTPS")
   check(self, "Threat per second", get, set)

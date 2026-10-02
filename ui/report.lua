@@ -289,6 +289,7 @@ function R:Create()
   self.frame = f
   UI.BindGeometry(f, W.db.report)
   UI.CloseOnEscape("WrekkitReport")
+  if f.SetOpacity then f:SetOpacity(W.db.reportOpacity or 1) end
 
   ------------------------------------------------------------------
   -- sidebar
@@ -926,6 +927,14 @@ end
 function R:Toggle()
   local f = self:Create()
   if f:IsShown() then f:Hide() else f:Show() self:Refresh() end
+end
+
+--- The report's chrome opacity, 0.2-1. Text and bars stay solid.
+function UI.SetReportOpacity(a)
+  if a < 0.2 then a = 0.2 elseif a > 1 then a = 1 end
+  if a >= 1 then W.db.reportOpacity = nil else W.db.reportOpacity = a end
+  local f = UI.report and UI.report.frame
+  if f and f.SetOpacity then f:SetOpacity(a) end
 end
 
 function R:Show()

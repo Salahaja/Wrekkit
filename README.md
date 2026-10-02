@@ -251,6 +251,14 @@ tightens the rows, for a meter that can sit on screen permanently.
 without scaling what contains it just clips it, which is the usual way a text
 size option ends up useless.
 
+**Opacity** fades a window's background, title bar and border while its
+text and bars stay solid, so it stays readable with the game showing
+through. Each window has its own: *Meter opacity* and *Report opacity* on the
+Meter tab, *Threat window opacity* on the Threat tab (a docked threat window
+follows the meter, since the two are one block). The threat window's title
+menu has 100/80/60/40% presets, and `/wrek opacity <meter|threat|report> <n>`
+sets any of them.
+
 **In combat** fades the meter while you fight (pointing at it brings it
 back) or hides it until the fight is over. `/wrek` shows it anyway, and a
 meter you closed yourself stays closed.
@@ -470,6 +478,7 @@ that series.
 /wrek mode threat        the meter shows live threat
 
 /wrek config             open the settings window
+/wrek opacity <w> <n>    meter, threat or report opacity, 20-100
 /wrek compact            toggle the small meter layout
 /wrek status             diagnose why nothing is being recorded
 /wrek who                list every actor and how it was classified

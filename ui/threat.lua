@@ -330,6 +330,27 @@ function TW:ApplyLayout()
   self:Refresh()
 end
 
+--- The opacity this window is drawn at: its own, or the meter's when docked.
+function TW:Opacity()
+  local s = T:Settings()
+  if s.display == "docked" then return UI.meter:Settings().opacity or 1 end
+  return s.opacity
+end
+
+--- Set it. Docked, the window and the meter are one block, so both change.
+function TW:SetOpacity(a)
+  a = tonumber(a) or 1
+  if a < 0.2 then a = 0.2 elseif a > 1 then a = 1 end
+  if T:Settings().display == "docked" then
+    UI.meter:Settings().opacity = a
+    UI.meter:ApplyLayout()
+  else
+    T:Settings().opacity = a
+  end
+  if self.frame then self:ApplyLayout() end
+  if UI.settings and UI.settings.Refresh then UI.settings:Refresh() end
+end
+
 local ROLE_LABEL = { auto = "auto (stance/form)", on = "always", off = "never" }
 
 function TW:Menu(anchor)
@@ -347,6 +368,11 @@ function TW:Menu(anchor)
     { text = "Threat", value = "col:showThreat", checked = s.showThreat == true },
     { text = "Threat per second", value = "col:showTPS", checked = s.showTPS == true },
     { text = "Pull-aggro line", value = "col:showPullLine", checked = s.showPullLine == true },
+    { text = "Opacity", header = true },
+    { text = "100%", value = "o:1", checked = TW:Opacity() >= 0.99 },
+    { text = "80%", value = "o:0.8", checked = math.abs(TW:Opacity() - 0.8) < 0.03 },
+    { text = "60%", value = "o:0.6", checked = math.abs(TW:Opacity() - 0.6) < 0.03 },
+    { text = "40%", value = "o:0.4", checked = math.abs(TW:Opacity() - 0.4) < 0.03 },
     { text = "Window", header = true },
     { text = "Lock position", value = "lock", checked = s.locked == true },
     { text = "Preview with test data", value = "demo" },
@@ -358,7 +384,10 @@ function TW:Menu(anchor)
     local _, _, mode = string.find(value, "^d:(.*)$")
     local _, _, role = string.find(value, "^r:(.*)$")
     local _, _, col = string.find(value, "^col:(.*)$")
-    if mode then
+    local _, _, alpha = string.find(value, "^o:(.*)$")
+    if alpha then
+      TW:SetOpacity(tonumber(alpha))
+    elseif mode then
       TW:SetDisplay(mode)
     elseif role then
       s.tankMode = role

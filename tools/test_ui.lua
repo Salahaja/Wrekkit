@@ -2317,6 +2317,33 @@ step("every settings tab fits the screen, and shows only its own controls", func
   UI.settings:Create()
 end)
 
+step("each window's opacity reaches its frame", function()
+  UI.report:Show()
+  UI.SetReportOpacity(0.4)
+  if math.abs((UI.report.frame.bg._a or 1) - 0.4) > 0.001 then
+    error("report opacity not applied: " .. tostring(UI.report.frame.bg._a))
+  end
+  UI.SetReportOpacity(1)
+  if Wrekkit.db.reportOpacity ~= nil then error("full opacity should not be stored") end
+
+  UI.threat:SetDisplay("window")
+  UI.threat:SetOpacity(0.5)
+  if math.abs((UI.threat.frame.bg._a or 1) - 0.5) > 0.001 then
+    error("threat window opacity not applied")
+  end
+  UI.threat:SetDisplay("docked")
+  UI.threat:SetOpacity(0.6)
+  if math.abs(UI.meter:Settings().opacity - 0.6) > 0.001 then
+    error("docked, the threat window's opacity should set the meter's too")
+  end
+  if math.abs((UI.threat.frame.bg._a or 1) - 0.6) > 0.001 then
+    error("docked threat window does not match the meter")
+  end
+  UI.threat:SetOpacity(1)
+  Wrekkit.threat:Settings().opacity = 1
+  UI.threat:SetDisplay("window")
+end)
+
 step("a finished segment's view is reused until it changes", function()
   UI.meter:Settings().segment = "last"
   UI.meter:SetMetric("damage")

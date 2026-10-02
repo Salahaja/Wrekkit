@@ -981,7 +981,9 @@ step("threat meter", function()
 
   local run = SlashCmdList["WREKKIT"]
   for _, c in ipairs({ "threat", "threat", "threat docked", "threat meter", "threat tank",
-                       "threat tank", "threat test", "threat move", "threat move", "threat resetpos", "threat config", "threat disable",
+                       "threat tank", "threat test", "threat move", "threat move", "threat resetpos",
+                       "opacity meter 60", "opacity threat 50", "opacity report 70", "opacity 100",
+                       "opacity threat 100", "opacity report 100", "opacity nonsense", "threat config", "threat disable",
                        "threat enable", "threat bogus", "mode threat", "mode damage",
                        "threat window" }) do
     run(c)

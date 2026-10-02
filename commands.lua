@@ -67,6 +67,7 @@ local HELP = {
   { "/wrek threat move", "drag the target-frame % where you want it" },
   { "/wrek threat resetpos", "put the target-frame % back above the frame" },
   { "/wrek threat config", "threat settings" },
+  { "/wrek opacity <win> <n>", "meter, threat or report window opacity, 20-100" },
   { "/wrek lock", "lock the meter in place" },
   { "/wrek minimap", "toggle the minimap button" },
   { "/wrek resume <min>", "how long a break still counts as the same session" },
@@ -342,6 +343,27 @@ local function handler(msg)
     else
       W.Print("/wrek threat [window | docked | meter | off | tank | move | resetpos | test | config | enable | disable]")
     end
+
+  elseif cmd == "opacity" or cmd == "alpha" then
+    -- /wrek opacity <meter|threat|report> <20-100>
+    local which, n = a[2], tonumber(a[3])
+    if not n and tonumber(which) then which, n = "meter", tonumber(which) end
+    if not n or (which ~= "meter" and which ~= "threat" and which ~= "report") then
+      W.Print("/wrek opacity <meter | threat | report> <20-100>")
+      return
+    end
+    local v = n / 100
+    if which == "meter" then
+      W.ui.meter:Settings().opacity = math.max(0.2, math.min(1, v))
+      W.ui.meter:ApplyLayout()
+      if W.ui.threat.frame then W.ui.threat:ApplyLayout() end
+    elseif which == "threat" then
+      W.ui.threat:SetOpacity(v)
+    else
+      W.ui.SetReportOpacity(v)
+    end
+    W.Print(which .. " opacity " .. math.floor(math.max(20, math.min(100, n))) .. "%.")
+    if W.ui.settings.Refresh then W.ui.settings:Refresh() end
 
   elseif cmd == "debug" then
     W.db.debug = not W.db.debug
