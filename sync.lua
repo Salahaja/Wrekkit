@@ -727,6 +727,8 @@ function S:OnMessage(prefix, msg, channel, sender)
     end
 
     W.Print("Got |cffe0a22c" .. (rec.name or "?") .. "|r from " .. sender .. ".")
+    -- A replaced pull can carry the same totals as the copy it replaced.
+    if W.ui and W.ui.meter and W.ui.meter.InvalidateView then W.ui.meter:InvalidateView() end
     if W.ui and W.ui.report and W.ui.report.frame then W.ui.report:Refresh() end
     if W.ui and W.ui.peers then W.ui.peers:Refresh() end
   end

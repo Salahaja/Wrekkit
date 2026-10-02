@@ -4,19 +4,20 @@ Threat where you are already looking: on the target frame, on the
 nameplates, and -- when it matters -- across the middle of the screen.
 
   target frame   a percentage badge and a coloured border around whichever
-                 target frame is in use: the stock one, pfUI's, or any frame
+                 target frame is in use: pfUI's, the stock one, or any frame
                  named in settings (Luna, XPerl, ...)
-  nameplates     a percentage beside each mob's plate, coloured by level.
-                 The target's is live; a mob you tabbed off keeps its last
-                 reading, dimmed, for a few seconds; in tank mode every mob
-                 the server reports on gets one.
+  nameplates     a percentage beside each mob's plate, or the plate's own
+                 health bar tinted by threat. Works on the stock plates and
+                 on ShaguPlates and pfUI's, picked in settings or found on
+                 its own. The target's is live; a mob you tabbed off keeps
+                 its last reading, dimmed, for a few seconds; a tank sees
+                 every mob they hold, and LOST on one that turned away.
   warnings       large text and a red edge around the screen when you cross
-                 the warning or danger line, or lose aggro you were holding
+                 a line, pull aggro, or -- tanking -- lose a mob
 
-Everything here is drawn on its own frames, parented to UIParent or to the
-plate, and never re-skins another addon's frames: a unit-frame addon that
-redraws itself every frame would simply paint over anything done to its
-own textures.
+Everything is drawn on frames of our own. The one exception is the plate
+health-bar tint, which is the point of that option; it is put back the way
+the plate addon had it as soon as it is switched off or the mob drops out.
 ]]
 
 local W = Wrekkit
@@ -36,16 +37,23 @@ local PLATE_BORDER = "Interface\\Tooltips\\Nameplate-Border"
 -- target frame
 ----------------------------------------------------------------------
 
---- The target frame to decorate: a name from settings, then pfUI's, then
---- the stock one. Returns nil when none of them is on screen.
+--[[ The target frame to decorate: a name from settings, then pfUI's, then
+     the stock one. The candidate list is rebuilt only when the setting
+     changes, since this is asked ten times a second. ]]
+local candidates, candidatesFor = {}, nil
+
 function TF:TargetFrame()
   local s = T:Settings()
-  local candidates = {}
-  if s.frameName and s.frameName ~= "" then table.insert(candidates, s.frameName) end
-  table.insert(candidates, "pfTarget")
-  table.insert(candidates, "TargetFrame")
-  for _, name in ipairs(candidates) do
-    local f = getglobal and getglobal(name)
+  if candidatesFor ~= s.frameName then
+    candidatesFor = s.frameName
+    candidates = {}
+    if s.frameName ~= "" then table.insert(candidates, s.frameName) end
+    table.insert(candidates, "pfTarget")
+    table.insert(candidates, "TargetFrame")
+  end
+  if not getglobal then return nil end
+  for i = 1, table.getn(candidates) do
+    local f = getglobal(candidates[i])
     if type(f) == "table" and f.IsVisible and f:IsVisible() then return f end
   end
   return nil
@@ -79,60 +87,65 @@ function TF:CreateIndicator()
 end
 
 --- Fit the border to the frame and put the badge on the chosen side.
+--- Re-anchored only when something changed: SetPoint is not free.
 function TF:PlaceIndicator(target)
   local ind = self.ind
   local s = T:Settings()
-  local sc = s.frameScale or 1
-  if self.indTarget ~= target or self.indAnchor ~= s.frameAnchor or self.indScale ~= sc then
-    self.indTarget, self.indAnchor, self.indScale = target, s.frameAnchor, sc
-    ind:ClearAllPoints()
-    ind:SetAllPoints(target)
-
-    local b = ind.badge
-    b:SetWidth(math.floor(46 * sc + 0.5))
-    b:SetHeight(math.floor(18 * sc + 0.5))
-    b:ClearAllPoints()
-    local a = s.frameAnchor or "TOP"
-    if a == "BOTTOM" then
-      b:SetPoint("TOP", target, "BOTTOM", 0, -2)
-    elseif a == "LEFT" then
-      b:SetPoint("RIGHT", target, "LEFT", -2, 0)
-    elseif a == "RIGHT" then
-      b:SetPoint("LEFT", target, "RIGHT", 2, 0)
-    else
-      b:SetPoint("BOTTOM", target, "TOP", 0, 2)
-    end
-
-    local e = ind.edges
-    local th = 2
-    e[1]:ClearAllPoints()
-    e[1]:SetPoint("BOTTOMLEFT", target, "TOPLEFT", -th, 0)
-    e[1]:SetPoint("BOTTOMRIGHT", target, "TOPRIGHT", th, 0)
-    e[1]:SetHeight(th)
-    e[2]:ClearAllPoints()
-    e[2]:SetPoint("TOPLEFT", target, "BOTTOMLEFT", -th, 0)
-    e[2]:SetPoint("TOPRIGHT", target, "BOTTOMRIGHT", th, 0)
-    e[2]:SetHeight(th)
-    e[3]:ClearAllPoints()
-    e[3]:SetPoint("TOPRIGHT", target, "TOPLEFT", 0, 0)
-    e[3]:SetPoint("BOTTOMRIGHT", target, "BOTTOMLEFT", 0, 0)
-    e[3]:SetWidth(th)
-    e[4]:ClearAllPoints()
-    e[4]:SetPoint("TOPLEFT", target, "TOPRIGHT", 0, 0)
-    e[4]:SetPoint("BOTTOMLEFT", target, "BOTTOMRIGHT", 0, 0)
-    e[4]:SetWidth(th)
+  local sc = s.frameScale
+  if self.indTarget == target and self.indAnchor == s.frameAnchor and self.indScale == sc then
+    return
   end
+  self.indTarget, self.indAnchor, self.indScale = target, s.frameAnchor, sc
+  ind:ClearAllPoints()
+  ind:SetAllPoints(target)
+
+  local b = ind.badge
+  b:SetWidth(math.floor(50 * sc + 0.5))
+  b:SetHeight(math.floor(18 * sc + 0.5))
+  b:ClearAllPoints()
+  local a = s.frameAnchor
+  if a == "BOTTOM" then
+    b:SetPoint("TOP", target, "BOTTOM", 0, -2)
+  elseif a == "LEFT" then
+    b:SetPoint("RIGHT", target, "LEFT", -2, 0)
+  elseif a == "RIGHT" then
+    b:SetPoint("LEFT", target, "RIGHT", 2, 0)
+  else
+    b:SetPoint("BOTTOM", target, "TOP", 0, 2)
+  end
+
+  local e = ind.edges
+  local th = 2
+  e[1]:ClearAllPoints()
+  e[1]:SetPoint("BOTTOMLEFT", target, "TOPLEFT", -th, 0)
+  e[1]:SetPoint("BOTTOMRIGHT", target, "TOPRIGHT", th, 0)
+  e[1]:SetHeight(th)
+  e[2]:ClearAllPoints()
+  e[2]:SetPoint("TOPLEFT", target, "BOTTOMLEFT", -th, 0)
+  e[2]:SetPoint("TOPRIGHT", target, "BOTTOMRIGHT", th, 0)
+  e[2]:SetHeight(th)
+  e[3]:ClearAllPoints()
+  e[3]:SetPoint("TOPRIGHT", target, "TOPLEFT", 0, 0)
+  e[3]:SetPoint("BOTTOMRIGHT", target, "BOTTOMLEFT", 0, 0)
+  e[3]:SetWidth(th)
+  e[4]:ClearAllPoints()
+  e[4]:SetPoint("TOPLEFT", target, "TOPRIGHT", 0, 0)
+  e[4]:SetPoint("BOTTOMLEFT", target, "BOTTOMRIGHT", 0, 0)
+  e[4]:SetWidth(th)
 end
 
 function TF:UpdateIndicator()
   local s = T:Settings()
   local ind = self.ind
   local cur = s.enabled and s.frame and T:Live()
-  local pct, color, _, text
-  if cur then pct, color, _, text = T:Display(cur) end
+  local pct, color, text
+  if cur then
+    local _
+    pct, color, _, text = T:Display(cur)
+  end
   local target = pct and self:TargetFrame()
   if not target then
-    if ind then ind:Hide() end
+    if ind and ind:IsShown() then ind:Hide() end
     return
   end
   ind = self:CreateIndicator()
@@ -147,9 +160,9 @@ function TF:UpdateIndicator()
     ind.badge:Hide()
   end
 
-  -- Danger pulses; anything below it is a steady line.
+  -- Red pulses; anything calmer is a steady line.
   local alpha = 0.85
-  if T:Level(pct) == "danger" and text ~= "tank" then
+  if color == T.RED then
     alpha = 0.55 + 0.45 * math.abs(math.sin(GetTime() * 5))
   end
   for _, e in ipairs(ind.edges) do
@@ -167,49 +180,97 @@ end
 -- nameplates
 ----------------------------------------------------------------------
 
-TF.plates = {}     -- plate frame -> true, every plate seen so far
+--[[ Plates are children of WorldFrame. The client creates them as mobs come
+     into view and reuses them after; it never destroys one. So only the
+     children added since the last look need checking -- the count says how
+     many -- which is the same trick ShaguPlates and pfUI use, and it means
+     the usual pass builds no table at all. ]]
+TF.plates = {}     -- every plate seen, in the order found
+local plateSet = {}
+local scanned = 0
 
 --- Is this child of WorldFrame a nameplate? The plate's first region is
 --- its border texture, which no other frame there carries.
 local function isPlate(frame)
-  if frame.wrekIsPlate ~= nil then return frame.wrekIsPlate end
   local ok, result = pcall(function()
     if frame:GetName() then return false end
     local region = frame:GetRegions()
     if not region or not region.GetTexture then return false end
     return region:GetTexture() == PLATE_BORDER
   end)
-  frame.wrekIsPlate = (ok and result) and true or false
-  return frame.wrekIsPlate
+  return ok and result == true
 end
 
 function TF:ScanPlates()
   if not WorldFrame or not WorldFrame.GetChildren then return end
+  local n = WorldFrame.GetNumChildren and WorldFrame:GetNumChildren()
+  if n and n <= scanned then return end
   local kids = { WorldFrame:GetChildren() }
-  for i = 1, table.getn(kids) do
+  local total = table.getn(kids)
+  for i = (n and scanned or 0) + 1, total do
     local k = kids[i]
-    if not self.plates[k] and isPlate(k) then self.plates[k] = true end
+    if k and not plateSet[k] and isPlate(k) then
+      plateSet[k] = true
+      table.insert(self.plates, k)
+    end
   end
+  scanned = total
+end
+
+--[[ Which plate addon is drawing this plate.
+
+     ShaguPlates and pfUI share one design: each hangs its own frame on the
+     stock plate as plate.nameplate, hides the stock health bar, and draws
+     its own as plate.nameplate.health. "auto" uses theirs when it is
+     there; forcing "stock" ignores it, and forcing "shagu" falls back to
+     the stock bar on a plate they have not dressed yet. ]]
+local function customPlate(plate)
+  local np = plate.nameplate
+  if type(np) == "table" and type(np.health) == "table" and np.health.SetStatusBarColor then
+    return np
+  end
+  return nil
+end
+
+--- The health bar actually on screen for a plate.
+local function healthBar(plate, style)
+  if style ~= "stock" then
+    local np = customPlate(plate)
+    if np then return np.health, np end
+  end
+  if plate.wrekStockBar == nil then
+    local bar = plate.GetChildren and plate:GetChildren()
+    plate.wrekStockBar = (bar and bar.SetStatusBarColor) and bar or false
+  end
+  return plate.wrekStockBar or nil, nil
 end
 
 --- The mob a plate belongs to. SuperWoW names the plate's unit outright;
---- without it the targeted mob's plate is the opaque one with its name.
+--- without it, the name on the plate is the best there is.
 local function plateKey(plate)
   local ok, guid = pcall(plate.GetName, plate, 1)
   if ok and type(guid) == "string" and string.sub(guid, 1, 2) == "0x" then
     return guid, guid
   end
-  local regions = { plate:GetRegions() }
-  local nameText = regions[3]
-  local name = nameText and nameText.GetText and nameText:GetText()
+  if plate.wrekNameText == nil then
+    local _, _, nameText = plate:GetRegions()
+    plate.wrekNameText = (nameText and nameText.GetText) and nameText or false
+  end
+  local fs = plate.wrekNameText
+  local name = fs and fs:GetText()
   if not name then return nil end
   return "name:" .. name, nil
 end
 
 local function plateOverlay(plate)
-  if plate.wrekThreat then return plate.wrekThreat end
-  local o = CreateFrame("Frame", nil, plate)
-  o:SetWidth(40) o:SetHeight(14)
+  local o = plate.wrekThreat
+  if o then return o end
+  o = CreateFrame("Frame", nil, plate)
+  o:SetWidth(44) o:SetHeight(14)
+  -- Above ShaguPlates' and pfUI's own frames, which sit a few levels up.
+  if o.SetFrameLevel and plate.GetFrameLevel then
+    o:SetFrameLevel((plate:GetFrameLevel() or 0) + 12)
+  end
   -- A plain font string, not UI.Text: those follow the addon's text-size
   -- setting, and the plates have a size setting of their own.
   o.text = o:CreateFontString(nil, "OVERLAY")
@@ -220,58 +281,79 @@ local function plateOverlay(plate)
   return o
 end
 
-local function plateBar(plate)
-  if plate.wrekBar ~= nil then return plate.wrekBar or nil end
-  local bar = plate.GetChildren and plate:GetChildren()
-  if bar and bar.SetStatusBarColor then
-    plate.wrekBar = bar
-  else
-    plate.wrekBar = false
+--[[ Give a tinted bar back to whoever owns it.
+
+     The stock bar gets the colour it had. ShaguPlates and pfUI cache the
+     colour they last set and only repaint when their own answer changes,
+     so the cache is cleared and an update queued: they repaint on their
+     next frame with whatever is right for the mob now. ]]
+local function restoreBar(plate)
+  local t = plate.wrekTint
+  if not t then return end
+  plate.wrekTint = nil
+  if t.np then
+    if type(t.np.cache) == "table" then
+      t.np.cache.r, t.np.cache.g, t.np.cache.b = nil, nil, nil
+    end
+    t.np.eventcache = true
+  elseif t.bar then
+    t.bar:SetStatusBarColor(t.r, t.g, t.b)
   end
-  return plate.wrekBar or nil
 end
 
-local function restoreBar(plate)
-  local bar = plate.wrekBar
-  if bar and plate.wrekTinted then
-    local c = plate.wrekTinted
-    bar:SetStatusBarColor(c[1], c[2], c[3])
-    plate.wrekTinted = nil
+local function tintBar(plate, bar, np, color)
+  local t = plate.wrekTint
+  if not t or t.bar ~= bar then
+    restoreBar(plate)
+    local r, g, b = bar:GetStatusBarColor()
+    t = { bar = bar, np = np, r = r or 1, g = g or 0, b = b or 0 }
+    plate.wrekTint = t
   end
+  -- Only when it differs: their own update may have painted over ours.
+  local r, g, b = bar:GetStatusBarColor()
+  if r ~= color[1] or g ~= color[2] or b ~= color[3] then
+    bar:SetStatusBarColor(color[1], color[2], color[3])
+  end
+end
+
+local function hidePlate(plate)
+  local o = plate.wrekThreat
+  if o and o:IsShown() then o:Hide() end
+  restoreBar(plate)
 end
 
 function TF:UpdatePlate(plate, s)
-  local o = plate.wrekThreat
   if not plate:IsVisible() then
-    if o then o:Hide() end
+    hidePlate(plate)
     return
   end
   local key, guid = plateKey(plate)
   local pct, color, fresh, text
   if key then pct, color, fresh, text = T:ForMob(key, guid) end
   if not pct then
-    if o then o:Hide() end
-    restoreBar(plate)
+    hidePlate(plate)
     return
   end
 
-  o = plateOverlay(plate)
+  local bar, np = healthBar(plate, s.plateStyle)
+  local anchor = bar or plate
+
   if s.platePercent then
-    local size = s.plateSize or 11
-    if o.size ~= size then
-      o.size = size
-      o.text:SetFont(UI.fontNum, size, "OUTLINE")
-      o:SetHeight(size + 4)
+    local o = plateOverlay(plate)
+    if o.size ~= s.plateSize then
+      o.size = s.plateSize
+      o.text:SetFont(UI.fontNum, s.plateSize, "OUTLINE")
+      o:SetHeight(s.plateSize + 4)
     end
-    if o.anchor ~= s.plateAnchor then
-      o.anchor = s.plateAnchor
-      local bar = plateBar(plate) or plate
+    -- Re-anchored when the side changes or the plate addon swaps bars.
+    if o.side ~= s.plateAnchor or o.anchoredTo ~= anchor then
+      o.side, o.anchoredTo = s.plateAnchor, anchor
       o:ClearAllPoints()
-      local a = s.plateAnchor or "RIGHT"
-      if a == "LEFT" then o:SetPoint("RIGHT", bar, "LEFT", -2, 0)
-      elseif a == "TOP" then o:SetPoint("BOTTOM", bar, "TOP", 0, 10)
-      elseif a == "BOTTOM" then o:SetPoint("TOP", bar, "BOTTOM", 0, -2)
-      else o:SetPoint("LEFT", bar, "RIGHT", 2, 0) end
+      local a = s.plateAnchor
+      if a == "LEFT" then o:SetPoint("RIGHT", anchor, "LEFT", -2, 0)
+      elseif a == "TOP" then o:SetPoint("BOTTOM", anchor, "TOP", 0, 2)
+      elseif a == "BOTTOM" then o:SetPoint("TOP", anchor, "BOTTOM", 0, -2)
+      else o:SetPoint("LEFT", anchor, "RIGHT", 4, 0) end
     end
     o.text:SetText(text)
     if s.plateColor == "none" then
@@ -280,18 +362,15 @@ function TF:UpdatePlate(plate, s)
       o.text:SetTextColor(color[1], color[2], color[3], 1)
     end
     o:SetAlpha(fresh and 1 or 0.55)
-    o:Show()
-  elseif o then
-    o:Hide()
+    if not o:IsShown() then o:Show() end
+  elseif plate.wrekThreat and plate.wrekThreat:IsShown() then
+    plate.wrekThreat:Hide()
   end
 
-  local bar = plateBar(plate)
-  if s.plateColor == "bar" and bar then
-    if not plate.wrekTinted then
-      local r, g, b = bar:GetStatusBarColor()
-      plate.wrekTinted = { r or 1, g or 0, b or 0 }
-    end
-    bar:SetStatusBarColor(color[1], color[2], color[3])
+  -- A remembered reading is not tinted: a bar coloured by a number from
+  -- several seconds ago reads as current, and the dimmed text does not.
+  if s.plateColor == "bar" and bar and fresh then
+    tintBar(plate, bar, np, color)
   else
     restoreBar(plate)
   end
@@ -299,33 +378,32 @@ end
 
 function TF:UpdatePlates()
   local s = T:Settings()
-  if not (s.enabled and s.plates) then
+  local plates = self.plates
+  --[[ Nothing to show on any plate: put everything back once, then skip
+       the pass altogether. This runs ten times a second, and outside a
+       fight that is every time. ]]
+  if not (s.enabled and s.plates) or not T:AnythingForPlates() then
     if self.platesShown then
-      for plate in pairs(self.plates) do
-        if plate.wrekThreat then plate.wrekThreat:Hide() end
-        restoreBar(plate)
-      end
-      self.platesShown = nil
-    end
-    return
-  end
-  --[[ Nothing to put on any plate: skip the walk over WorldFrame. This
-       runs ten times a second, and outside a fight that is every time. ]]
-  if not T.current and next(T.memory) == nil and next(T.tankMobs) == nil then
-    if self.platesShown then
-      for plate in pairs(self.plates) do
-        if plate.wrekThreat then plate.wrekThreat:Hide() end
-        restoreBar(plate)
-      end
+      for i = 1, table.getn(plates) do hidePlate(plates[i]) end
       self.platesShown = nil
     end
     return
   end
   self.platesShown = true
   self:ScanPlates()
-  for plate in pairs(self.plates) do
-    self:UpdatePlate(plate, s)
+  for i = 1, table.getn(plates) do
+    self:UpdatePlate(plates[i], s)
   end
+end
+
+--- Which plate addon is in charge right now, in words, for settings.
+function TF:PlateAddon()
+  if ShaguPlates then return "ShaguPlates" end
+  if pfUI and pfUI.nameplates then return "pfUI" end
+  for i = 1, table.getn(self.plates) do
+    if customPlate(self.plates[i]) then return "ShaguPlates/pfUI" end
+  end
+  return "stock"
 end
 
 ----------------------------------------------------------------------
@@ -368,16 +446,21 @@ function TF:CreateWarning()
   return f
 end
 
+local WARN_COLOR = { 1.00, 0.55, 0.10 }
+local DANGER_COLOR = { 0.95, 0.20, 0.20 }
 local function levelColor(level)
-  if level == "danger" then return { 0.95, 0.20, 0.20 } end
-  return { 1.00, 0.55, 0.10 }
+  if level == "danger" then return DANGER_COLOR end
+  return WARN_COLOR
 end
 
 function TF:Message(text, level)
   local f = self:CreateWarning()
   local c = levelColor(level)
-  local size = T:Settings().textSize or 26
-  f.text:SetFont(UI.font, size, "OUTLINE")
+  local size = T:Settings().textSize
+  if f.textSize ~= size then
+    f.textSize = size
+    f.text:SetFont(UI.font, size, "OUTLINE")
+  end
   f.text:SetText(text)
   f.text:SetTextColor(c[1], c[2], c[3], 1)
   f.text:SetAlpha(1)
@@ -412,7 +495,6 @@ function TF:UpdateWarning()
   if self.messageAt then
     local age = now - self.messageAt
     if age < MESSAGE_TIME then
-      f.text:SetAlpha(1)
       textOn = true
     elseif age < MESSAGE_TIME + 0.6 then
       f.text:SetAlpha(1 - (age - MESSAGE_TIME) / 0.6)
@@ -474,11 +556,12 @@ function TF:Update()
 end
 
 local function tick()
-  local now = GetTime()
   TF:UpdateWarning()
+  local now = GetTime()
   if now - (TF.lastTick or 0) < TICK then return end
   TF.lastTick = now
-  TF:Update()
+  TF:UpdateIndicator()
+  TF:UpdatePlates()
   UI.threat:UpdateVisibility()
   TF:UpdateMeterSwitch()
 end

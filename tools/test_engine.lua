@@ -232,6 +232,7 @@ dofile("diagnostics.lua")
 dofile("store.lua")
 dofile("sync.lua")
 dofile("announce.lua")
+dofile("threat.lua")
 
 WrekkitDB = nil
 Wrekkit.InitDB()
@@ -939,6 +940,8 @@ local function simulateReload()
   Wrekkit.encounter.inCombat = false
   Wrekkit.store.journalSession = nil
   Wrekkit.store.journalBytes = nil
+  Wrekkit.store.journalExists = nil
+  Wrekkit.store.needNewline = nil
   Wrekkit.store.recovered = nil
   Wrekkit.capture.units = {}
 end
@@ -1344,6 +1347,127 @@ Wrekkit.store:Save()
 check("  a full save", Wrekkit.store.journalBytes, string.len(journal()))
 pulls(1)
 check("  and the appends after them", Wrekkit.store.journalBytes, string.len(journal()))
+
+-- A crash in the middle of a write, rather than between them.
+print("\n-- crash during a write --")
+
+-- Torn append: the pull being written when the client died is cut off.
+fresh()
+pulls(2)
+saved = cleanLogout()
+pulls(1)
+local whole = journal()
+DISK[Wrekkit.store:Filename()] = string.sub(whole, 1, string.len(whole) - 40)
+login(saved)
+check("a pull torn mid-write is dropped, not half-imported",
+  table.getn(Wrekkit.db.encounters), 2)
+local reread, dropped = Wrekkit.store:Deserialize(journal())
+check("  the journal is repaired at login", dropped, 0)
+check("  and ends on a whole line", string.sub(journal(), -1), "\n")
+pulls(1)
+reread, dropped = Wrekkit.store:Deserialize(journal())
+check("  the next pull lands whole after it", table.getn(reread), 3)
+check("  with nothing torn", dropped, 0)
+
+-- A torn tail with no repair in between: the next append must not glue
+-- its first line onto the torn one.
+fresh()
+pulls(1)
+whole = journal()
+DISK[Wrekkit.store:Filename()] = string.sub(whole, 1, string.len(whole) - 5)
+simulateReload()
+Wrekkit.store:ReadJournal()
+pulls(1)
+reread, dropped = Wrekkit.store:Deserialize(journal())
+check("an append after a torn tail starts on a new line", table.getn(reread), 1)
+check("  the torn one is the only loss", dropped, 1)
+
+-- Torn rewrite: the backup was written whole first, the journal half way.
+fresh()
+saved = cleanLogout()
+pulls(3)
+Wrekkit.SetLocked(Wrekkit.db.encounters[1], true)    -- a full rewrite
+whole = journal()
+check("a rewrite writes the backup too",
+  DISK[Wrekkit.store:BackupName()] == whole, true)
+DISK[Wrekkit.store:Filename()] = string.sub(whole, 1, math.floor(string.len(whole) / 2))
+login(saved)
+check("a journal torn mid-rewrite is recovered from the backup",
+  table.getn(Wrekkit.db.encounters), 3)
+reread, dropped = Wrekkit.store:Deserialize(journal())
+check("  and repaired from it", table.getn(reread), 3)
+
+-- Files from before the end marker read exactly as they always did.
+local legacy = string.gsub(string.gsub(journal(), "Z~[^\n]*\n", ""), "V~2\n", "")
+reread, dropped = Wrekkit.store:Deserialize(legacy)
+check("a journal without end markers still reads", table.getn(reread), 3)
+check("  and nothing in it is called torn", dropped, 0)
+
+-- Growth: past the limit the journal is cut back to the history.
+fresh(4)
+Wrekkit.store.COMPACT_AT = 2000
+pulls(7)
+saved = cleanLogout()
+login(saved)
+check("an oversized journal is compacted to the history",
+  table.getn((Wrekkit.store:Deserialize(journal()))), 4)
+check("  its length tracked", Wrekkit.store.journalBytes, string.len(journal()))
+Wrekkit.store.COMPACT_AT = 1024 * 1024
+
+print("\n-- freeing memory after a fight --")
+local collected = 0
+local realCollect = collectgarbage
+collectgarbage = function(...)
+  if select("#", ...) == 0 then collected = collected + 1 end
+  return realCollect(...)
+end
+Wrekkit.tidyFloor = -1e9
+local wasInCombat = IN_COMBAT
+IN_COMBAT = true
+check("never in combat", Wrekkit.Tidy(true), false)
+IN_COMBAT = false
+Wrekkit.encounter.live = { }
+check("never while a pull is open", Wrekkit.Tidy(true), false)
+Wrekkit.encounter.live = nil
+check("out of combat, with memory to free, it collects", Wrekkit.Tidy(), true)
+check("  once", collected, 1)
+check("not again until memory has grown", Wrekkit.Tidy(), false)
+check("  forced, it does", Wrekkit.Tidy(true), true)
+local scheduled = 0
+local realAfter = Wrekkit.After
+Wrekkit.After = function(delay, fn, key)
+  if key == "tidy" then scheduled = scheduled + 1 end
+  return realAfter(delay, fn, key)
+end
+Wrekkit.ScheduleTidy()
+check("a finished fight schedules it", scheduled, 1)
+Wrekkit.db.tidy = false
+Wrekkit.ScheduleTidy()
+check("  switched off, it does not", scheduled, 1)
+Wrekkit.db.tidy = nil
+Wrekkit.After = realAfter
+Wrekkit.Cancel("tidy")
+IN_COMBAT = wasInCombat
+collectgarbage = realCollect
+
+print("\n-- saved settings are kept in range --")
+WrekkitDB = { fontScale = 0, meter = { rowHeight = 0, opacity = 7, combat = "sometimes",
+  metric = "gone", segment = "back9", window = { w = 1, h = 1 } },
+  shareChannel = "WHISPER", threat = { tankMode = true, warnAt = 95, dangerAt = 60,
+  display = "sideways", interval = 0 } }
+Wrekkit.InitDB()
+check("a zero text scale is restored", Wrekkit.db.fontScale, 0.7)
+check("a zero row height is restored", Wrekkit.db.meter.rowHeight, 10)
+check("opacity is capped", Wrekkit.db.meter.opacity, 1)
+check("an unknown combat mode is reset", Wrekkit.db.meter.combat, "show")
+check("a metric that no longer exists is reset", Wrekkit.db.meter.metric, "damage")
+check("an unknown segment is reset", Wrekkit.db.meter.segment, "current")
+check("WHISPER is not an addon channel", Wrekkit.db.shareChannel, "AUTO")
+local ts = Wrekkit.threat:Settings()
+check("tank mode from an older build carries over", ts.tankMode, "on")
+check("danger is never below warn", ts.dangerAt >= ts.warnAt, true)
+check("an unknown display is reset", ts.display, "docked")
+check("the request interval has a floor", ts.interval, 0.25)
 
 -- The history is the account's, the journals each character's. A crash on
 -- one character still comes back after another has logged out cleanly since,

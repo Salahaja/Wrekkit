@@ -4,8 +4,9 @@ The live window. Deliberately spare: a title bar that doubles as the mode
 menu, one optional toolbar, and rows. Everything else lives in the report.
 
 Interaction map, so the chrome can stay minimal:
-  left-click title    metric menu (damage, dps, healing, taken, ...)
-  right-click title   segment menu (current pull, last pull, all session)
+  left-click title    metric menu, grouped (damage, healing, survival, ...)
+  right-click title   window menu (report, threat window, compact, lock, ...)
+  click the segment   which pulls: current, the last few, all session
   left-click row      drill into that player's abilities
   right-click row     back out of the drilldown
   mouse wheel         scroll
@@ -213,7 +214,7 @@ function M:Create()
   titleHit:SetPoint("BOTTOMRIGHT", cogBtn, "BOTTOMLEFT", -2, 0)
   titleHit:RegisterForClicks("LeftButtonUp", "RightButtonUp")
   titleHit:SetScript("OnClick", function()
-    if arg1 == "RightButton" then M:SegmentMenu(titleHit) else M:MetricMenu(titleHit) end
+    if arg1 == "RightButton" then M:WindowMenu(titleHit) else M:MetricMenu(titleHit) end
   end)
 
   -- titleHit covers the whole bar, so the segment button has to sit above it
@@ -512,25 +513,65 @@ end
 -- menus
 ----------------------------------------------------------------------
 
+--[[ Metrics in groups, each under a section header. Seventeen entries in
+     one column is a list to read; five short groups is a menu to glance
+     at. A metric not named here still appears, under "Other", so adding
+     one to W.metrics can never make it unreachable. ]]
+local METRIC_GROUPS = {
+  { "Damage", { "damage", "dps", "crit" } },
+  { "Healing", { "healing", "hps", "healingTotal", "overheal" } },
+  { "Survival", { "taken", "absorbed", "deaths" } },
+  { "Utility", { "dispels", "interrupts", "consumes", "uptime" } },
+  { "Enemies", { "enemy", "enemyTaken" } },
+}
+M.METRIC_GROUPS = METRIC_GROUPS
+
 function M:MetricMenu(anchor)
   local s = self:Settings()
-  local items = {}
-  for _, m in ipairs(W.metrics.list) do
+  local items, placed = {}, {}
+  local function add(m)
+    placed[m.key] = true
     table.insert(items, { text = W.metrics.Label(m), value = m.key, checked = (m.key == s.metric) })
+  end
+  for _, g in ipairs(METRIC_GROUPS) do
+    local first = true
+    for _, key in ipairs(g[2]) do
+      local m = W.metrics.byKey[key]
+      if m then
+        if first then
+          table.insert(items, { text = g[1], header = true })
+          first = false
+        end
+        add(m)
+      end
+    end
+  end
+  local other = false
+  for _, m in ipairs(W.metrics.list) do
+    if not placed[m.key] then
+      if not other then
+        table.insert(items, { text = "Other", header = true })
+        other = true
+      end
+      add(m)
+    end
   end
   -- Not in W.metrics: it ranks nobody's recorded totals, it is the server's
   -- live table for your target, so the report has nothing to sort by it.
-  table.insert(items, { text = "Threat (live)", value = "threat", checked = (s.metric == "threat") })
+  table.insert(items, { text = "Live", header = true })
+  table.insert(items, { text = "Threat", value = "threat", checked = (s.metric == "threat") })
+
   UI.Menu(self.frame, anchor, items, function(value)
-    s.metric = value
-    self.drill = nil
-    self:Refresh()
-  end, 170)
+    if not value then return end
+    M:SetMetric(value)
+  end, 180)
 end
 
+--- The segment picker: which pulls the meter covers, and nothing else.
 function M:SegmentMenu(anchor)
   local s = self:Settings()
   local items = {
+    { text = "Show", header = true },
     { text = "Current pull", value = "current", checked = (s.segment == "current") },
   }
 
@@ -551,21 +592,44 @@ function M:SegmentMenu(anchor)
 
   table.insert(items,
     { text = "All Session", value = "overall", checked = (s.segment == "overall") })
-  table.insert(items, { text = "-- windows --", value = nil, disabled = true })
 
-  local rest = {
-    { text = "Open report", value = "report" },
-    { text = s.showToolbar and "Hide toolbar" or "Show toolbar", value = "toolbar" },
+  UI.Menu(self.frame, anchor, items, function(value)
+    if not value then return end
+    s.segment = value
+    self.drill = nil
+    self.drillAbility = nil
+    self:Refresh()
+  end, 200)
+end
+
+--[[ Everything about the window itself, on a right-click of the title.
+
+     These used to sit under the segment list, behind a "-- windows --"
+     divider, so changing what the meter showed and hiding it altogether
+     were one misclick apart. ]]
+function M:WindowMenu(anchor)
+  local s = self:Settings()
+  local ts = W.threat:Settings()
+  local threatShown = (ts.display == "window" or ts.display == "docked")
+  local items = {
+    { text = "Windows", header = true },
+    { text = "Full report", value = "report" },
+    { text = "Threat window", value = "threat", checked = threatShown },
+    { text = "Announce to chat...", value = "announce" },
+    { text = "Meter", header = true },
+    { text = "Compact", value = "compact", checked = s.compact == true },
+    { text = "Toolbar", value = "toolbar", checked = s.showToolbar ~= false },
+    { text = "Lock position", value = "lock", checked = s.locked == true },
+    { text = "Log", header = true },
     { text = "Start a new log", value = "reset" },
-    { text = "Announce to...", value = "announce" },
+    { text = "", header = true },
     { text = "Settings...", value = "settings" },
     { text = "Hide meter", value = "hide" },
   }
-  for i = 1, table.getn(rest) do table.insert(items, rest[i]) end
 
   UI.Menu(self.frame, anchor, items, function(value)
     if value == "settings" then
-      UI.settings:Toggle()
+      UI.settings:Show()
     elseif value == "announce" then
       if s.metric == "threat" then
         W.Print("threat is live and changes every half second; switch the meter " ..
@@ -573,22 +637,30 @@ function M:SegmentMenu(anchor)
         return
       end
       UI.AnnounceMenu(self.frame, anchor, M:AnnounceContext())
+    elseif value == "threat" then
+      if threatShown then
+        UI.threat:SetDisplay("off")
+      else
+        UI.threat:SetDisplay(ts.lastWindow or "docked")
+      end
     elseif value == "hide" then
       M:Hide()
       W.Print("meter hidden. |cffe0a22c/wrek|r or the minimap button brings it back.")
     elseif value == "report" then
       if UI.report then UI.report:Toggle() end
+    elseif value == "compact" then
+      s.compact = not s.compact
+      self:ApplyLayout()
     elseif value == "toolbar" then
-      s.showToolbar = not s.showToolbar
-      self:ApplyToolbar()
+      s.showToolbar = not (s.showToolbar ~= false)
+      self:ApplyLayout()
+    elseif value == "lock" then
+      s.locked = not s.locked
     elseif value == "reset" then
       W.ResetData()
-    elseif value then
-      s.segment = value
-      self.drill = nil
-      self:Refresh()
     end
-  end, 150)
+    if UI.settings and UI.settings.Refresh then UI.settings:Refresh() end
+  end, 190)
 end
 
 ----------------------------------------------------------------------
@@ -727,6 +799,53 @@ local function paintStat(row, item, index)
   end)
 end
 
+--[[ The aggregate behind the rows, rebuilt only when it can have changed.
+
+     Building a view merges every actor of every pull in the segment, and
+     the meter repaints twice a second. For a segment of finished pulls --
+     the last pull, All Session -- the answer is identical every time, so
+     rebuilding it was all cost: hundreds of tables a second for a picture
+     that did not move. A pull still being recorded is never cached.
+
+     The fingerprint is cheap and catches every way a finished pull's
+     numbers move: its totals, and `rev`, which the paths that change a
+     stored pull without touching its totals (a raider's own report
+     filling a gap) bump. Anything else -- the list itself, the pet mode,
+     the per-second basis -- is compared outright. ]]
+local viewCache = {}
+
+local function cachedView(encounters, petMode)
+  local live = W.encounter.live
+  local n = table.getn(encounters)
+  local sum = 0
+  for i = 1, n do
+    local e = encounters[i]
+    if e == live then
+      viewCache.view = nil
+      return W.report:View(encounters, { petMode = petMode })
+    end
+    local t = e.totals
+    sum = sum + (e.rev or 0)
+    if t then sum = sum + (t.damage or 0) + (t.healing or 0) + (t.taken or 0) end
+  end
+  local c = viewCache
+  local basis = (W.db and W.db.dpsBasis) or "combat"
+  if c.view and c.n == n and c.sum == sum and c.petMode == petMode
+     and c.basis == basis and c.first == encounters[1] and c.last == encounters[n] then
+    return c.view
+  end
+  c.view = W.report:View(encounters, { petMode = petMode })
+  c.n, c.sum, c.petMode, c.basis = n, sum, petMode, basis
+  c.first, c.last = encounters[1], encounters[n]
+  return c.view
+end
+
+--- Forget the cached view, for anything that changes stored pulls in a
+--- way the fingerprint cannot see.
+function M:InvalidateView()
+  viewCache.view = nil
+end
+
 --- Repaints run on a ticker, so an error here would fire twice a second and
 --- bury its own first occurrence. Guard reports each distinct one once.
 function M:Refresh()
@@ -742,7 +861,7 @@ function M:RefreshInner()
   local encounters, segLabel = self:Encounters()
   local metric = W.metrics.Get(s.metric)
 
-  local view = W.report:View(encounters, { petMode = s.petMode })
+  local view = cachedView(encounters, s.petMode)
   -- Kept for the hover tooltip, which needs it to explain an empty detail.
   self.lastView = view
   local rows, _, total = W.report:Rank(view, s.metric, self:Filter())
@@ -832,19 +951,20 @@ end
 function M:RefreshThreat()
   local f = self.frame
   local cur = W.threat:Live()
+  local rows = UI.threat.Rows(cur)
   f.title:SetText("Threat")
   self.drill = nil
   self.drillAbility = nil
-  if not cur then
+  if table.getn(rows) == 0 then
     self:SetSegmentLabel("")
-    self.list:SetData({ { label = UI.threat.EmptyNote(), value = "" } }, paintStat)
-    self.footL:SetText(W.threat:Settings().tankMode and "tank mode" or "")
+    self.list:SetData({ { label = UI.threat.EmptyNote() } }, UI.threat.PaintNote)
+    self.footL:SetText("")
     self.footR:SetText("")
     return
   end
-  self:SetSegmentLabel(cur.name or "?")
-  self.list:SetData(UI.threat.Rows(cur), UI.threat.Paint)
-  self.footL:SetText("aggro: " .. (cur.tank and cur.tank.name or "?"))
+  self:SetSegmentLabel(cur and cur.name or "")
+  self.list:SetData(rows, UI.threat.Paint)
+  self.footL:SetText(cur and ("aggro: " .. (cur.tank and cur.tank.name or "?")) or "")
   self.footR:SetText(W.threat.demoUntil and "preview" or "")
 end
 
@@ -1131,5 +1251,6 @@ end
 function M:SetMetric(key)
   self:Settings().metric = key
   self.drill = nil
+  self.drillAbility = nil
   self:Refresh()
 end

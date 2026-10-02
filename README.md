@@ -85,11 +85,18 @@ conflict, and can be used together.
 
 ## Using it
 
-The live meter is **shown by default**. `/wrek` toggles it, `/wrek report`
-opens the full view, and the minimap button does both (left-click,
-right-click).
+The live meter is **shown by default**, with the threat meter docked
+underneath it once you are in a group. `/wrek` toggles the meter,
+`/wrek report` opens the full view, and the minimap button reaches all of it:
 
-To hide the meter: the **X** in its title bar, or *Hide meter* in the segment
+| minimap | |
+| --- | --- |
+| left-click | live meter |
+| right-click | full report |
+| shift-click | threat window |
+| shift-right-click | settings |
+
+To hide the meter: the **X** in its title bar, or *Hide meter* in the window
 menu (right-click the title). That choice is remembered — it stays hidden
 next login until you bring it back with `/wrek` or the minimap button, which
 the addon tells you when you close it.
@@ -100,10 +107,10 @@ Deliberately spare, so it can sit on screen during a pull.
 
 | Action | Does |
 | --- | --- |
-| click the segment | pick Current / last pull / All Session |
-| the cog | settings: compact mode, text size, recording, history |
-| left-click title | metric menu — damage, dps, healing, hps, overheal, taken, deaths, dispels, interrupts, consumables, buff uptime, crit %, enemy damage |
-| right-click title | segment menu — current pull, last pull, all session |
+| click the segment | which pulls: current, each of the last few by name, all session |
+| the cog | settings |
+| left-click title | metric menu, in groups — Damage, Healing, Survival, Utility, Enemies, and live Threat |
+| right-click title | window menu — report, threat window, announce, compact, toolbar, lock, new log, hide |
 | left-click a row | that player's ability breakdown |
 | shift-click a row | pick or unpick that player (see ★ below) |
 | left-click an ability | full detail for it (see below) |
@@ -137,12 +144,14 @@ window's title menu, or with `/wrek threat <where>`:
 
 | mode | |
 | --- | --- |
+| `docked` | (default) hangs under the damage meter at its width and moves with it |
 | `window` | its own window, moved and sized independently |
-| `docked` | hangs under the damage meter at the meter's width and moves with it |
 | `meter` | no window; the damage meter turns into the threat meter while you fight and goes back to what it showed afterwards |
 | `off` | no window -- frames, plates and warnings still work |
 
-*Threat (live)* is also in the meter's metric menu in every mode.
+*Window appears* decides when: **in a group** (default -- alone the server has
+nothing to say), **in combat**, or **always**. *Threat* is also in the meter's
+metric menu in every mode.
 
 **Rows** show threat, threat per second and a percentage, with a red
 **pull-aggro line** at the threat where aggro would move to you. Aggro moves
@@ -150,32 +159,72 @@ at 110% of the tank's threat in melee range and 130% at range, so the
 percentage defaults to *% to pull* -- 100 means it moves now. *% of tank*
 shows the raw tank-relative number instead.
 
-**On the target frame**: a percentage badge (top, bottom, left or right,
-any size) and a border coloured green -> yellow -> orange -> red. It finds
-the stock target frame or pfUI's on its own; for anything else (Luna, XPerl,
-...) type the frame's name into *Frame name*. While you hold aggro it reads
-`tank`, coloured by how close the runner-up is to taking it.
+#### Tanking
 
-**On nameplates**: the same percentage beside each mob's plate, as coloured
-text or a tinted health bar. The target is live; a mob you tabbed off keeps
-its last reading, dimmed, for a few seconds. **Tank mode** asks the server
-about every mob in the fight, so every plate gets a live number -- the view a
-tank wants on a multi-mob pull. With SuperWoW plates are matched by GUID;
-without it only by name, so identically named mobs share a reading.
+*I'm the tank* is **auto** by default: Defensive Stance, Bear / Dire Bear
+Form or Righteous Fury make you the tank, and shifting out makes you not --
+a druid who drops form to heal stops getting tank alerts without touching
+anything. *Always* and *never* override it.
 
-**Warnings** fire once on the way *up* into a level, never repeatedly while
-you sit in it: large text mid-screen, a red pulse at the screen edges and a
-sound, each switchable, at thresholds you set (*Warn at* 75%, *Danger at*
-90% by default). Tanks get *LOST AGGRO to <name>* instead.
+As the tank, Wrekkit asks the server about **every mob you hold**, not just
+your target, and:
+
+- lists them under *Mobs you are holding*: each mob, the player closest to
+  pulling it, and how close -- blue while safe, orange, then red
+- alerts **"Stabbs at 88% on Onyxian Whelp"** when anyone crosses *...at*
+  (85% of the way to pulling, by default) on any of them
+- alerts **"LOST AGGRO: Onyxian Whelp"** when one turns away, and writes
+  `LOST` on its nameplate for a few seconds. A mob that *died* is not lost
+  aggro, and is not announced as such
+- shows the runner-up's distance on the target frame and on every held
+  mob's nameplate, instead of your own number
+
+Not tanking, you get the opposite: warnings as *you* approach the line, and
+**"AGGRO! <mob> is on you"** if one turns on you, with `AGGRO` on the
+target frame.
+
+Warnings fire once on the way *up* past a line and re-arm only after
+dropping 5 points below it, so a number hovering on a line cannot repeat
+the alert every half second. Large text mid-screen, a red pulse at the
+screen edges and a sound -- each switchable.
+
+#### Target frame and nameplates
+
+**Target frame**: a percentage badge (top, bottom, left or right, any size)
+and a border coloured green -> yellow -> orange -> red. It finds pfUI's
+target frame or the stock one on its own; for anything else (Luna, XPerl,
+...) type the frame's name into *Frame name*.
+
+**Nameplates**: one setting, *Nameplate addon*, picks whose plates to draw
+on -- **auto** (default) finds ShaguPlates' or pfUI's and uses theirs,
+**ShaguPlates/pfUI** insists on them, **stock** uses Blizzard's. *Show as*
+picks a coloured percentage beside the plate, a plain one, or a **tinted
+health bar**: the plate's own bar coloured by threat, handed back to
+ShaguPlates/pfUI (or restored to its stock colour) the moment the mob has
+nothing to show. The target is live; a mob you tabbed off keeps its last
+reading, dimmed, for a few seconds. With SuperWoW plates are matched by
+GUID; without it only by name, so identically named mobs share a reading.
 
 `/wrek threat test` (or *Preview* in settings) puts 15 seconds of test data on
-every display, so the badge, plates and warnings can be placed out of combat.
+every display -- as a tank if you are one -- so the badge, plates and
+warnings can be placed out of combat. *Defaults* puts every threat setting
+back, keeping where the window is.
 
 ### Settings
 
-The cog on either title bar opens the options window: compact mode, text
-size, row height, what gets recorded, how long a break still counts as the
-same session, how much history to keep. `/wrek config` opens it too.
+The cog on either title bar opens the options window, `/wrek config` too. It
+has four tabs, each about one thing:
+
+| tab | |
+| --- | --- |
+| Meter | compact mode, text size, row height, opacity, in-combat fade, toolbar, lock |
+| Recording | what is recorded, per-second basis, log range, history, the crash journal, freeing memory |
+| Sharing | sharing your logs, the channel, live raid sync |
+| Threat | everything above under *Threat meter* |
+
+Saved settings are checked at every login and anything out of range -- an
+older build's value, a hand edit -- is put back inside what its control can
+produce, so the window can never show a value that is not in effect.
 
 Every control reads and writes the live setting rather than a copy, so it can
 never disagree with the toolbar toggles or the slash commands, and everything
@@ -400,7 +449,7 @@ that series.
 
 /wrek threat             show or hide the threat window
 /wrek threat <where>     window | docked | meter | off
-/wrek threat tank        tank mode: threat on every mob in the fight
+/wrek threat tank        cycle I'm-the-tank: auto, always, never
 /wrek threat test        15s of test data on every threat display
 /wrek threat config      threat settings
 /wrek mode threat        the meter shows live threat
@@ -454,7 +503,35 @@ continues into the same session rather than starting a third one. Loading is
 idempotent: encounters are matched by session and id, and the in-memory copy
 wins, so running `/wrek load` twice changes nothing.
 
+**A crash in the middle of a write is survived too.** Each encounter in the
+journal ends with an end marker, so one cut off by a crash is dropped rather
+than imported with half its players missing, and the next write starts on a
+fresh line so the torn tail can never run into it. A full rewrite (pruning,
+locking, compaction) goes to `Wrekkit_<character>_backup.txt` first and the
+journal second: whichever write a crash interrupts, one of the two is whole,
+and the next login merges the backup back in and repairs the journal.
+
+The journal is the crash net under the history, not a second archive, so once
+it passes a megabyte it is rewritten down to what the history holds. Login
+never has to parse a whole season of pulls.
+
 `/wrek save` still exists for a full compacted rewrite of the file.
+
+## Memory
+
+A raid fight raises hundreds of combat events a second. Wrekkit is written
+not to turn them into garbage -- the per-event detail tables are reused, the
+threat meter parses the server's replies without splitting them into tables
+and pools its rows, nameplates are found without rebuilding a list every
+frame, and the meter reuses the numbers for finished pulls instead of
+re-adding them twice a second.
+
+What a fight does use is handed back afterwards: a few seconds after you
+leave combat, if memory has grown by 2 MB since the last time, Wrekkit runs
+one garbage collection -- never during a pull, where it would be a hitch.
+*Free memory after fights* (Recording tab) turns it off. `/wrek status`
+shows the Lua memory in use (every addon together; 1.12 cannot report one
+addon's share) and what the last tidy freed.
 
 ## Saving and sharing
 

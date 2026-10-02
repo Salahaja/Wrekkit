@@ -17,9 +17,25 @@ File format (line-oriented, one concern per line):
   A~name,class,dmg,taken,heal,over,deaths,disp,int,owner,consumes
   D~time,name,class                              a death
   B~second,dd,dt,hl,eh                           one timeline bucket
+  Z~id                                           the encounter is complete
 
 Anything unrecognised is skipped, so a newer file degrades rather than
 breaking an older addon.
+
+Surviving a crash while writing, which is the one moment the journal itself
+is at risk:
+
+  torn append    every encounter ends with Z. One without it, in a file
+                 that uses Z, was cut off mid-write and is dropped rather
+                 than imported with half its players missing. The next
+                 append starts on a fresh line, so a torn tail can never
+                 run into the encounter written after it.
+  torn rewrite   a full rewrite (prune, lock, compaction) goes to a backup
+                 file FIRST, then to the journal. A crash during the second
+                 write leaves a complete backup, which the next read merges
+                 back in and repairs the journal from.
+  growth         the journal is rewritten from the history once it passes
+                 a megabyte, so login never parses a whole season of pulls.
 ]]
 
 local W = Wrekkit
@@ -27,7 +43,13 @@ W.store = {}
 local St = W.store
 
 local MAGIC = "WREKKIT1"
+-- Second line of every file this build starts: each encounter in it ends
+-- with Z, so one without is torn. Older readers skip it as unrecognised.
+local FORMAT = "V~2"
 local REC, FLD = "~", ","
+
+-- Past this the journal is compacted back down to the history.
+St.COMPACT_AT = 1024 * 1024
 
 local function esc(s)
   return (string.gsub(tostring(s or ""), "[~,\n\r]", ""))
@@ -40,6 +62,12 @@ end
 function St:Filename()
   local name = UnitName("player") or "Unknown"
   return "Wrekkit_" .. name .. ".txt"
+end
+
+--- Where a full rewrite lands first. See the note at the top.
+function St:BackupName()
+  local name = UnitName("player") or "Unknown"
+  return "Wrekkit_" .. name .. "_backup.txt"
 end
 
 function St:Available()
@@ -107,12 +135,15 @@ function St:SerializeEncounter(enc, withSessionHeader)
     end
   end
 
+  -- Written last: its presence is what says every line above it landed.
+  table.insert(out, "Z" .. REC .. int(enc.id))
+
   return table.concat(out, "\n") .. "\n"
 end
 
 --- Full snapshot of every stored encounter, replacing the file.
 function St:Serialize(encounters)
-  local out = { MAGIC .. "\n" }
+  local out = { MAGIC .. "\n" .. FORMAT .. "\n" }
   local currentSession = nil
 
   for _, enc in ipairs(encounters) do
@@ -143,10 +174,19 @@ function St:AppendEncounter(enc, session)
   local filename = self:Filename()
   local prefix = ""
 
-  -- Start the file with the magic line if it does not exist yet.
-  if not self:FileExists(filename) then
-    prefix = MAGIC .. "\n"
+  -- Start the file with the magic line if it does not exist yet. Known
+  -- after the first look: without CustomFileExists, looking means reading
+  -- the whole file, which is not something to do at the end of every pull.
+  if not self.journalExists or not self.journalBytes then
+    self.journalExists = self:FileExists(filename)
+  end
+  if not self.journalExists then
+    prefix = MAGIC .. "\n" .. FORMAT .. "\n"
     self.journalSession = nil
+  elseif self.needNewline then
+    -- The file ends mid-line: a crash tore the last write. Start clean,
+    -- or the first line of this encounter would be glued onto that one.
+    prefix = "\n"
   end
 
   -- Re-emit the session header whenever the session changes, and on the
@@ -163,14 +203,29 @@ function St:AppendEncounter(enc, session)
   end
 
   self.journalSession = enc.sessionId
+  self.needNewline = nil
   -- Keep count of the file's length. The clean-save mark records it, so the
   -- next login can tell without parsing whether anything was added since.
-  if prefix ~= "" then
+  if not self.journalExists then
     self.journalBytes = string.len(text)
   elseif self.journalBytes then
     self.journalBytes = self.journalBytes + string.len(text)
   end
+  self.journalExists = true
   return true
+end
+
+--[[ Replace the journal with `text`, crash-safely: the backup first, then
+     the journal. Whichever write a crash interrupts, one of the two files
+     is whole. Returns whether the journal itself was written. ]]
+function St:WriteFull(text)
+  pcall(WriteCustomFile, self:BackupName(), text, "w")
+  local ok = pcall(WriteCustomFile, self:Filename(), text, "w")
+  self.journalSession = nil
+  self.needNewline = nil
+  self.journalExists = ok or self.journalExists
+  self.journalBytes = ok and string.len(text) or nil
+  return ok == true
 end
 
 --[[ Rewrite the journal from what is currently in memory.
@@ -187,12 +242,9 @@ function St:Rewrite()
   if not self:Available() then return false end
   local encounters = (W.db and W.db.encounters) or {}
   local text = (table.getn(encounters) == 0)
-      and (MAGIC .. "\n")
+      and (MAGIC .. "\n" .. FORMAT .. "\n")
       or self:Serialize(encounters)
-  local ok = pcall(WriteCustomFile, self:Filename(), text, "w")
-  self.journalSession = nil
-  self.journalBytes = ok and string.len(text) or nil
-  return ok == true
+  return self:WriteFull(text)
 end
 
 --[[ How far the journal had got at a clean save. PLAYER_LOGOUT fires just
@@ -260,6 +312,7 @@ function W.PruneEncounters(days)
 
   W.db.encounters = kept
   W.store:Rewrite()
+  if W.ui and W.ui.meter and W.ui.meter.InvalidateView then W.ui.meter:InvalidateView() end
 
   if W.ui and W.ui.report and W.ui.report.frame then
     W.ui.report.state.selected = {}
@@ -293,10 +346,8 @@ function St:Save()
   end
 
   local text = self:Serialize(encounters)
-  local ok, err = pcall(WriteCustomFile, self:Filename(), text, "w")
-  self.journalBytes = ok and string.len(text) or nil
-  if not ok then
-    W.Print("Save failed: " .. tostring(err))
+  if not self:WriteFull(text) then
+    W.Print("Save failed: the client would not write CustomData\\" .. self:Filename())
     return false
   end
 
@@ -317,9 +368,13 @@ local function fields(str, sep)
   return out
 end
 
+--[[ Parse a file. Returns the encounters, how many were dropped as torn
+     (see the note at the top), and whether the file declares the current
+     format. Files from before the Z marker are read exactly as before. ]]
 function St:Deserialize(text)
   local encounters = {}
   local session, enc = nil, nil
+  local strict = false
 
   for line in string.gfind(text, "[^\n\r]+") do
     local kind = string.sub(line, 1, 1)
@@ -327,6 +382,10 @@ function St:Deserialize(text)
 
     if line == MAGIC then
       -- header, nothing to do
+    elseif line == FORMAT then
+      strict = true
+    elseif kind == "Z" then
+      if enc and tonumber(rest) == enc.id then enc.complete = true end
     elseif kind == "S" then
       local f = fields(rest, REC)
       -- Session ids are numeric when this client made them. Restore the
@@ -401,7 +460,25 @@ function St:Deserialize(text)
     end
   end
 
-  return encounters
+  --[[ Which encounters were torn:
+       - in a file that declares the format, any without Z
+       - in an older file appended to by this build, any without Z after
+         the first that has one (everything from there on is this build's)
+       - in any file, the last one if the file stops partway through a line ]]
+  local n = table.getn(encounters)
+  local tornTail = text ~= "" and string.sub(text, -1) ~= "\n"
+  local kept, dropped, marked = {}, 0, strict
+  for i, e in ipairs(encounters) do
+    if e.complete then marked = true end
+    local torn = (marked and not e.complete) or (tornTail and i == n and not e.complete)
+    if torn then
+      dropped = dropped + 1
+    else
+      e.complete = nil
+      table.insert(kept, e)
+    end
+  end
+  return kept, dropped, strict
 end
 
 --- An encounter's identity, the same in memory and in the file.
@@ -415,19 +492,55 @@ local function byStart(a, b)
   return at < bt
 end
 
+--[[ Read the journal, and repair from the backup if it was damaged.
+
+     Damaged means a torn encounter was dropped, or the file ends partway
+     through a line. Either way the backup -- written whole before every
+     rewrite -- may hold what the journal lost, so the two are merged by
+     identity, the journal winning a tie. Returns the raw text, the
+     encounters, and whether a repair is worth writing back. ]]
+function St:ReadJournal(text)
+  if type(text) ~= "string" then
+    local ok, read = pcall(ReadCustomFile, self:Filename())
+    text = (ok and type(read) == "string") and read or ""
+  end
+  local encounters, dropped, strict = self:Deserialize(text)
+
+  local torn = text ~= "" and string.sub(text, -1) ~= "\n"
+  self.needNewline = torn or nil
+  -- An older-format journal is not damaged, but it is rewritten once in
+  -- this format, so the next crash can be judged by the strict rule.
+  if dropped == 0 and not torn then
+    return text, encounters, (text ~= "" and not strict)
+  end
+
+  local okB, backup = pcall(ReadCustomFile, self:BackupName())
+  if okB and type(backup) == "string" and backup ~= "" then
+    local have = {}
+    for _, e in ipairs(encounters) do have[keyOf(e)] = true end
+    for _, e in ipairs((self:Deserialize(backup))) do
+      if not have[keyOf(e)] then
+        have[keyOf(e)] = true
+        table.insert(encounters, e)
+      end
+    end
+    table.sort(encounters, byStart)
+  end
+  return text, encounters, true
+end
+
 function St:Load()
   if not self:Available() then
     W.Print("Loading from disk needs Nampower's file API (ReadCustomFile).")
     return false
   end
 
-  local ok, text = pcall(ReadCustomFile, self:Filename())
-  if not ok or not text or text == "" then
+  local text, encounters = self:ReadJournal()
+  if text == "" and table.getn(encounters) == 0 then
     W.Print("No saved file found at CustomData\\" .. self:Filename())
     return false
   end
 
-  local encounters = self:Deserialize(text)
   if table.getn(encounters) == 0 then
     W.Print("That file held no encounters.")
     return false
@@ -494,12 +607,23 @@ function St:Recover()
   if not W.db or not self:Available() then return false end
 
   local name = self:Filename()
-  local ok, text = pcall(ReadCustomFile, name)
-  if not ok or type(text) ~= "string" then text = "" end
-  self.journalBytes = string.len(text)
-
   local mark = W.db.journalMarks and W.db.journalMarks[name]
-  if text == "" or (mark and mark.bytes == self.journalBytes) then return true end
+
+  --[[ The cheap path first: the journal is exactly as long as at the last
+       clean save, so nothing was added and nothing is parsed. Its length
+       is all that is needed, and it is only known by reading it. ]]
+  local ok, raw = pcall(ReadCustomFile, name)
+  if not ok or type(raw) ~= "string" then raw = "" end
+  self.journalBytes = string.len(raw)
+  self.journalExists = raw ~= ""
+  self.needNewline = (raw ~= "" and string.sub(raw, -1) ~= "\n") or nil
+  if raw == "" or (mark and mark.bytes == self.journalBytes) then
+    self:Compact(false)
+    return true
+  end
+  local text, parsed, damaged = self:ReadJournal(raw)
+  raw = nil
+  self.journalBytes = string.len(text)
 
   -- No mark yet (the first login on this version, or a wiped history): the
   -- newest pull the history kept stands in for the last clean save.
@@ -515,7 +639,7 @@ function St:Recover()
   local wasEmpty = table.getn(list) == 0
   local have, back = {}, {}
   for _, e in ipairs(list) do have[keyOf(e)] = true end
-  for _, e in ipairs(self:Deserialize(text)) do
+  for _, e in ipairs(parsed) do
     local k = keyOf(e)
     if not have[k] and (e.startTime or 0) > since then
       have[k] = true
@@ -523,7 +647,10 @@ function St:Recover()
       table.insert(list, e)
     end
   end
-  if next(back) == nil then return true end
+  if next(back) == nil then
+    self:Compact(damaged)
+    return true
+  end
 
   -- The saved session pointer predates these pulls: resuming from it would
   -- give the next pull an id one of them already has. Without it the session
@@ -547,6 +674,7 @@ function St:Recover()
   for _, e in ipairs(list) do
     if back[e] then n = n + 1 end
   end
+  self:Compact(damaged)
   if n == 0 then return true end
   if wasEmpty then
     W.Print("the saved history was empty - restored " .. n ..
@@ -557,6 +685,21 @@ function St:Recover()
   end
   if W.ui and W.ui.report and W.ui.report.frame then W.ui.report:Refresh() end
   return true
+end
+
+--[[ Rewrite the journal from the history when it was damaged (to repair
+     it) or has grown past COMPACT_AT. Pulls the history no longer holds --
+     older than its cap, or deleted -- leave the file with it; the journal
+     is the crash net under the history, not a second archive beside it. ]]
+function St:Compact(force)
+  if not self:Available() then return false end
+  if not force and (self.journalBytes or 0) <= self.COMPACT_AT then return false end
+  -- An empty history over a non-empty journal is the one case where the
+  -- journal is all there is. Never compact that away.
+  if table.getn((W.db and W.db.encounters) or {}) == 0 then return false end
+  local ok = self:Rewrite()
+  if ok then W.Debug("journal compacted to " .. tostring(self.journalBytes) .. " bytes") end
+  return ok
 end
 
 ----------------------------------------------------------------------

@@ -533,16 +533,27 @@ local function mitigation(str)
   return a, b, r
 end
 
+--[[ One details table per event family, refilled for every event.
+
+     A raid raises hundreds of these a second, and a fresh table for each
+     was garbage the moment the aggregator returned -- the aggregator reads
+     the fields and keeps none of them. Garbage is what makes a 1.12 client
+     hitch: its collector stops the world to sweep it. Every field is
+     written on every event, so nothing from the last one can leak into
+     the next. ]]
+local swingInfo, spellHitInfo, healInfo, shieldInfo = {}, {}, {}, {}
+
 function C:AUTO_ATTACK(attacker, target, damage, hitInfo, victimState, _, blocked, absorbed, resisted)
   damage = num(damage)
   if damage <= 0 then return end
   self:TakeDamage(target, damage)
-  W.encounter:Damage(attacker, target, 0, damage, {
-    crit = hasBit(num(hitInfo), HITINFO_CRIT),
-    absorbed = num(absorbed),
-    blocked = num(blocked),
-    resisted = num(resisted),
-  })
+  local info = swingInfo
+  info.crit = hasBit(num(hitInfo), HITINFO_CRIT)
+  info.absorbed = num(absorbed)
+  info.blocked = num(blocked)
+  info.resisted = num(resisted)
+  info.school = nil
+  W.encounter:Damage(attacker, target, 0, damage, info)
 end
 
 function C:SPELL_DAMAGE(target, caster, spellId, amount, mitigationStr, hitInfo, school)
@@ -550,23 +561,23 @@ function C:SPELL_DAMAGE(target, caster, spellId, amount, mitigationStr, hitInfo,
   local absorbed, blocked, resisted = mitigation(mitigationStr)
   if amount <= 0 and absorbed <= 0 then return end
   self:TakeDamage(target, amount)
-  W.encounter:Damage(caster, target, num(spellId), amount, {
-    crit = hasBit(num(hitInfo), SPELL_HIT_CRIT),
-    absorbed = absorbed,
-    blocked = blocked,
-    resisted = resisted,
-    school = num(school),
-  })
+  local info = spellHitInfo
+  info.crit = hasBit(num(hitInfo), SPELL_HIT_CRIT)
+  info.absorbed = absorbed
+  info.blocked = blocked
+  info.resisted = resisted
+  info.school = num(school)
+  W.encounter:Damage(caster, target, num(spellId), amount, info)
 end
 
 function C:SPELL_HEAL(target, caster, spellId, amount, critical, periodic)
   amount = num(amount)
   if amount <= 0 then return end
   local effective, over = self:SplitHeal(target, amount)
-  W.encounter:Heal(caster, target, num(spellId), effective, over, {
-    crit = num(critical) == 1,
-    periodic = num(periodic) == 1,
-  })
+  local info = healInfo
+  info.crit = num(critical) == 1
+  info.periodic = num(periodic) == 1
+  W.encounter:Heal(caster, target, num(spellId), effective, over, info)
 end
 
 ----------------------------------------------------------------------
@@ -749,7 +760,10 @@ function C:DAMAGE_SHIELD(shieldOwner, attacker, damage, school)
   if damage <= 0 then return end
   -- The shield's owner is the source; the attacker who triggered it takes it.
   self:TakeDamage(attacker, damage)
-  W.encounter:Damage(shieldOwner, attacker, 0, damage, { school = num(school), shield = true })
+  local info = shieldInfo
+  info.school = num(school)
+  info.shield = true
+  W.encounter:Damage(shieldOwner, attacker, 0, damage, info)
 end
 
 function C:ENVIRONMENTAL(unit, damageType, damage, absorb, resist)
@@ -847,6 +861,8 @@ dispatch.SPELL_GO_OTHER = dispatch.SPELL_GO_SELF
 dispatch.UNIT_DIED = function(a1)
   W.encounter:Death(a1)
   C:ClearBuffs(a1)
+  -- So tank mode can tell a mob that died from one that turned away.
+  if W.threat then W.threat:OnUnitDied(a1) end
 end
 
 C.dispatch = dispatch

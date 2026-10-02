@@ -64,6 +64,7 @@ local FRAMEXML = "blizzard ui"
 local SUPER    = "SuperWoW"
 local NAMPOWER = "Nampower"
 local OWN      = "wrekkit"
+local OPTIONAL = "other addons, if loaded"
 
 --- source -> { name = true }
 local ORIGIN = {}
@@ -74,7 +75,7 @@ end
 declare(LUA, [[
   string table math type pairs ipairs tonumber tostring pcall setmetatable
   getmetatable rawget rawset unpack next error assert select getfenv setfenv
-  os io date time
+  os io date time gcinfo collectgarbage
 ]])
 
 -- UnitBuff is stock 1.12; SuperWoW extends it with the spell id, which is
@@ -89,6 +90,7 @@ declare(WOW, [[
   GetNumSavedInstances GetSavedInstanceInfo UnitIsGhost
   GetItemInfo IsInGuild GetCursorPosition Minimap IsShiftKeyDown
   WorldFrame PlaySound UnitIsDead UnitCanAttack getglobal
+  GetNumShapeshiftForms GetShapeshiftFormInfo
   this event arg1 arg2 arg3 arg4 arg5 arg6 arg7 arg8 arg9
 ]])
 
@@ -104,6 +106,12 @@ declare(SUPER, [[
 
 declare(NAMPOWER, [[
   WriteCustomFile ReadCustomFile CustomFileExists NAMPOWER_VERSION
+]])
+
+-- Other addons Wrekkit cooperates with when they are there, and never
+-- needs: their nameplates get threat drawn on them.
+declare(OPTIONAL, [[
+  ShaguPlates pfUI
 ]])
 
 -- Globals the addon defines itself. Reading one before it is written would
@@ -341,6 +349,7 @@ local function makeFrame(kind, name, parent)
   end
   m.GetRegions = function(self) return unpack(self._regions or {}) end
   m.GetChildren = function(self) return unpack(self._kids or {}) end
+  m.GetNumChildren = function(self) return table.getn(self._kids or {}) end
   m.SetStatusBarColor = function(self, r, g, b) self._bar = { r, g, b } end
   m.GetStatusBarColor = function(self)
     local c = self._bar or { 1, 0, 0 }
@@ -719,6 +728,8 @@ step("menus, settings, minimap", function()
   W.ui.CloseMenu()
   W.ui.meter:SegmentMenu(W.ui.meter.frame.bar)
   W.ui.CloseMenu()
+  W.ui.meter:WindowMenu(W.ui.meter.frame.bar)
+  W.ui.CloseMenu()
   W.ui.report:SessionMenu()
   W.ui.CloseMenu()
   W.ui.settings:Show()
@@ -836,7 +847,8 @@ step("threat meter", function()
 
   UI.threatFrames:Update()
   if not plate.wrekThreat or plate.wrekThreat.text:GetText() ~= "92%" then
-    error("the nameplate does not show 92%")
+    error("the nameplate does not show 92%: " ..
+      tostring(plate.wrekThreat and plate.wrekThreat.text:GetText()))
   end
   if not UI.threatFrames.ind or not UI.threatFrames.ind:IsShown() then
     error("the target frame indicator is not shown")
@@ -846,17 +858,94 @@ step("threat meter", function()
   T:Settings().plateColor = "text"
   UI.threatFrames:Update()
 
-  -- The tank's view, and tank mode's per-mob section.
-  T:Settings().tankMode = true
-  T:OnMessage("TWTv4=Auditor:1:3000:100:1;Fuff:0:2900:97:1;#TMTv1=Onyxia:43981:Auditor:100;Whelp:12:Fuff:80;")
+  -- The tank's view: the runner-up's distance to pulling, not "tank".
+  T:Settings().tankMode = "on"
+  local alerts = {}
+  local realAlert = T.Alert
+  T.Alert = function(self, text, level)
+    table.insert(alerts, text)
+    return realAlert(self, text, level)
+  end
+  T:OnMessage("TWTv4=Auditor:1:3000:100:1;Fuff:0:2900:97:1;" ..
+              "#TMTv1=Onyxia:43981:Fuff:97;Whelp:12:Elfpriest:80;Drake:13:Fuff:40;")
   if not T.tankMobs[43981] then error("tank mode section was not read") end
   local _, _, _, text = T:Display(T:Live())
-  if text ~= "tank" then error("holding aggro should read 'tank'") end
+  if text ~= "88%" then error("a tank should see the runner-up at 97/110 = 88%, got " .. tostring(text)) end
+  local closing = false
+  for _, a in ipairs(alerts) do
+    if string.find(a, "Fuff at 88%", 1, true) then closing = true end
+  end
+  if not closing then error("no alert that Fuff is closing in: " .. table.concat(alerts, " | ")) end
+
   -- Another mob's plate, named only by tank mode's low 16 bits (0x000C).
   local _, _, _, whelp = T:ForMob("0xF00000000000000C", "0xF00000000000000C")
-  if whelp ~= "80%" then error("tank mode did not reach another mob's plate: " .. tostring(whelp)) end
+  if whelp ~= "73%" then error("tank mode did not reach another mob's plate: " .. tostring(whelp)) end
+  UI.threat:Refresh()
+  local mobRows = 0
+  for _, it in ipairs(UI.threat.list.data) do
+    if it.mob then mobRows = mobRows + 1 end
+  end
+  if mobRows ~= 3 then error("the window lists " .. mobRows .. " held mobs, not 3") end
+
+  -- The Drake dies, the Whelp turns away: one LOST, not two.
+  T:OnUnitDied("0xF00000000000000D")
+  alerts = {}
+  T:OnMessage("TWTv4=Auditor:1:3100:100:1;Fuff:0:2950:95:1;#TMTv1=Onyxia:43981:Fuff:95;")
+  if not T.lost[12] then error("the Whelp turning away was not noticed") end
+  if T.lost[13] then error("the Drake died; that is not lost aggro") end
+  local _, _, _, lostText = T:ForMob("0xF00000000000000C", "0xF00000000000000C")
+  if lostText ~= "LOST" then error("the lost mob's plate does not say LOST") end
+
+  -- Then Onyxia herself turns, on the target table.
   T:OnMessage("TWTv4=Fuff:1:3400:100:1;Auditor:0:3000:88:1;")
-  T:Settings().tankMode = false
+  local lostBoss = false
+  for _, a in ipairs(alerts) do
+    if string.find(a, "LOST AGGRO: Onyxia", 1, true) then lostBoss = true end
+  end
+  if not lostBoss then error("losing the target was not announced: " .. table.concat(alerts, " | ")) end
+  T.Alert = realAlert
+
+  -- Not a tank, and it turns on you.
+  T:Settings().tankMode = "off"
+  T.fired, T.heldKey, T.lost = {}, nil, {}
+  T:OnMessage("TWTv4=Fuff:1:3400:100:1;Auditor:0:3000:88:1;")
+  T:OnMessage("TWTv4=Auditor:1:3800:100:0;Fuff:0:3400:89:1;")
+  local _, _, _, aggro = T:Display(T:Live())
+  if aggro ~= "AGGRO" then error("a non-tank holding aggro should read AGGRO") end
+  T:Settings().tankMode = "auto"
+
+  -- A ShaguPlates / pfUI plate: their own health bar, their colour cache.
+  local splate = makeFrame("Button", nil, STUB.WorldFrame)
+  splate._guid = "0xF00000000000ABCD"
+  splate._shown = true
+  local sborder = splate:CreateTexture()
+  sborder:SetTexture("Interface\\Tooltips\\Nameplate-Border")
+  splate._regions = { sborder }
+  splate._kids = { makeFrame("StatusBar", nil, splate) }
+  local np = makeFrame("Button", "pfNamePlate1", splate)
+  np.health = makeFrame("StatusBar", nil, np)
+  np.health:SetStatusBarColor(0.8, 0.1, 0.1)
+  np.cache = { r = 0.8, g = 0.1, b = 0.1 }
+  splate.nameplate = np
+  table.insert(STUB.WorldFrame._kids, splate)
+  T:Settings().plateColor = "bar"
+  T:OnMessage("TWTv4=Fuff:1:3400:100:1;Auditor:0:3000:60:0;")
+  UI.threatFrames:Update()
+  local r = np.health:GetStatusBarColor()
+  if r == 0.8 then error("ShaguPlates' health bar was not tinted") end
+  if splate.wrekThreat == nil then error("no threat text on the ShaguPlates plate") end
+  T:Settings().plateColor = "text"
+  UI.threatFrames:Update()
+  if np.cache.r ~= nil or not np.eventcache then
+    error("the tint was not handed back to ShaguPlates")
+  end
+  T:Settings().plateStyle = "stock"
+  T:Settings().plateColor = "bar"
+  UI.threatFrames:Update()
+  T:Settings().plateStyle = "auto"
+  T:Settings().plateColor = "text"
+  UI.threatFrames:Update()
+  UI.threatFrames:PlateAddon()
 
   -- Dragging, docked and not, and a row's tooltip.
   UI.threat:StartDrag() UI.threat:StopDrag()
@@ -872,7 +961,12 @@ step("threat meter", function()
   UI.CloseMenu()
   UI.settings:Show("threat")
   UI.settings:Refresh()
-  UI.settings:SetTab("general")
+  UI.settings:SetTab("meter")
+  T:Settings().tankMode = "on"
+  T:Demo(5)
+  UI.threat:Refresh()
+  T:StopDemo()
+  T:Settings().tankMode = "off"
   T:Demo(5)
   UI.threatFrames:Update()
   NOW = NOW + 6
@@ -892,6 +986,9 @@ step("threat meter", function()
                        "threat window" }) do
     run(c)
   end
+
+  T:ResetSettings()
+  if T:Settings().tankMode ~= "auto" then error("defaults did not come back") end
 
   STUB.GetNumPartyMembers, STUB.UnitExists, STUB.UnitName = realParty, realExists, realName
   STUB.SendAddonMessage = realSend

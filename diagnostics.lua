@@ -90,6 +90,17 @@ function W.Status()
 
   if W.threat then line("Threat      " .. string.gsub(W.threat:StatusLine(), "^threat: ", "")) end
 
+  -- 1.12 cannot say how much of it is ours: this is every addon together.
+  local kb = W.MemoryKB and W.MemoryKB()
+  if kb then
+    local tidy = ""
+    if W.lastTidy and W.lastTidy.before and W.lastTidy.after then
+      tidy = string.format(", last tidy freed %.1f MB",
+        (W.lastTidy.before - W.lastTidy.after) / 1024)
+    end
+    line(string.format("Memory      %.1f MB of Lua, all addons%s", kb / 1024, tidy))
+  end
+
   ------------------------------------------------------------------
   -- are events actually arriving?
   ------------------------------------------------------------------

@@ -37,7 +37,18 @@ function MB:Create()
   border:SetPoint("TOPLEFT", b, "TOPLEFT", 0, 0)
 
   b:SetScript("OnClick", function()
-    if arg1 == "RightButton" then
+    local shift = IsShiftKeyDown and IsShiftKeyDown()
+    if shift and arg1 == "RightButton" then
+      W.ui.settings:Toggle()
+    elseif shift then
+      -- The threat window, wherever it was last kept.
+      local ts = W.threat:Settings()
+      if ts.display == "window" or ts.display == "docked" then
+        W.ui.threat:SetDisplay("off")
+      else
+        W.ui.threat:SetDisplay(ts.lastWindow or "docked")
+      end
+    elseif arg1 == "RightButton" then
       W.ui.report:Toggle()
     else
       W.ui.meter:Toggle()
@@ -49,6 +60,8 @@ function MB:Create()
     GameTooltip:AddLine("Wrekkit")
     GameTooltip:AddLine("Left-click: live meter", 0.8, 0.8, 0.8)
     GameTooltip:AddLine("Right-click: full report", 0.8, 0.8, 0.8)
+    GameTooltip:AddLine("Shift-click: threat window", 0.8, 0.8, 0.8)
+    GameTooltip:AddLine("Shift-right-click: settings", 0.8, 0.8, 0.8)
     GameTooltip:AddLine("Drag: move this button", 0.55, 0.55, 0.55)
     GameTooltip:Show()
   end)

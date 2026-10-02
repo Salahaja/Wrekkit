@@ -224,6 +224,7 @@ W.defaults = {
   resumeWindow = 1200,     -- seconds; rejoin the previous session within this
   sessionBarrier = 0,      -- sessions ending at or before this never resume
   autoSave = true,         -- append each encounter to disk as it finishes
+  -- tidy: nil (on) or false -- free memory once out of combat after a fight
   minimap = { show = true, angle = 214 },
 }
 
@@ -238,6 +239,64 @@ local function applyDefaults(dst, src)
   end
 end
 
+local function clampSetting(t, key, lo, hi, default)
+  local v = tonumber(t[key])
+  if not v then t[key] = default return end
+  if v < lo then v = lo elseif v > hi then v = hi end
+  t[key] = v
+end
+
+local function oneOf(t, key, allowed, default)
+  for _, a in ipairs(allowed) do
+    if t[key] == a then return end
+  end
+  t[key] = default
+end
+
+--[[ Put every saved setting back inside what its control can produce.
+
+     SavedVariables outlive the code that wrote them. A value from an older
+     build, a hand edit, or a range that has since narrowed would otherwise
+     sit there doing something no control can show -- a row height of zero
+     is an empty meter, a text scale of zero is invisible text -- and the
+     settings window would display a value it cannot have set. Checked once
+     at load, so nothing downstream has to guard against them. ]]
+function W.SanitizeDB(db)
+  clampSetting(db, "fontScale", 0.7, 1.8, 1.0)
+  clampSetting(db, "maxEncounters", 1, 1000, 60)
+  clampSetting(db, "maxAbilities", 4, 100, 24)
+  clampSetting(db, "minTrashDuration", 1, 60, 6)
+  clampSetting(db, "resumeWindow", 60, 7200, 1200)
+  oneOf(db, "shareChannel", { "AUTO", "RAID", "PARTY", "GUILD" }, "AUTO")
+  if db.combatLogRangeYards ~= nil then
+    clampSetting(db, "combatLogRangeYards", 30, 200, 200)
+  end
+  if db.liveSyncInterval ~= nil then
+    clampSetting(db, "liveSyncInterval", 10, 120, 30)
+  end
+  if db.dpsBasis ~= nil and db.dpsBasis ~= "active" then db.dpsBasis = nil end
+
+  local m = db.meter
+  if type(m) == "table" then
+    clampSetting(m, "rowHeight", 10, 32, 18)
+    clampSetting(m, "opacity", 0.2, 1, 1)
+    oneOf(m, "combat", { "show", "fade", "hide" }, "show")
+    oneOf(m, "petMode", { "merge", "separate" }, "merge")
+    oneOf(m, "segment", { "current", "last", "back2", "back3", "back4", "back5", "overall" },
+      "current")
+    -- A metric that no longer exists would fall back to damage while the
+    -- menu ticked nothing; name it outright instead.
+    if m.metric ~= "threat" and not (W.metrics and W.metrics.byKey and W.metrics.byKey[m.metric]) then
+      m.metric = "damage"
+    end
+    if type(m.search) ~= "string" then m.search = "" end
+    if type(m.window) == "table" then
+      clampSetting(m.window, "w", 260, 2000, 260)
+      clampSetting(m.window, "h", 110, 2000, 200)
+    end
+  end
+end
+
 function W.InitDB()
   if type(WrekkitDB) ~= "table" then WrekkitDB = {} end
   -- A default nothing ever read: each window keeps its own geometry. Every
@@ -245,6 +304,9 @@ function W.InitDB()
   WrekkitDB.window = nil
   applyDefaults(WrekkitDB, W.defaults)
   if type(WrekkitDB.encounters) ~= "table" then WrekkitDB.encounters = {} end
+  W.SanitizeDB(WrekkitDB)
+  -- The threat settings are checked again on first use (W.threat:Settings).
+  if type(WrekkitDB.threat) == "table" then WrekkitDB.threat._ok = nil end
   W.db = WrekkitDB
 end
 
@@ -301,6 +363,53 @@ end
 --- both ends, so a name cleaned for sending compares equal on arrival.
 function W.WireText(s)
   return (string.gsub(tostring(s or ""), "[~,]", ""))
+end
+
+----------------------------------------------------------------------
+-- memory
+----------------------------------------------------------------------
+
+--[[ Hand memory back once a fight is over.
+
+     Lua 5.0 collects garbage only when allocation crosses a threshold that
+     doubles after each collection, so the memory a long pull churned
+     through sits there until some later moment the client picks -- often
+     mid-pull, as a hitch. Collecting once things have gone quiet moves
+     that cost to when nobody is pressing buttons.
+
+     Never in combat, and only when there is something worth collecting:
+     a full collection costs time in proportion to everything every addon
+     holds, so it is skipped unless memory has grown by TIDY_GROWTH since
+     the last one. Off with "Free memory after fights" in settings. ]]
+W.TIDY_DELAY = 5          -- seconds out of combat before tidying
+W.TIDY_GROWTH = 2048      -- KB of growth that makes a collection worth it
+
+local function luaKB()
+  if gcinfo then return gcinfo() end
+  if collectgarbage then
+    local ok, kb = pcall(collectgarbage, "count")
+    if ok and type(kb) == "number" then return kb end
+  end
+  return nil
+end
+W.MemoryKB = luaKB
+
+function W.ScheduleTidy()
+  if W.db and W.db.tidy == false then return end
+  W.After(W.TIDY_DELAY, function() W.Tidy() end, "tidy")
+end
+
+function W.Tidy(force)
+  local E = W.encounter
+  if E and (E.live or (E.ReallyInCombat and E:ReallyInCombat())) then return false end
+  local before = luaKB()
+  local floor = W.tidyFloor or 0
+  if not force and before and before - floor < W.TIDY_GROWTH then return false end
+  if collectgarbage then collectgarbage() end
+  local after = luaKB()
+  W.tidyFloor = after or 0
+  W.lastTidy = { before = before, after = after }
+  return true
 end
 
 --- Close out the live encounter once combat has stayed dropped long enough

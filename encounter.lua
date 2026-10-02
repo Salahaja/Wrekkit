@@ -23,6 +23,10 @@ local E = W.encounter
 -- half-second drop out of combat between waves doesn't shard the report.
 local MERGE_GAP = 5
 
+-- Read-only stand-in for an event that carried no details, so a missing
+-- table costs nothing rather than a new empty one per event.
+local NO_INFO = {}
+
 -- Interrupt effects, by spell id family. Vanilla has no interrupt event, so
 -- these are counted when the spell lands on a casting enemy.
 E.interruptSpells = {
@@ -710,7 +714,7 @@ function E:Damage(sourceGuid, targetGuid, spellId, amount, info)
   if not self.live then self:CombatStart() end
   local enc = self.live
   if not enc then return end
-  info = info or {}
+  info = info or NO_INFO
 
   local src = self:Actor(sourceGuid)
   local dst = self:Actor(targetGuid)
@@ -795,7 +799,7 @@ function E:Heal(casterGuid, targetGuid, spellId, effective, over, info)
   if not self.live then self:CombatStart() end
   local enc = self.live
   if not enc then return end
-  info = info or {}
+  info = info or NO_INFO
 
   local now = GetTime()
   local key = tostring(casterGuid) .. tostring(targetGuid) .. tostring(spellId)
@@ -1009,6 +1013,8 @@ function E:RemoteReport(r)
        so a later one replaces an earlier one -- but two of the sender's
        pulls can both fall inside one of ours (they dropped combat for a
        moment, we did not), and those have to add up, not overwrite. ]]
+  -- The totals do not move, so say that the pull did: views are cached.
+  best.rev = (best.rev or 0) + 1
   who.parts[r.pid or "?"] = {
     damage = r.damage or 0, petDamage = r.petDamage or 0,
     healing = r.healing or 0, taken = r.taken or 0, petTaken = r.petTaken or 0,
@@ -1314,6 +1320,7 @@ function E:Finish()
   end
 
   W.capture:TrimUnits()
+  W.ScheduleTidy()
 
   W.Debug(string.format("encounter %s  %s  %s dmg",
     enc.name, W.Duration(enc.duration), W.Short(enc.totals.damage)))

@@ -62,7 +62,7 @@ local HELP = {
   { "/wrek announce [chan]", "post what is on screen to chat (asks first)" },
   { "/wrek threat", "show or hide the threat window" },
   { "/wrek threat <where>", "window | docked | meter | off" },
-  { "/wrek threat tank", "toggle tank mode (threat on every mob)" },
+  { "/wrek threat tank", "I'm the tank: auto, always, never (cycles)" },
   { "/wrek threat test", "15s of test data, to place frames and plates" },
   { "/wrek threat config", "threat settings" },
   { "/wrek lock", "lock the meter in place" },
@@ -317,8 +317,16 @@ local function handler(msg)
       W.ui.threat:UpdateVisibility()
       W.Print("threat meter " .. (s.enabled and "on." or "off."))
     elseif sub == "tank" then
-      s.tankMode = not s.tankMode
-      W.Print("tank mode " .. (s.tankMode and "on: every mob in the fight is asked about." or "off."))
+      -- auto -> always -> never -> auto
+      local nextMode = { auto = "on", on = "off", off = "auto" }
+      s.tankMode = nextMode[s.tankMode] or "auto"
+      T.roleAt = nil
+      local said = {
+        auto = "auto: tanking in Defensive Stance, Bear Form or with Righteous Fury.",
+        on = "always: you get tank alerts whatever your stance.",
+        off = "never: you get damage-dealer warnings.",
+      }
+      W.Print("I'm the tank: " .. said[s.tankMode])
     elseif sub == "test" or sub == "demo" or sub == "preview" then
       T:Demo(15)
       W.Print("threat preview for 15 seconds.")

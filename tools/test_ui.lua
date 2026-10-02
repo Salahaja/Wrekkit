@@ -500,6 +500,8 @@ step("meter menus open", function()
   UI.CloseMenu()
   UI.meter:SegmentMenu(UI.meter.frame.bar)
   UI.CloseMenu()
+  UI.meter:WindowMenu(UI.meter.frame.bar)
+  UI.CloseMenu()
 end)
 
 step("menus do not leak frames", function()
@@ -513,9 +515,11 @@ step("menus do not leak frames", function()
     UI.CloseMenu()
     UI.meter:SegmentMenu(UI.meter.frame.bar)
     UI.CloseMenu()
+    UI.meter:WindowMenu(UI.meter.frame.bar)
+    UI.CloseMenu()
   end
   if calls ~= baseline then
-    error(string.format("leaked %d frames over 80 menu opens", calls - baseline))
+    error(string.format("leaked %d frames over 120 menu opens", calls - baseline))
   end
 end)
 
@@ -988,7 +992,7 @@ step("settings window builds and every control works", function()
       local start = c.valueText:GetText()
       fn()
       if c.valueText:GetText() == start then
-        error("choice #" .. i .. " did not change when clicked")
+        error("choice #" .. i .. " (" .. tostring(c.labelText) .. ") did not change when clicked" .. (Wrekkit.lastError and (": " .. Wrekkit.lastError.label .. ": " .. Wrekkit.lastError.err) or ""))
       end
       local clicks = 1
       while c.valueText:GetText() ~= start and clicks < 10 do
@@ -2280,32 +2284,60 @@ step("the settings window fits the screen at any text size", function()
   UI.ApplyFontScale()
 end)
 
-step("the threat settings tab fits the screen too", function()
+step("every settings tab fits the screen, and shows only its own controls", function()
   local realScale = Wrekkit.db.fontScale
   for _, scale in ipairs({ 1.0, 1.8 }) do
     Wrekkit.db.fontScale = scale
     UI.ApplyFontScale()
     UI.settings.frame = nil
     UI.settings:Create()
-    UI.settings:SetTab("threat")
-    local h = UI.settings.frame:GetHeight() or 0
-    if h <= 0 or h > 700 then
-      error(string.format("threat tab is %dpx tall at %.1fx", h, scale))
-    end
-    -- Only that tab's controls are on show.
-    for _, item in ipairs(UI.settings.items) do
-      local want = (item.tab or "general") == "threat"
-      if (item.control:IsShown() and true or false) ~= want then
-        error("a " .. tostring(item.tab) .. " control is " ..
-          (want and "hidden" or "shown") .. " on the threat tab")
+    for _, t in ipairs(UI.settings.TABS) do
+      local tab = t[1]
+      UI.settings:SetTab(tab)
+      local h = UI.settings.frame:GetHeight() or 0
+      if h <= 0 or h > 700 then
+        error(string.format("%s tab is %dpx tall at %.1fx", tab, h, scale))
       end
+      local shown = 0
+      for _, item in ipairs(UI.settings.items) do
+        local want = (item.tab or "meter") == tab
+        if want then shown = shown + 1 end
+        if (item.control:IsShown() and true or false) ~= want then
+          error("a " .. tostring(item.tab) .. " control is " ..
+            (want and "hidden" or "shown") .. " on the " .. tab .. " tab")
+        end
+      end
+      if shown == 0 then error("the " .. tab .. " tab is empty") end
     end
   end
-  UI.settings:SetTab("general")
+  UI.settings:SetTab("meter")
   Wrekkit.db.fontScale = realScale
   UI.ApplyFontScale()
   UI.settings.frame = nil
   UI.settings:Create()
+end)
+
+step("a finished segment's view is reused until it changes", function()
+  UI.meter:Settings().segment = "last"
+  UI.meter:SetMetric("damage")
+  local live = Wrekkit.encounter.live
+  Wrekkit.encounter.live = nil
+  UI.meter:Refresh()
+  local first = UI.meter.lastView
+  UI.meter:Refresh()
+  if UI.meter.lastView ~= first then error("an unchanged pull was re-aggregated") end
+  local enc = UI.meter:PullBack(1)
+  enc.rev = (enc.rev or 0) + 1
+  UI.meter:Refresh()
+  if UI.meter.lastView == first then error("a changed pull kept its old view") end
+  UI.meter:Settings().petMode = "separate"
+  local before = UI.meter.lastView
+  UI.meter:Refresh()
+  if UI.meter.lastView == before then error("changing the pet mode kept the old view") end
+  UI.meter:Settings().petMode = "merge"
+  Wrekkit.encounter.live = live
+  UI.meter:Settings().segment = "current"
+  UI.meter:Refresh()
 end)
 
 step("threat: docked window hangs under the meter", function()

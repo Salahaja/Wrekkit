@@ -348,8 +348,12 @@ local function menuRow(index)
   return b
 end
 
---- items: array of { text, value, checked, disabled }
---- onPick(value, item) fires on selection.
+--[[ items: array of { text, value, checked, disabled, header }
+     onPick(value, item) fires on selection.
+
+     A `header` item is a section title: amber, flush left, not clickable.
+     Long menus read as groups rather than as one undifferentiated column,
+     which is most of what makes a menu feel designed. ]]
 function UI.Menu(parent, anchorTo, items, onPick, width)
   local f = ensureMenu()
   UI.CloseMenu()
@@ -359,17 +363,26 @@ function UI.Menu(parent, anchorTo, items, onPick, width)
   f:SetHeight(n * ROW_H + MENU_PAD * 2)
   f:ClearAllPoints()
   f:SetPoint("TOPLEFT", anchorTo, "BOTTOMLEFT", 0, -2)
+  -- A long menu opened low on the screen would run off the bottom.
+  f:SetClampedToScreen(true)
 
   for i = 1, n do
     local item = items[i]
     local b = menuRow(i)
-    b._disabled = item.disabled
+    b._disabled = item.disabled or item.header
     b.label:SetText(item.text)
-    b.label:SetTextColor(unpackColor(item.disabled and W.color.textFaint or W.color.text))
-    if item.checked then b.tick:Show() else b.tick:Hide() end
+    b.label:ClearAllPoints()
+    if item.header then
+      b.label:SetPoint("LEFT", b, "LEFT", 4, -2)
+      b.label:SetTextColor(unpackColor(W.color.accent))
+    else
+      b.label:SetPoint("LEFT", b, "LEFT", 16, 0)
+      b.label:SetTextColor(unpackColor(item.disabled and W.color.textFaint or W.color.text))
+    end
+    if item.checked and not item.header then b.tick:Show() else b.tick:Hide() end
     b.hl:SetVertexColor(unpackColor(W.color.accent, 0))
 
-    if item.disabled then
+    if b._disabled then
       b:SetScript("OnClick", nil)
     else
       b:SetScript("OnClick", function()
@@ -1087,6 +1100,7 @@ function UI.Choice(parent, label, options, get, set, tip)
   -- Exposed for the same reason UI.Check exposes its tick: so a test can
   -- assert on what is DRAWN, not only on the setting behind it.
   f.valueText = value
+  f.labelText = label
 
   local function labelFor(v)
     for _, o in ipairs(options) do
