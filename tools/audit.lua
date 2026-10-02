@@ -88,6 +88,7 @@ declare(WOW, [[
   SetCVar GetCVar SendChatMessage SendAddonMessage GetAddOnMetadata
   GetNumSavedInstances GetSavedInstanceInfo UnitIsGhost
   GetItemInfo IsInGuild GetCursorPosition Minimap IsShiftKeyDown
+  WorldFrame PlaySound UnitIsDead UnitCanAttack getglobal
   this event arg1 arg2 arg3 arg4 arg5 arg6 arg7 arg8 arg9
 ]])
 
@@ -276,6 +277,7 @@ local function region(kind)
   m.ClearFocus = function() end
   m.SetFocus = function() end
   m.GetStringWidth = function(self) return string.len(self._text or "") * 5 end
+  m.SetGradientAlpha = function() end
 
   return setmetatable(r, { __index = function(_, k)
     local fn = m[k]
@@ -332,6 +334,18 @@ local function makeFrame(kind, name, parent)
   m.SetParent = function() end
   m.SetID = function() end
   m.GetID = function() return 0 end
+  -- Nameplates: SuperWoW answers GetName(1) with the plate's unit guid.
+  m.GetName = function(self, wantGuid)
+    if wantGuid then return self._guid end
+    return self._name
+  end
+  m.GetRegions = function(self) return unpack(self._regions or {}) end
+  m.GetChildren = function(self) return unpack(self._kids or {}) end
+  m.SetStatusBarColor = function(self, r, g, b) self._bar = { r, g, b } end
+  m.GetStatusBarColor = function(self)
+    local c = self._bar or { 1, 0, 0 }
+    return c[1], c[2], c[3]
+  end
 
   if name then rawset(_G, name, f) end
 
@@ -746,6 +760,142 @@ step("every slash command", function()
     "share guild", "request guild", "announce guild", "nonsense",
   }
   for _, c in ipairs(cmds) do run(c) end
+end)
+
+step("threat meter", function()
+  local T = W.threat
+  local UI = W.ui
+
+  -- A party, a boss targeted, and a nameplate for it.
+  local realParty, realExists, realName = STUB.GetNumPartyMembers, STUB.UnitExists, STUB.UnitName
+  STUB.GetNumPartyMembers = function() return 2 end
+  WORLD["0xF00000000000ABCD"] = { name = "Onyxia", isPlayer = false, rank = "worldboss",
+                                  maxHealth = 1200000, health = 1200000 }
+  WORLD["target"] = WORLD["0xF00000000000ABCD"]
+  STUB.UnitExists = function(u)
+    if u == "target" then return 1, "0xF00000000000ABCD" end
+    return realExists(u)
+  end
+  STUB.UnitIsDead = function() return nil end
+  STUB.UnitCanAttack = function() return 1 end
+  STUB.PlaySound = function(s) STUB._sound = s end
+  STUB.getglobal = function(n) return rawget(_G, n) or STUB[n] end
+
+  STUB.WorldFrame = makeFrame("Frame", "WorldFrame")
+  local plate = makeFrame("Button", nil, STUB.WorldFrame)
+  plate._guid = "0xF00000000000ABCD"
+  plate._shown = true
+  local border = plate:CreateTexture()
+  border:SetTexture("Interface\\Tooltips\\Nameplate-Border")
+  local nameFS = plate:CreateFontString()
+  nameFS:SetText("Onyxia")
+  plate._regions = { border, plate:CreateTexture(), nameFS }
+  local hp = makeFrame("StatusBar", nil, plate)
+  plate._kids = { hp }
+  STUB.WorldFrame._kids = { makeFrame("Frame", "SomethingElse", STUB.WorldFrame), plate }
+
+  local target = makeFrame("Frame", "TargetFrame", STUB.UIParent)
+  target._shown = true
+
+  local sent = {}
+  local realSend = STUB.SendAddonMessage
+  STUB.SendAddonMessage = function(prefix, msg, chan, tgt)
+    table.insert(sent, prefix)
+    return realSend(prefix, msg, chan, tgt)
+  end
+
+  T:Start()
+  UI.threatFrames:Start()
+  W.encounter:CombatStart()
+
+  -- The poll asks the server.
+  T.nextPoll = 0
+  T.frame:GetScript("OnUpdate")()
+  if sent[1] ~= "TWT_UDTSv4" then error("no threat request went out: " .. tostring(sent[1])) end
+
+  -- The server answers: the auditor is a caster at 120% of the tank.
+  T:OnMessage("TWTv4=Tanky:1:1000:100:1;Auditor:0:1200:120:0;Fuff:0:500:50:1;")
+  local cur = T:Live()
+  if not cur or not cur.me then error("reply did not land on the target") end
+  if math.floor(cur.me.pull + 0.5) ~= 92 then
+    error("pull % should be 120/130 = 92, got " .. tostring(cur.me.pull))
+  end
+  if cur.rows[1].name ~= "Auditor" then error("rows are not sorted by threat") end
+  if not STUB._sound then error("crossing the danger line made no sound") end
+
+  -- Every place it is drawn.
+  for _, mode in ipairs({ "window", "docked", "meter", "off", "window" }) do
+    UI.threat:SetDisplay(mode)
+    UI.threatFrames.lastTick = nil
+    UI.threatFrames.frame:GetScript("OnUpdate")()
+  end
+  UI.threat:Refresh()
+  UI.meter:SetMetric("threat")
+  UI.meter:Refresh()
+  UI.meter:SetMetric("damage")
+
+  UI.threatFrames:Update()
+  if not plate.wrekThreat or plate.wrekThreat.text:GetText() ~= "92%" then
+    error("the nameplate does not show 92%")
+  end
+  if not UI.threatFrames.ind or not UI.threatFrames.ind:IsShown() then
+    error("the target frame indicator is not shown")
+  end
+  T:Settings().plateColor = "bar"
+  UI.threatFrames:Update()
+  T:Settings().plateColor = "text"
+  UI.threatFrames:Update()
+
+  -- The tank's view, and tank mode's per-mob section.
+  T:Settings().tankMode = true
+  T:OnMessage("TWTv4=Auditor:1:3000:100:1;Fuff:0:2900:97:1;#TMTv1=Onyxia:43981:Auditor:100;Whelp:12:Fuff:80;")
+  if not T.tankMobs[43981] then error("tank mode section was not read") end
+  local _, _, _, text = T:Display(T:Live())
+  if text ~= "tank" then error("holding aggro should read 'tank'") end
+  -- Another mob's plate, named only by tank mode's low 16 bits (0x000C).
+  local _, _, _, whelp = T:ForMob("0xF00000000000000C", "0xF00000000000000C")
+  if whelp ~= "80%" then error("tank mode did not reach another mob's plate: " .. tostring(whelp)) end
+  T:OnMessage("TWTv4=Fuff:1:3400:100:1;Auditor:0:3000:88:1;")
+  T:Settings().tankMode = false
+
+  -- Dragging, docked and not, and a row's tooltip.
+  UI.threat:StartDrag() UI.threat:StopDrag()
+  UI.threat:SetDisplay("docked")
+  UI.threat:StartDrag() UI.threat:StopDrag()
+  UI.threat:SetDisplay("window")
+  UI.threat:Refresh()
+  local row = UI.threat.list.rows[1]
+  if row and row.tip then row:tip() end
+
+  -- Menus, the settings tab, the preview, the end of the fight.
+  UI.threat:Menu(UI.threat.frame.bar)
+  UI.CloseMenu()
+  UI.settings:Show("threat")
+  UI.settings:Refresh()
+  UI.settings:SetTab("general")
+  T:Demo(5)
+  UI.threatFrames:Update()
+  NOW = NOW + 6
+  T.nextPoll = 0
+  T.frame:GetScript("OnUpdate")()
+  UI.threatFrames.frame:GetScript("OnUpdate")()
+  T:OnTargetChanged()
+  W.encounter:CombatEnd()
+  T:OnCombatEnd()
+  UI.threatFrames:Update()
+  T:StatusLine()
+
+  local run = SlashCmdList["WREKKIT"]
+  for _, c in ipairs({ "threat", "threat", "threat docked", "threat meter", "threat tank",
+                       "threat tank", "threat test", "threat config", "threat disable",
+                       "threat enable", "threat bogus", "mode threat", "mode damage",
+                       "threat window" }) do
+    run(c)
+  end
+
+  STUB.GetNumPartyMembers, STUB.UnitExists, STUB.UnitName = realParty, realExists, realName
+  STUB.SendAddonMessage = realSend
+  WORLD["target"] = nil
 end)
 
 step("the other combat events", function()

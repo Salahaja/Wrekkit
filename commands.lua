@@ -60,6 +60,11 @@ local HELP = {
   { "/wrek channel <chan>", "auto | raid | party | guild" },
   { "/wrek request", "look for other Wrekkit users" },
   { "/wrek announce [chan]", "post what is on screen to chat (asks first)" },
+  { "/wrek threat", "show or hide the threat window" },
+  { "/wrek threat <where>", "window | docked | meter | off" },
+  { "/wrek threat tank", "toggle tank mode (threat on every mob)" },
+  { "/wrek threat test", "15s of test data, to place frames and plates" },
+  { "/wrek threat config", "threat settings" },
   { "/wrek lock", "lock the meter in place" },
   { "/wrek minimap", "toggle the minimap button" },
   { "/wrek resume <min>", "how long a break still counts as the same session" },
@@ -114,6 +119,12 @@ local function handler(msg)
 
   elseif cmd == "mode" or cmd == "m" then
     local key = a[2]
+    if key == "threat" then
+      W.ui.meter:Show()
+      W.ui.meter:SetMetric("threat")
+      W.Print("meter showing live threat.")
+      return
+    end
     if not key or not W.metrics.byKey[key] then
       W.Print("unknown metric. /wrek modes lists them.")
       return
@@ -229,6 +240,11 @@ local function handler(msg)
          opens the picker. Neither skips the preview -- there is deliberately
          no way to fire something into raid chat from a single keystroke. ]]
     local ctx, frame, anchor = announceContext()
+    if ctx.metric == "threat" then
+      W.Print("threat is live and changes every half second; switch the meter " ..
+        "to a recorded metric to announce it.")
+      return
+    end
     local channel = channelArg(a[2])
     local target = (channel == "WHISPER") and a[3] or nil
     local count = tonumber(a[3]) or tonumber(a[2]) or nil
@@ -281,6 +297,36 @@ local function handler(msg)
     W.db.acceptShares = not W.db.acceptShares
     W.Print("shared reports " ..
       (W.db.acceptShares and "accepted." or "ignored."))
+
+  elseif cmd == "threat" or cmd == "aggro" then
+    local T = W.threat
+    local s = T:Settings()
+    local sub = a[2]
+    if not sub then
+      if s.display == "window" or s.display == "docked" then
+        W.ui.threat:SetDisplay("off")
+        W.Print("threat window hidden. Frames, plates and warnings stay on.")
+      else
+        W.ui.threat:SetDisplay(s.lastWindow or "window")
+        W.Print("threat window shown.")
+      end
+    elseif W.ui.threat:SetDisplay(sub) then
+      W.Print("threat shown: " .. sub .. ".")
+    elseif sub == "enable" or sub == "disable" then
+      s.enabled = (sub == "enable")
+      W.ui.threat:UpdateVisibility()
+      W.Print("threat meter " .. (s.enabled and "on." or "off."))
+    elseif sub == "tank" then
+      s.tankMode = not s.tankMode
+      W.Print("tank mode " .. (s.tankMode and "on: every mob in the fight is asked about." or "off."))
+    elseif sub == "test" or sub == "demo" or sub == "preview" then
+      T:Demo(15)
+      W.Print("threat preview for 15 seconds.")
+    elseif sub == "config" or sub == "settings" then
+      W.ui.settings:Show("threat")
+    else
+      W.Print("/wrek threat [window | docked | meter | off | tank | test | config | enable | disable]")
+    end
 
   elseif cmd == "debug" then
     W.db.debug = not W.db.debug

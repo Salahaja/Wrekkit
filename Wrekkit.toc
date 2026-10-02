@@ -1,8 +1,8 @@
 ## Interface: 11200
 ## Title: Wrekkit
-## Notes: In-game raid analysis. Damage, healing, deaths and timelines, recorded and reviewed without leaving the client.
+## Notes: In-game raid analysis. Damage, healing, deaths, timelines and live server threat, recorded and reviewed without leaving the client.
 ## Author: Salahaja
-## Version: 0.4.4
+## Version: 0.5.0
 ## DefaultState: enabled
 ## SavedVariables: WrekkitDB
 
@@ -15,6 +15,7 @@ diagnostics.lua
 store.lua
 sync.lua
 announce.lua
+threat.lua
 
 ui\widgets.lua
 ui\chart.lua
@@ -23,6 +24,8 @@ ui\report.lua
 ui\confirm.lua
 ui\settings.lua
 ui\peers.lua
+ui\threat.lua
+ui\threatframes.lua
 
 minimap.lua
 commands.lua

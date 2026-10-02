@@ -128,7 +128,8 @@ end
 local function place(self, control, live, full, extraGap)
   position(self, control, full, extraGap)
   if live then table.insert(self.controls, control) end
-  table.insert(self.items, { control = control, full = full, gap = extraGap })
+  table.insert(self.items, { control = control, full = full, gap = extraGap,
+                             tab = self.building })
   return control
 end
 
@@ -184,6 +185,27 @@ function S:Create()
   self.body = f.body
   self.controls = {}
   self.items = {}
+  self.tab = self.tab or "general"
+
+  --[[ Tabs rather than one long page: the threat meter has as many
+       options as everything else together, and one window holding both
+       would be taller than a 768-line screen. ]]
+  self.tabs = {}
+  local tabRow = CreateFrame("Frame", nil, f.body)
+  tabRow:SetHeight(20)
+  tabRow:SetPoint("TOPLEFT", f.body, "TOPLEFT", PAD, -8)
+  tabRow:SetPoint("TOPRIGHT", f.body, "TOPRIGHT", -PAD, -8)
+  local prev
+  for _, t in ipairs({ { "general", "General" }, { "threat", "Threat" } }) do
+    local key = t[1]
+    local b = UI.Button(tabRow, t[2], 80, 20, function() S:SetTab(key) end)
+    if prev then b:SetPoint("LEFT", prev, "RIGHT", 4, 0)
+    else b:SetPoint("LEFT", tabRow, "LEFT", 0, 0) end
+    self.tabs[key] = b
+    prev = b
+  end
+
+  self.building = "general"
   self.y = PAD
   -- Which column the next control goes in, and how tall the row it is in
   -- has grown so far. A row is only as tall as its tallest control.
@@ -470,11 +492,237 @@ function S:Create()
   end)
   peersBtn:SetPoint("LEFT", statusBtn, "RIGHT", 5, 0)
 
+  self:BuildThreat()
+
   ------------------------------------------------------------------
   -- A half-filled last row still occupies height; without this the
   -- window would clip whatever is sitting in it.
   self:Layout()
   return f
+end
+
+----------------------------------------------------------------------
+-- threat tab
+----------------------------------------------------------------------
+
+--- A labelled text box, for the one setting that is a name.
+local function textField(self, label, get, set)
+  local f = CreateFrame("Frame", nil, self.body)
+  f:SetHeight(18)
+  local text = UI.Text(f, 11, W.color.text)
+  text:SetPoint("LEFT", f, "LEFT", 0, 0)
+  text:SetText(label)
+  local box = UI.SearchBox(f, 110, function(v) set(v) end, "auto")
+  box:SetPoint("RIGHT", f, "RIGHT", 0, 0)
+  box:SetHeight(18)
+  f.Refresh = function() box:SetValue(get()) end
+  return place(self, f, true, false)
+end
+
+function S:BuildThreat()
+  local T = W.threat
+  local function ts() return T:Settings() end
+  local function redraw()
+    if UI.threat.frame then UI.threat:ApplyLayout() end
+    UI.threatFrames.indTarget = nil
+    UI.threatFrames:Update()
+  end
+  local function opt(key)
+    return function() return ts()[key] == true end,
+           function(v) ts()[key] = v and true or false; redraw() end
+  end
+
+  self.building = "threat"
+  self.y = PAD
+
+  heading(self, "Threat meter")
+
+  local get, set = opt("enabled")
+  check(self, "Threat meter on", get, set,
+    { "Asks the server for the threat table of", "your target. Needs a party or raid." })
+
+  choice(self, "Show it",
+    {
+      { value = "window", label = "own window" },
+      { value = "docked", label = "under meter" },
+      { value = "meter", label = "in meter" },
+      { value = "off", label = "no window" },
+    },
+    function() return ts().display end,
+    function(v) UI.threat:SetDisplay(v) end,
+    { "own window: moved and sized by itself.",
+      "under meter: hangs below the damage meter.",
+      "in meter: the meter shows threat while you",
+      "fight, then goes back. Frames, plates and",
+      "warnings work in every mode." })
+
+  choice(self, "Percent means",
+    {
+      { value = "pull", label = "% to pull" },
+      { value = "tank", label = "% of tank" },
+    },
+    function() return ts().basis end,
+    function(v) ts().basis = v; redraw() end,
+    { "% to pull: 100 is where aggro moves to you", "(110% of the tank in melee, 130% at range).",
+      "% of tank: the raw share of the tank's threat." })
+
+  get, set = opt("tankMode")
+  check(self, "Tank mode (every mob)", get, set,
+    { "Asks for every mob in the fight, not just", "your target, so other mobs' nameplates", "show threat too." })
+
+  get, set = opt("eliteOnly")
+  check(self, "Only elites and bosses", get, set,
+    { "The server only reports elites and bosses;", "asking about anything else is wasted traffic." })
+
+  stepper(self, "Update every",
+    function() return math.floor((ts().interval or 0.5) * 1000 + 0.5) end,
+    function(v) ts().interval = v / 1000 end,
+    250, 2000, 250,
+    function(v) return string.format("%.2fs", v / 1000) end)
+
+  stepper(self, "Players listed",
+    function() return ts().rows or 8 end,
+    function(v) ts().rows = v; redraw() end,
+    3, 20, 1)
+
+  get, set = opt("showThreat")
+  check(self, "Show threat", get, set)
+  get, set = opt("showTPS")
+  check(self, "Show threat per second", get, set)
+  get, set = opt("showPullLine")
+  check(self, "Show pull-aggro line", get, set,
+    { "A row at the threat where aggro moves to you." })
+  get, set = opt("locked")
+  check(self, "Lock threat window", get, set)
+
+  slider(self, "Threat window opacity",
+    function() return math.floor(((ts().opacity or 1) * 100) + 0.5) end,
+    function(v) ts().opacity = v / 100; redraw() end,
+    20, 100, 5,
+    function(v) return v .. "%" end)
+
+  ------------------------------------------------------------------
+  heading(self, "Warnings")
+
+  stepper(self, "Warn at",
+    function() return ts().warnAt or 75 end,
+    function(v) ts().warnAt = v; redraw() end,
+    10, 150, 5,
+    function(v) return v .. "%" end)
+
+  stepper(self, "Danger at",
+    function() return ts().dangerAt or 90 end,
+    function(v) ts().dangerAt = v; redraw() end,
+    10, 150, 5,
+    function(v) return v .. "%" end)
+
+  get, set = opt("warnText")
+  check(self, "Warning text", get, set, { "Large text mid-screen as you cross a line." })
+  get, set = opt("warnFlash")
+  check(self, "Flash screen edges", get, set)
+  get, set = opt("warnSound")
+  check(self, "Warning sound", get, set)
+  get, set = opt("warnLostAggro")
+  check(self, "Warn when I lose aggro", get, set,
+    { "For tanks: when a mob you held turns away." })
+
+  stepper(self, "Warning text size",
+    function() return ts().textSize or 26 end,
+    function(v) ts().textSize = v end,
+    14, 48, 2,
+    function(v) return v .. "px" end)
+
+  ------------------------------------------------------------------
+  heading(self, "Target frame")
+
+  get, set = opt("frame")
+  check(self, "Show on target frame", get, set)
+  get, set = opt("framePercent")
+  check(self, "Percent badge", get, set)
+  get, set = opt("frameGlow")
+  check(self, "Coloured border", get, set)
+
+  choice(self, "Badge side",
+    {
+      { value = "TOP", label = "top" },
+      { value = "BOTTOM", label = "bottom" },
+      { value = "LEFT", label = "left" },
+      { value = "RIGHT", label = "right" },
+    },
+    function() return ts().frameAnchor end,
+    function(v) ts().frameAnchor = v; redraw() end)
+
+  stepper(self, "Badge size",
+    function() return math.floor((ts().frameScale or 1) * 100 + 0.5) end,
+    function(v) ts().frameScale = v / 100; redraw() end,
+    50, 200, 10,
+    function(v) return v .. "%" end)
+
+  textField(self, "Frame name",
+    function() return ts().frameName or "" end,
+    function(v) ts().frameName = v or ""; redraw() end)
+
+  ------------------------------------------------------------------
+  heading(self, "Nameplates")
+
+  get, set = opt("plates")
+  check(self, "Show on nameplates", get, set)
+  get, set = opt("platePercent")
+  check(self, "Percent text", get, set)
+
+  choice(self, "Colour",
+    {
+      { value = "text", label = "text" },
+      { value = "bar", label = "health bar" },
+      { value = "none", label = "none" },
+    },
+    function() return ts().plateColor end,
+    function(v) ts().plateColor = v; redraw() end,
+    { "text colours the percentage. health bar", "tints the plate itself by threat level." })
+
+  choice(self, "Text side",
+    {
+      { value = "RIGHT", label = "right" },
+      { value = "LEFT", label = "left" },
+      { value = "TOP", label = "top" },
+      { value = "BOTTOM", label = "bottom" },
+    },
+    function() return ts().plateAnchor end,
+    function(v) ts().plateAnchor = v; redraw() end)
+
+  stepper(self, "Plate text size",
+    function() return ts().plateSize or 11 end,
+    function(v) ts().plateSize = v; redraw() end,
+    7, 20, 1,
+    function(v) return v .. "px" end)
+
+  stepper(self, "Remember mobs for",
+    function() return ts().plateMemory or 10 end,
+    function(v) ts().plateMemory = v end,
+    0, 30, 1,
+    function(v) return v .. "s" end)
+
+  local row = CreateFrame("Frame", nil, self.body)
+  row:SetHeight(22)
+  place(self, row, false, true, 4)
+  local demoBtn = UI.Button(row, "Preview", 64, 20, function()
+    W.Guard("threat preview", function() W.threat:Demo(15) end)
+  end)
+  demoBtn:SetPoint("LEFT", row, "LEFT", 0, 0)
+  local hint = UI.Text(row, 10, W.color.textDim)
+  hint:SetPoint("LEFT", demoBtn, "RIGHT", 8, 0)
+  hint:SetText("test data on every display for 15s")
+
+  self.building = "general"
+end
+
+--- Switch tab. Only that tab's controls are laid out and shown.
+function S:SetTab(tab)
+  self.tab = (tab == "threat") and "threat" or "general"
+  if self.frame then
+    self:Layout()
+    self:Refresh()
+  end
 end
 
 --[[ Re-place every control at the current text size.
@@ -489,12 +737,23 @@ function S:Layout()
   f:SetWidth(w)
   if f.SetMinResize then f:SetMinResize(w, 200) end
 
-  self.y = PAD
+  -- Room for the tab strip above the controls.
+  self.y = PAD + 22
   self.col = 0
   self.rowH = 0
 
+  local tab = self.tab or "general"
   for _, item in ipairs(self.items) do
-    position(self, item.control, item.full, item.gap)
+    if (item.tab or "general") == tab then
+      item.control:ClearAllPoints()
+      position(self, item.control, item.full, item.gap)
+      item.control:Show()
+    else
+      item.control:Hide()
+    end
+  end
+  for key, b in pairs(self.tabs or {}) do
+    if b.SetActive then b:SetActive(key == tab) end
   end
 
   endRow(self)
@@ -521,8 +780,9 @@ function S:Toggle()
   end
 end
 
-function S:Show()
+function S:Show(tab)
   local f = self:Create()
+  if tab then self:SetTab(tab) end
   self:Refresh()
   f:Show()
 end

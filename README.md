@@ -121,6 +121,56 @@ Four icon toggles sit on the toolbar, lit when active:
 | 🌐 | record combat outside instances too (off by default) |
 | ↺ | left-click starts a new log; right-click deletes the history, behind a confirmation |
 
+### Threat meter
+
+Live threat for your target, **straight from the server** rather than
+estimated from the combat log. OctoWoW answers the same `TWT_UDTSv4` request
+Turtle WoW's TWThreat uses, so the numbers are the server's own -- no spell
+tables to go stale, no guessing at talents or stances. TWThreat can run
+alongside it; each makes the other's replies more frequent, not wrong.
+
+It needs a **party or raid** (the request travels on the group channel) and,
+by default, an **elite or boss** target, which is all the server reports on.
+
+**Where it shows** -- pick one in *Settings -> Threat*, from the threat
+window's title menu, or with `/wrek threat <where>`:
+
+| mode | |
+| --- | --- |
+| `window` | its own window, moved and sized independently |
+| `docked` | hangs under the damage meter at the meter's width and moves with it |
+| `meter` | no window; the damage meter turns into the threat meter while you fight and goes back to what it showed afterwards |
+| `off` | no window -- frames, plates and warnings still work |
+
+*Threat (live)* is also in the meter's metric menu in every mode.
+
+**Rows** show threat, threat per second and a percentage, with a red
+**pull-aggro line** at the threat where aggro would move to you. Aggro moves
+at 110% of the tank's threat in melee range and 130% at range, so the
+percentage defaults to *% to pull* -- 100 means it moves now. *% of tank*
+shows the raw tank-relative number instead.
+
+**On the target frame**: a percentage badge (top, bottom, left or right,
+any size) and a border coloured green -> yellow -> orange -> red. It finds
+the stock target frame or pfUI's on its own; for anything else (Luna, XPerl,
+...) type the frame's name into *Frame name*. While you hold aggro it reads
+`tank`, coloured by how close the runner-up is to taking it.
+
+**On nameplates**: the same percentage beside each mob's plate, as coloured
+text or a tinted health bar. The target is live; a mob you tabbed off keeps
+its last reading, dimmed, for a few seconds. **Tank mode** asks the server
+about every mob in the fight, so every plate gets a live number -- the view a
+tank wants on a multi-mob pull. With SuperWoW plates are matched by GUID;
+without it only by name, so identically named mobs share a reading.
+
+**Warnings** fire once on the way *up* into a level, never repeatedly while
+you sit in it: large text mid-screen, a red pulse at the screen edges and a
+sound, each switchable, at thresholds you set (*Warn at* 75%, *Danger at*
+90% by default). Tanks get *LOST AGGRO to <name>* instead.
+
+`/wrek threat test` (or *Preview* in settings) puts 15 seconds of test data on
+every display, so the badge, plates and warnings can be placed out of combat.
+
 ### Settings
 
 The cog on either title bar opens the options window: compact mode, text
@@ -347,6 +397,13 @@ that series.
 /wrek share [chan]       push the last pull at a channel
 /wrek request            look for other Wrekkit users
 /wrek announce [metric]  post the top 5 to chat
+
+/wrek threat             show or hide the threat window
+/wrek threat <where>     window | docked | meter | off
+/wrek threat tank        tank mode: threat on every mob in the fight
+/wrek threat test        15s of test data on every threat display
+/wrek threat config      threat settings
+/wrek mode threat        the meter shows live threat
 
 /wrek config             open the settings window
 /wrek compact            toggle the small meter layout

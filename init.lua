@@ -17,6 +17,8 @@ f:SetScript("OnEvent", function()
     W.InitDB()
     W.capture:Start()
     W.sync:Start()
+    W.threat:Start()
+    W.ui.threatFrames:Start()
     W.minimap:Update()
 
     local missing = W.capture:CheckEnvironment()
@@ -34,6 +36,7 @@ f:SetScript("OnEvent", function()
          ours after that settles avoids fighting them over the anchor. ]]
     W.After(1, function()
       W.Guard("restore meter", function() W.ui.meter:RestoreVisibility() end)
+      W.Guard("restore threat", function() W.ui.threat:UpdateVisibility() end)
     end, "restoreMeter")
 
     --[[ Say hello if the user turned sharing on. Delayed so the roster has

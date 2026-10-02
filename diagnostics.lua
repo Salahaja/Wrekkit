@@ -88,6 +88,8 @@ function W.Status()
     line("CVars       " .. table.concat(parts, "  "))
   end
 
+  if W.threat then line("Threat      " .. string.gsub(W.threat:StatusLine(), "^threat: ", "")) end
+
   ------------------------------------------------------------------
   -- are events actually arriving?
   ------------------------------------------------------------------

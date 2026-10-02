@@ -110,6 +110,7 @@ local function region(kind)
       self._r, self._g, self._b, self._a = r, g, b, a
     end,
     SetTexCoord = function() end,
+    SetGradientAlpha = function() end,
     SetBlendMode = function() end,
     SetDrawLayer = function() end,
     SetFont = function() return true end,
@@ -363,6 +364,7 @@ dofile("diagnostics.lua")
 dofile("store.lua")
 dofile("sync.lua")
 dofile("announce.lua")
+dofile("threat.lua")
 dofile("ui/widgets.lua")
 dofile("ui/chart.lua")
 dofile("ui/meter.lua")
@@ -370,6 +372,8 @@ dofile("ui/report.lua")
 dofile("ui/confirm.lua")
 dofile("ui/settings.lua")
 dofile("ui/peers.lua")
+dofile("ui/threat.lua")
+dofile("ui/threatframes.lua")
 dofile("minimap.lua")
 dofile("commands.lua")
 
@@ -2194,7 +2198,8 @@ step("dragging the opacity bar changes the setting", function()
   UI.settings:Create()
   local bar
   for _, c in ipairs(UI.settings.controls) do
-    if c.slider then bar = c end
+    -- The first is the meter's; the threat tab has one of its own.
+    if c.slider and not bar then bar = c end
   end
   if not bar then error("no slider was built in the settings window") end
 
@@ -2211,7 +2216,8 @@ end)
 step("the bar refreshes from the setting without writing back", function()
   local bar
   for _, c in ipairs(UI.settings.controls) do
-    if c.slider then bar = c end
+    -- The first is the meter's; the threat tab has one of its own.
+    if c.slider and not bar then bar = c end
   end
 
   UI.meter:Settings().opacity = 0.7
@@ -2235,7 +2241,8 @@ end)
 step("the bar clamps and quantises like the client", function()
   local bar
   for _, c in ipairs(UI.settings.controls) do
-    if c.slider then bar = c end
+    -- The first is the meter's; the threat tab has one of its own.
+    if c.slider and not bar then bar = c end
   end
   bar.slider:SetValue(500)
   if UI.meter:Settings().opacity > 1.0 then error("not clamped high") end
@@ -2271,6 +2278,105 @@ step("the settings window fits the screen at any text size", function()
   end
   Wrekkit.db.fontScale = realScale
   UI.ApplyFontScale()
+end)
+
+step("the threat settings tab fits the screen too", function()
+  local realScale = Wrekkit.db.fontScale
+  for _, scale in ipairs({ 1.0, 1.8 }) do
+    Wrekkit.db.fontScale = scale
+    UI.ApplyFontScale()
+    UI.settings.frame = nil
+    UI.settings:Create()
+    UI.settings:SetTab("threat")
+    local h = UI.settings.frame:GetHeight() or 0
+    if h <= 0 or h > 700 then
+      error(string.format("threat tab is %dpx tall at %.1fx", h, scale))
+    end
+    -- Only that tab's controls are on show.
+    for _, item in ipairs(UI.settings.items) do
+      local want = (item.tab or "general") == "threat"
+      if (item.control:IsShown() and true or false) ~= want then
+        error("a " .. tostring(item.tab) .. " control is " ..
+          (want and "hidden" or "shown") .. " on the threat tab")
+      end
+    end
+  end
+  UI.settings:SetTab("general")
+  Wrekkit.db.fontScale = realScale
+  UI.ApplyFontScale()
+  UI.settings.frame = nil
+  UI.settings:Create()
+end)
+
+step("threat: docked window hangs under the meter", function()
+  local T = Wrekkit.threat
+  T:Demo(30)
+  UI.threat:SetDisplay("docked")
+  local f = UI.threat.frame
+  if not f:IsShown() then error("docked threat window is not shown") end
+  local p = f._points[1]
+  if not p or p[2] ~= UI.meter.frame then error("docked window is not anchored to the meter") end
+  if table.getn(UI.threat.list.data) < 3 then error("docked window drew no rows") end
+  UI.threat:SetDisplay("window")
+  if f._points[1] and f._points[1][2] == UI.meter.frame then
+    error("back in its own window it still hangs off the meter")
+  end
+  T:StopDemo()
+end)
+
+step("threat: meter mode switches the meter for the fight and back", function()
+  local T = Wrekkit.threat
+  local TF = UI.threatFrames
+  UI.meter:SetMetric("healing")
+  UI.threat:SetDisplay("meter")
+  if UI.threat.frame and UI.threat.frame:IsShown() then error("meter mode left the window up") end
+  T:Demo(30)
+  IN_COMBAT = true
+  Wrekkit.encounter:CombatStart()
+  TF:UpdateMeterSwitch()
+  if UI.meter:Settings().metric ~= "threat" then error("meter did not switch to threat") end
+  local drew = 0
+  for _, item in ipairs(UI.meter.list.data) do
+    if item.row then drew = drew + 1 end
+  end
+  if drew < 3 then error("the meter did not draw threat rows") end
+  IN_COMBAT = false
+  Wrekkit.encounter:CombatEnd()
+  TF:UpdateMeterSwitch()
+  if UI.meter:Settings().metric ~= "healing" then
+    error("meter did not go back: " .. tostring(UI.meter:Settings().metric))
+  end
+  T:StopDemo()
+  IN_COMBAT = true
+  UI.threat:SetDisplay("window")
+  UI.meter:SetMetric("damage")
+end)
+
+step("threat: warnings fire once on the way up, not every reading", function()
+  local T = Wrekkit.threat
+  local TF = UI.threatFrames
+  local count = 0
+  local real = TF.Message
+  TF.Message = function(self, text, level) count = count + 1 end
+  T.demoUntil = nil
+  T.current = nil
+  T.lastLevel = nil
+  local me = UnitName("player")
+  T:SetCurrent({ key = "k", rows = {}, at = GetTime() })
+  local function reading(perc)
+    local r = { name = me, perc = perc, melee = false, isMe = true, threat = perc * 10 }
+    r.pull = T.PullPercent(r)
+    local tank = { name = "Tanky", tank = true, perc = 100, threat = 1000, pull = 100 }
+    T:SetCurrent({ key = "k", rows = { r, tank }, me = r, tank = tank, at = GetTime() })
+  end
+  reading(50)      -- 38%: safe
+  reading(104)     -- 80%: warn
+  reading(105)     -- still warn: nothing new
+  reading(125)     -- 96%: danger
+  reading(126)
+  TF.Message = real
+  T.current = nil
+  if count ~= 2 then error("expected 2 warnings (warn, danger), got " .. count) end
 end)
 
 step("settings controls are laid out in two columns", function()

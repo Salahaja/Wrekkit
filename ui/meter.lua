@@ -518,6 +518,9 @@ function M:MetricMenu(anchor)
   for _, m in ipairs(W.metrics.list) do
     table.insert(items, { text = W.metrics.Label(m), value = m.key, checked = (m.key == s.metric) })
   end
+  -- Not in W.metrics: it ranks nobody's recorded totals, it is the server's
+  -- live table for your target, so the report has nothing to sort by it.
+  table.insert(items, { text = "Threat (live)", value = "threat", checked = (s.metric == "threat") })
   UI.Menu(self.frame, anchor, items, function(value)
     s.metric = value
     self.drill = nil
@@ -564,6 +567,11 @@ function M:SegmentMenu(anchor)
     if value == "settings" then
       UI.settings:Toggle()
     elseif value == "announce" then
+      if s.metric == "threat" then
+        W.Print("threat is live and changes every half second; switch the meter " ..
+          "to a recorded metric to announce it.")
+        return
+      end
       UI.AnnounceMenu(self.frame, anchor, M:AnnounceContext())
     elseif value == "hide" then
       M:Hide()
@@ -730,6 +738,7 @@ function M:RefreshInner()
   if not f or not f:IsShown() then return end
 
   local s = self:Settings()
+  if s.metric == "threat" then return self:RefreshThreat() end
   local encounters, segLabel = self:Encounters()
   local metric = W.metrics.Get(s.metric)
 
@@ -816,6 +825,27 @@ function M:RefreshInner()
   if table.getn(rows) == 0 and s.pickedOnly and W.report:AnyPicked() then
     self.footR:SetText("no picked players here")
   end
+end
+
+--[[ The meter as a threat meter: the same rows the threat window draws,
+     painted by the same function, so the two never disagree. ]]
+function M:RefreshThreat()
+  local f = self.frame
+  local cur = W.threat:Live()
+  f.title:SetText("Threat")
+  self.drill = nil
+  self.drillAbility = nil
+  if not cur then
+    self:SetSegmentLabel("")
+    self.list:SetData({ { label = UI.threat.EmptyNote(), value = "" } }, paintStat)
+    self.footL:SetText(W.threat:Settings().tankMode and "tank mode" or "")
+    self.footR:SetText("")
+    return
+  end
+  self:SetSegmentLabel(cur.name or "?")
+  self.list:SetData(UI.threat.Rows(cur), UI.threat.Paint)
+  self.footL:SetText("aggro: " .. (cur.tank and cur.tank.name or "?"))
+  self.footR:SetText(W.threat.demoUntil and "preview" or "")
 end
 
 ----------------------------------------------------------------------
