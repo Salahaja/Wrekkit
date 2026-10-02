@@ -92,6 +92,7 @@ declare(WOW, [[
   WorldFrame PlaySound UnitIsDead UnitCanAttack getglobal
   GetNumShapeshiftForms GetShapeshiftFormInfo
   GetSpellName GetSpellTexture GetSpellCooldown CastSpell CastSpellByName
+  GetPlayerBuff GetPlayerBuffTexture
   TargetUnit TargetByName
   this event arg1 arg2 arg3 arg4 arg5 arg6 arg7 arg8 arg9
 ]])
@@ -1273,6 +1274,28 @@ step("threat meter", function()
   STUB.GetNumPartyMembers, STUB.UnitExists, STUB.UnitName = realParty, realExists, realName
   STUB.SendAddonMessage = realSend
   WORLD["target"] = nil
+end)
+
+step("tank detection: Righteous Fury, every way a client may report it", function()
+  local T = W.threat
+  local realClass, realBuff = STUB.UnitClass, STUB.UnitBuff
+  STUB.UnitClass = function(u) return "Paladin", "PALADIN" end
+  local function with(buffs)
+    STUB.UnitBuff = function(u, i) local b = buffs[i] if b then return b[1], 1, b[2] end end
+    T.roleAt = nil
+    return T:DetectTank()
+  end
+  T:Settings().tankMode = "auto"
+  if with({ { "Interface\\Icons\\Spell_Holy_SealOfFury" } }) ~= true then error("stock icon path not seen") end
+  if with({ { "interface\\icons\\spell_holy_sealoffury" } }) ~= true then error("lower-case icon path not seen") end
+  if with({ { "Interface\\Icons\\Something_Else", 25780 } }) ~= true then error("spell id not seen") end
+  if with({ { "Interface\\Icons\\Spell_Holy_Devotionaura" } }) ~= false then error("an aura counted as Fury") end
+  if with({}) ~= false then error("no buffs counted as Fury") end
+  with({ { "Interface\\Icons\\Spell_Holy_SealOfFury" } })
+  T:ExplainRole()
+  SlashCmdList["WREKKIT"]("threat role")
+  STUB.UnitClass, STUB.UnitBuff = realClass, realBuff
+  T.roleAt = nil
 end)
 
 step("skins: pfUI's own backdrop is used when pfUI is loaded", function()

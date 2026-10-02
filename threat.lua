@@ -352,30 +352,93 @@ end
 
      By icon rather than name, so it works in every client language. Asked
      at most once a second -- a stance does not change faster than that. ]]
-local TANK_ICONS = { "DefensiveStance", "BearForm" }
-local FURY_ICON = "SealOfFury"
+local TANK_ICONS = { "defensivestance", "bearform" }
+local FURY_ICON = "sealoffury"
+-- Righteous Fury by spell id, for SuperWoW's UnitBuff (its third return).
+local FURY_IDS = { [25780] = true, [25781] = true }
+local FURY_NAME = "righteous fury"
+
+--- Every buff on the player, as { icon, id, name } -- read three ways so
+--- one client's quirk cannot hide a buff: UnitBuff (SuperWoW adds the
+--- spell id), and the player-only GetPlayerBuff API as a second source.
+function T:PlayerBuffs()
+  local out = {}
+  if UnitBuff then
+    for i = 1, 32 do
+      local icon, _, id = UnitBuff("player", i)
+      if not icon then break end
+      id = tonumber(id)
+      local name = (id and SpellInfo) and SpellInfo(id) or nil
+      table.insert(out, { icon = icon, id = id, name = name })
+    end
+  end
+  if GetPlayerBuff and GetPlayerBuffTexture then
+    for i = 0, 31 do
+      local index = GetPlayerBuff(i, "HELPFUL")
+      if not index or index < 0 then break end
+      local icon = GetPlayerBuffTexture(index)
+      if icon then table.insert(out, { icon = icon }) end
+    end
+  end
+  return out
+end
+
+--- Is this buff Righteous Fury? By icon, by id, or by name -- any one will do.
+local function isFury(b)
+  if b.icon and string.find(string.lower(b.icon), FURY_ICON, 1, true) then return true end
+  if b.id and FURY_IDS[b.id] then return true end
+  if b.name and string.lower(b.name) == FURY_NAME then return true end
+  return false
+end
 
 function T:DetectTank()
   local _, class = UnitClass("player")
+  class = class and string.upper(class) or ""
   if class == "WARRIOR" or class == "DRUID" then
     if not GetNumShapeshiftForms or not GetShapeshiftFormInfo then return false end
     for i = 1, (GetNumShapeshiftForms() or 0) do
       local icon, _, active = GetShapeshiftFormInfo(i)
       if active and icon then
+        local lower = string.lower(icon)
         for _, want in ipairs(TANK_ICONS) do
-          if string.find(icon, want, 1, true) then return true end
+          if string.find(lower, want, 1, true) then return true end
         end
       end
     end
     return false
-  elseif class == "PALADIN" and UnitBuff then
-    for i = 1, 32 do
-      local icon = UnitBuff("player", i)
-      if not icon then break end
-      if string.find(icon, FURY_ICON, 1, true) then return true end
+  elseif class == "PALADIN" then
+    for _, b in ipairs(self:PlayerBuffs()) do
+      if isFury(b) then return true end
     end
   end
   return false
+end
+
+--- What the role check sees, for /wrek threat role.
+function T:ExplainRole()
+  local _, class = UnitClass("player")
+  local s = self:Settings()
+  self.roleAt = nil
+  W.Print(string.format("I'm the tank: setting %s, class %s, detected %s.",
+    s.tankMode, tostring(class), self:DetectTank() and "TANK" or "not tank"))
+  if s.tankMode ~= "auto" then
+    W.Print("  (the setting overrides detection; set it to auto to use it)")
+  end
+  local up = string.upper(class or "")
+  if up == "WARRIOR" or up == "DRUID" then
+    for i = 1, (GetNumShapeshiftForms and GetNumShapeshiftForms() or 0) do
+      local icon, name, active = GetShapeshiftFormInfo(i)
+      W.Print(string.format("  form %d: %s %s%s", i, tostring(name), tostring(icon),
+        active and "  <- active" or ""))
+    end
+  else
+    local buffs = self:PlayerBuffs()
+    if table.getn(buffs) == 0 then W.Print("  no buffs found") end
+    for _, b in ipairs(buffs) do
+      W.Print(string.format("  buff: %s  id %s  %s%s", tostring(b.icon), tostring(b.id),
+        tostring(b.name or ""), isFury(b) and "  <- Righteous Fury" or ""))
+    end
+  end
 end
 
 function T:IsTank()

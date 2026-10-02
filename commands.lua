@@ -66,6 +66,7 @@ local HELP = {
   { "/wrek threat test", "15s of test data, to place frames and plates" },
   { "/wrek threat move", "place the target-frame %, taunt bar and mob frames" },
   { "/wrek taunt", "taunt the mob that got away (for a macro)" },
+  { "/wrek threat role", "show why you are or are not seen as the tank" },
   { "/wrek threat resetpos", "put the target-frame % back above the frame" },
   { "/wrek threat config", "threat settings" },
   { "/wrek opacity <win> <n>", "meter, threat or report window opacity, 20-100" },
@@ -331,6 +332,8 @@ local function handler(msg)
         off = "never: you get damage-dealer warnings.",
       }
       W.Print("I'm the tank: " .. said[s.tankMode])
+    elseif sub == "role" then
+      T:ExplainRole()
     elseif sub == "move" or sub == "unlock" or sub == "lock" then
       W.ui.threatFrames:SetMoving(not W.ui.threatFrames.moving)
     elseif sub == "resetpos" then
