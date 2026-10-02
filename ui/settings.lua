@@ -734,6 +734,20 @@ function S:BuildThreat()
     function() return ts().coTanks end,
     function(v) ts().coTanks = v or "" end)
 
+  get, set = opt("tauntPopup")
+  check(self, "Taunt popup", get, set,
+    { "A button for each mob that got away: click", "to taunt it, right-click to dismiss. Also",
+      "on a key (Key Bindings -> Wrekkit) and", "/wrek taunt for a macro." })
+
+  get, set = opt("tauntKeepTarget")
+  check(self, "Taunt without retargeting", get, set,
+    { "With SuperWoW the taunt goes straight at", "the mob and your target stays put. Off, or",
+      "without SuperWoW, the mob is targeted first." })
+
+  textField(self, "Taunt spell",
+    function() return ts().tauntSpell end,
+    function(v) ts().tauntSpell = v or ""; T.tauntCache = nil end)
+
   ------------------------------------------------------------------
   self.building = "plates"
   heading(self, "Target frame")

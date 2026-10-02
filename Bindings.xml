@@ -1,0 +1,5 @@
+<Bindings>
+  <Binding name="WREKKIT_TAUNT" header="WREKKIT">
+    Wrekkit_TauntBinding()
+  </Binding>
+</Bindings>

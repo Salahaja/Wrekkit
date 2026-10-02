@@ -91,6 +91,8 @@ declare(WOW, [[
   GetItemInfo IsInGuild GetCursorPosition Minimap IsShiftKeyDown
   WorldFrame PlaySound UnitIsDead UnitCanAttack getglobal
   GetNumShapeshiftForms GetShapeshiftFormInfo
+  GetSpellName GetSpellTexture GetSpellCooldown CastSpell CastSpellByName
+  TargetUnit TargetByName
   this event arg1 arg2 arg3 arg4 arg5 arg6 arg7 arg8 arg9
 ]])
 
@@ -1049,6 +1051,72 @@ step("threat meter", function()
     error("summary reads: " .. tostring(summary))
   end
   if not T:Alarm() then error("a loose mob should flash") end
+
+  -- The taunt popup: the loose Whelp is offered, clicking taunts it.
+  local book = {
+    { "Heroic Strike", "Interface\\Icons\\Ability_Rogue_Ambush" },
+    { "Taunt", "Interface\\Icons\\Spell_Nature_Reincarnation" },
+    { "Mocking Blow", "Interface\\Icons\\Ability_Warrior_PunishingBlow" },
+  }
+  local cooldown = {}
+  local casts = {}
+  STUB.GetSpellName = function(i) return book[i] and book[i][1] end
+  STUB.GetSpellTexture = function(i) return book[i] and book[i][2] end
+  STUB.GetSpellCooldown = function(i) local c = cooldown[i] return c and NOW or 0, c or 0, 1 end
+  STUB.CastSpellByName = function(name, unit) table.insert(casts, name .. "@" .. tostring(unit)) end
+  STUB.CastSpell = function(i) table.insert(casts, "book" .. i) end
+  STUB.TargetUnit = function(u) table.insert(casts, "target:" .. tostring(u)) end
+  STUB.TargetByName = function(n) table.insert(casts, "name:" .. tostring(n)) end
+  T.tauntCache = nil
+  local queue = T:Taunts()
+  if table.getn(queue) ~= 1 or queue[1].guid ~= whelpGuid then error("the loose Whelp was not offered to taunt") end
+  UI.taunt:Update()
+  if not UI.taunt.frame:IsShown() then error("the taunt popup did not appear") end
+  if UI.taunt.rows[1].label:GetText() ~= "Taunt Whelp" then error("popup reads " .. tostring(UI.taunt.rows[1].label:GetText())) end
+  arg1 = "LeftButton"
+  UI.taunt.rows[1]:GetScript("OnClick")()
+  if casts[1] ~= "Taunt@" .. whelpGuid then error("clicking did not taunt the Whelp by guid: " .. tostring(casts[1])) end
+  if table.getn(T:Taunts()) ~= 0 then error("a taunted mob stayed in the popup") end
+  UI.taunt:Update()
+  if UI.taunt.frame:IsShown() then error("the popup stayed up with nothing to taunt") end
+
+  -- Taunt on cooldown: Mocking Blow instead. Neither ready: told so.
+  cooldown[2] = 8
+  T:QueueTaunt(whelpGuid, "Whelp", "Elfpriest", "loose")
+  T:TauntNext()
+  if casts[2] ~= "Mocking Blow@" .. whelpGuid then error("no fallback to Mocking Blow: " .. tostring(casts[2])) end
+  cooldown[3] = 4
+  T:QueueTaunt(whelpGuid, "Whelp", "Elfpriest", "loose")
+  UI.taunt:Update()
+  if T:TauntNext() then error("taunted with everything on cooldown") end
+  cooldown = {}
+
+  -- Keeping the target off: the mob is targeted, then the spell cast.
+  T:Settings().tauntKeepTarget = false
+  casts = {}
+  Wrekkit_TauntBinding()
+  if casts[1] ~= "target:" .. whelpGuid or casts[2] ~= "book2" then
+    error("retarget path: " .. table.concat(casts, ", "))
+  end
+  T:Settings().tauntKeepTarget = true
+
+  -- Right-click dismisses; the slash command with nothing queued says so.
+  T:QueueTaunt(whelpGuid, "Whelp", "Elfpriest", "loose")
+  UI.taunt:Update()
+  arg1 = "RightButton"
+  UI.taunt.rows[1]:GetScript("OnClick")()
+  if table.getn(T:Taunts()) ~= 0 then error("right-click did not dismiss") end
+  SlashCmdList["WREKKIT"]("taunt")
+
+  -- A mob lost from tank mode's list is offered by its full guid.
+  T.guidByLow[0xBEEF] = whelpGuid
+  T:LostAggro(0xBEEF, "Whelp", nil, NOW)
+  if not T:Taunts()[1] or T:Taunts()[1].guid ~= whelpGuid then error("a lost mob was not offered with its guid") end
+  UI.taunt:Update()
+  UI.taunt:SavePosition()
+  if T:Settings().tauntX == nil then error("the popup's place was not saved") end
+  UI.taunt:RestorePosition()
+  T.taunts, T.lost = {}, {}
   UI.threat:Refresh()
   local looseRows = 0
   for _, it in ipairs(UI.threat.list.data) do if it.loose then looseRows = looseRows + 1 end end

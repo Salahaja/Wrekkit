@@ -64,7 +64,8 @@ local HELP = {
   { "/wrek threat <where>", "window | docked | meter | off" },
   { "/wrek threat tank", "I'm the tank: auto, always, never (cycles)" },
   { "/wrek threat test", "15s of test data, to place frames and plates" },
-  { "/wrek threat move", "drag the target-frame % where you want it" },
+  { "/wrek threat move", "drag the target-frame % and the taunt popup" },
+  { "/wrek taunt", "taunt the mob that got away (for a macro)" },
   { "/wrek threat resetpos", "put the target-frame % back above the frame" },
   { "/wrek threat config", "threat settings" },
   { "/wrek opacity <win> <n>", "meter, threat or report window opacity, 20-100" },
@@ -343,6 +344,11 @@ local function handler(msg)
     else
       W.Print("/wrek threat [window | docked | meter | off | tank | move | resetpos | test | config | enable | disable]")
     end
+
+  elseif cmd == "taunt" then
+    -- For a macro or a bar button: taunt the newest mob that got away.
+    W.threat:TauntNext()
+    if W.ui.taunt then W.ui.taunt:Update() end
 
   elseif cmd == "opacity" or cmd == "alpha" then
     -- /wrek opacity <meter|threat|report> <20-100>

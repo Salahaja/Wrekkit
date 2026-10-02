@@ -243,6 +243,8 @@ function TF:SetMoving(on)
   end
   self.indPlaced = nil
   self:UpdateIndicator()
+  -- The taunt popup is placed in the same pass, with a sample showing.
+  if UI.taunt then UI.taunt:Update() end
   if UI.settings and UI.settings.Refresh then UI.settings:Refresh() end
 end
 
@@ -774,6 +776,7 @@ local function tick()
   TF:UpdateAlarm()
   TF:UpdateIndicator()
   TF:UpdatePlates()
+  if UI.taunt then UI.taunt:Update() end
   UI.threat:UpdateVisibility()
   TF:UpdateMeterSwitch()
 end

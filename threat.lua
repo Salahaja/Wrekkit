@@ -117,6 +117,12 @@ T.defaults = {
   mobSummary = true,       -- "4 held - 1 slipping - 1 loose" under the %
   coTanks = "",            -- names whose mobs are not loose, comma-separated
 
+  -- taunting
+  tauntPopup = true,       -- a button to click when a mob gets away
+  tauntSpell = "",         -- empty: find Taunt / Growl in the spellbook
+  tauntKeepTarget = true,  -- cast at the mob without changing target
+  -- tauntX / tauntY: where the popup was dragged, from screen centre
+
   -- target frame
   frame = true,
   frameStyle = "clean",    -- "clean" (number + bar) | "number" | "badge"
@@ -195,6 +201,8 @@ function T:Sanitize(s)
   s.opacity = clamp(s.opacity, 0.2, 1, d.opacity)
   if type(s.frameName) ~= "string" then s.frameName = "" end
   if type(s.coTanks) ~= "string" then s.coTanks = "" end
+  if type(s.tauntSpell) ~= "string" then s.tauntSpell = "" end
+  s.tauntX, s.tauntY = tonumber(s.tauntX), tonumber(s.tauntY)
   s.lastWindow = oneOf(s.lastWindow, { "window", "docked" }, "docked")
   if type(s.window) ~= "table" then s.window = {} end
   local w = s.window
@@ -558,6 +566,7 @@ function T:OnMessage(text)
 
   local cur = { key = key, guid = guid, low = T.LowGuid(guid),
                 name = UnitName("target"), at = now, rows = rows }
+  if cur.low then self.guidByLow[cur.low] = guid end
   for _, r in ipairs(rows) do
     if r.isMe then cur.me = r end
     if r.tank then cur.tank = r end
@@ -765,7 +774,7 @@ function T:CheckWarnings(cur, wasTank)
   end
 
   if wasTank and tank and s.warnLostAggro then
-    self:LostAggro(key, cur.name, cur.tank and cur.tank.name, GetTime())
+    self:LostAggro(key, cur.name, cur.tank and cur.tank.name, GetTime(), cur.guid)
     return
   end
 
@@ -779,11 +788,13 @@ function T:CheckWarnings(cur, wasTank)
 end
 
 --- A mob a tank held has turned away. Said once, and marked on its plate.
-function T:LostAggro(key, mobName, toName, now)
+function T:LostAggro(key, mobName, toName, now, guid)
   local last = self.lost[key]
   if last and now - last < LOST_SHOW then return end
   self.lost[key] = now
   self.fired["tank:" .. tostring(key)] = nil
+  guid = guid or (type(key) == "number" and self.guidByLow[key]) or nil
+  self:QueueTaunt(guid, mobName, toName, "lost")
   if not self:Settings().warnLostAggro then return end
   local text = "LOST AGGRO: " .. (mobName or "a mob")
   if toName then text = text .. " -> " .. toName end
@@ -957,6 +968,7 @@ end
      priest is not a loose mob. ]]
 local LOOSE_CONFIRM = 1.0
 T.watch = {}         -- guid -> { state, who, name, since, at, confirmed }
+T.guidByLow = {}     -- low 16 bits -> full guid, for every mob seen
 
 local coTankList, coTankFor = {}, nil
 local function isCoTank(name)
@@ -990,6 +1002,10 @@ function T:WatchMob(guid, mobName)
     end
   end
 
+  -- Remembered so tank mode's low guids can be turned back into a mob.
+  local low = T.LowGuid(guid)
+  if low then self.guidByLow[low] = guid end
+
   local w = self.watch[guid]
   if not state then
     if w then self.watch[guid] = nil end
@@ -1002,6 +1018,7 @@ function T:WatchMob(guid, mobName)
   w.at, w.name = now, mobName or w.name
   if not w.confirmed and now - w.since >= LOOSE_CONFIRM then
     w.confirmed = true
+    if state == "loose" then self:QueueTaunt(guid, w.name, who, "loose") end
     if state == "loose" and s.warnLostAggro then
       self:Alert("LOOSE: " .. (w.name or "a mob") .. " on " .. (who or "?"), "danger")
     elseif state == "onme" and s.warnPulled and not (self.current and self.current.guid == guid) then
@@ -1124,6 +1141,159 @@ function T:StopDemo()
 end
 
 ----------------------------------------------------------------------
+-- taunting
+----------------------------------------------------------------------
+
+--[[ A mob got away: offer to taunt it back.
+
+     Each one is queued with what is needed to reach it -- its guid when
+     known, otherwise its name -- and leaves the queue when it is back on
+     you, dies, or TAUNT_KEEP seconds pass. The popup shows the queue; a
+     keybinding and /wrek taunt take the newest. ]]
+local TAUNT_KEEP = 10
+T.taunts = {}
+
+function T:QueueTaunt(guid, name, who, reason)
+  if not self:IsTank() then return end
+  local now = GetTime()
+  for _, t in ipairs(self.taunts) do
+    if (guid and t.guid == guid) or (not guid and not t.guid and t.name == name) then
+      t.at, t.who, t.reason = now, who or t.who, reason
+      return t
+    end
+  end
+  local t = { guid = guid, name = name or "a mob", who = who, reason = reason, at = now }
+  table.insert(self.taunts, 1, t)
+  while table.getn(self.taunts) > 3 do table.remove(self.taunts) end
+  return t
+end
+
+--- The queue, without anything that is settled: back on you, dead, old.
+function T:Taunts()
+  local now = GetTime()
+  for i = table.getn(self.taunts), 1, -1 do
+    local t = self.taunts[i]
+    local low = t.guid and T.LowGuid(t.guid)
+    local back = low and self.tankMobs[low] and now - self.tankMobs[low].at < 1 and now - t.at > 1
+    local dead = (low and self.died[low]) or (t.guid and UnitIsDead and UnitIsDead(t.guid))
+    if back or dead or now - t.at > TAUNT_KEEP then table.remove(self.taunts, i) end
+  end
+  return self.taunts
+end
+
+function T:DismissTaunt(t)
+  for i, x in ipairs(self.taunts) do
+    if x == t then table.remove(self.taunts, i) return end
+  end
+end
+
+--[[ The taunts this character knows, from the spellbook, best first. Found
+     by icon rather than name so every client language works; a name typed
+     in settings (a server's own taunt, say) wins over all of them. ]]
+local TAUNT_ICONS = {
+  "Spell_Nature_Reincarnation",     -- Taunt
+  "Ability_Physical_Taunt",         -- Growl
+  "Ability_Warrior_PunishingBlow",  -- Mocking Blow
+}
+
+function T:TauntSpells()
+  local now = GetTime()
+  if self.tauntCache and now - self.tauntCacheAt < 10 then return self.tauntCache end
+  local found = {}
+  local custom = string.lower(self:Settings().tauntSpell or "")
+  if GetSpellName then
+    local i = 1
+    while true do
+      local name = GetSpellName(i, "spell")
+      if not name then break end
+      local icon = GetSpellTexture and GetSpellTexture(i, "spell") or ""
+      local rank = 0
+      if custom ~= "" and string.lower(name) == custom then rank = 1 end
+      for r, want in ipairs(TAUNT_ICONS) do
+        if string.find(icon, want, 1, true) then rank = r + 1 end
+      end
+      -- Later entries are higher ranks of the same spell: they replace.
+      if rank > 0 then found[rank] = { index = i, name = name, icon = icon } end
+      i = i + 1
+    end
+  end
+  local list = {}
+  for r = 1, table.getn(TAUNT_ICONS) + 1 do
+    if found[r] then table.insert(list, found[r]) end
+  end
+  self.tauntCache, self.tauntCacheAt = list, now
+  return list
+end
+
+--- Seconds until a spellbook spell is ready; 0 when it is.
+function T.SpellCooldown(index)
+  if not GetSpellCooldown then return 0 end
+  local start, duration = GetSpellCooldown(index, "spell")
+  if not start or start == 0 or not duration then return 0 end
+  local left = start + duration - GetTime()
+  if left < 0 then left = 0 end
+  return left
+end
+
+--- The first taunt that is ready, or nil and how long the soonest takes.
+function T:ReadyTaunt()
+  local soonest
+  for _, sp in ipairs(self:TauntSpells()) do
+    local cd = T.SpellCooldown(sp.index)
+    if cd <= 0 then return sp end
+    if not soonest or cd < soonest then soonest = cd end
+  end
+  return nil, soonest
+end
+
+--[[ Taunt one queued mob. Must run from a click or a key: 1.12 casts only
+     in answer to a hardware event, which both of those are.
+
+     With SuperWoW the spell goes straight at the mob's guid and your
+     target stays where it was. Without it, or with "keep my target" off,
+     the mob is targeted first -- by guid if known, else by name. ]]
+function T:Taunt(t)
+  t = t or self:Taunts()[1]
+  if not t then
+    W.Print("nothing to taunt.")
+    return false
+  end
+  local spell, wait = self:ReadyTaunt()
+  if not spell then
+    if wait then
+      W.Print(string.format("taunt is on cooldown: %.1fs.", wait))
+    else
+      W.Print("no taunt in your spellbook. Name one under Threat -> Taunt spell.")
+    end
+    return false
+  end
+
+  local s = self:Settings()
+  local cast = false
+  if t.guid and s.tauntKeepTarget and SpellInfo and CastSpellByName then
+    cast = pcall(CastSpellByName, spell.name, t.guid)
+  end
+  if not cast then
+    if t.guid and TargetUnit then
+      pcall(TargetUnit, t.guid)
+    elseif t.name and TargetByName then
+      pcall(TargetByName, t.name, true)
+    end
+    if CastSpell then cast = pcall(CastSpell, spell.index, "spell") end
+  end
+  if cast then
+    t.tauntedAt = GetTime()
+    self:DismissTaunt(t)
+  end
+  return cast
+end
+
+--- For the keybinding and /wrek taunt.
+function T:TauntNext()
+  return self:Taunt(self:Taunts()[1])
+end
+
+----------------------------------------------------------------------
 -- lifecycle
 ----------------------------------------------------------------------
 
@@ -1176,6 +1346,8 @@ end
 function T:OnCombatEnd()
   self.fired = {}
   self.watch = {}
+  self.guidByLow = {}
+  self.taunts = {}
   self.heldKey = nil
   self.lastTM = nil
   if not self.demoUntil then

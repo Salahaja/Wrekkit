@@ -201,6 +201,21 @@ This needs nameplates switched on (the `V` key) and SuperWoW; without
 SuperWoW the held-mob list and its alerts still work, loose detection does
 not.
 
+**Taunting it back.** When a mob you were tanking turns away, or one goes
+loose, a small **Taunt** bar pops up with a button per mob (newest first, up
+to three): your taunt's icon, the mob, who it is on, and the cooldown
+counting down on the icon. **Click to taunt it**; right-click to dismiss.
+With SuperWoW the taunt goes straight at that mob and your target stays
+where it was (*Taunt without retargeting*); without it, the mob is targeted
+first. If Taunt is on cooldown it uses Mocking Blow; Growl for druids. A
+server with its own taunt: type its name under *Taunt spell*. A mob that
+comes back to you, dies, or is ten seconds old leaves the bar by itself.
+
+The same action is on a key -- *Key Bindings -> Wrekkit -> Taunt the mob
+that got away* -- and on `/wrek taunt`, so a macro or an action-bar button
+works too. Drag the bar by its title to move it, or place it alongside the
+target-frame % with `/wrek threat move`; where you leave it is saved.
+
 Not tanking, you get the opposite: warnings as *you* approach the line, and
 **"AGGRO! <mob> is on you"** if one turns on you -- targeted or not, the
 plates catch the rest -- with `AGGRO` on the target frame or on that mob's
@@ -511,7 +526,8 @@ that series.
 /wrek threat <where>     window | docked | meter | off
 /wrek threat tank        cycle I'm-the-tank: auto, always, never
 /wrek threat test        15s of test data on every threat display
-/wrek threat move        drag the target-frame % where you want it
+/wrek threat move        drag the target-frame % and the taunt bar
+/wrek taunt              taunt the mob that got away (macro / key)
 /wrek threat resetpos    put the target-frame % back above the frame
 /wrek threat config      threat settings
 /wrek mode threat        the meter shows live threat
