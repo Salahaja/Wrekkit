@@ -1116,6 +1116,41 @@ step("threat meter", function()
   if table.getn(T:Taunts()) ~= 0 then error("right-click did not dismiss") end
   SlashCmdList["WREKKIT"]("taunt")
 
+  -- Every tank class has its own taunts; a typed list overrides them.
+  local realClassT = STUB.UnitClass
+  local function taunts(class, spells, custom, aoe)
+    STUB.UnitClass = function(u) return class, class end
+    book = spells
+    T:Settings().tauntSpell = custom or ""
+    T:Settings().tauntAoE = aoe or false
+    T.tauntCache = nil
+    local out = {}
+    for _, sp in ipairs(T:TauntSpells()) do table.insert(out, sp.name) end
+    return table.concat(out, ",")
+  end
+  local got = taunts("WARRIOR", {
+    { "Mocking Blow", "Interface\\Icons\\Ability_Warrior_PunishingBlow" },
+    { "Challenging Shout", "Interface\\Icons\\Ability_BullRush" },
+    { "Taunt", "interface\\icons\\spell_nature_reincarnation" } })
+  if got ~= "Taunt,Mocking Blow" then error("warrior taunts: " .. got) end
+  got = taunts("WARRIOR", book, nil, true)
+  if got ~= "Taunt,Mocking Blow,Challenging Shout" then error("warrior with AoE: " .. got) end
+  got = taunts("DRUID", { { "Growl", "Interface\\Icons\\Ability_Physical_Taunt" },
+                          { "Challenging Roar", "Interface\\Icons\\Ability_Druid_ChallangingRoar" } })
+  if got ~= "Growl" then error("druid taunts: " .. got) end
+  got = taunts("PALADIN", { { "Seal of Righteousness", "x" }, { "Hand of Reckoning", "Interface\\Icons\\Spell_Whatever" } })
+  if got ~= "Hand of Reckoning" then error("paladin taunts: " .. got) end
+  got = taunts("SHAMAN", { { "Earthshaker Slam", "x" } })
+  if got ~= "Earthshaker Slam" then error("shaman taunts: " .. got) end
+  got = taunts("PALADIN", { { "Hand of Reckoning", "x" }, { "Judgement", "y" } }, " judgement , hand of reckoning")
+  if got ~= "Judgement,Hand of Reckoning" then error("typed list, in its own order: " .. got) end
+  got = taunts("MAGE", { { "Fireball", "x" } })
+  if got ~= "" then error("a mage has no taunt, found: " .. got) end
+  T:ExplainRole()
+  STUB.UnitClass = realClassT
+  T:Settings().tauntSpell, T:Settings().tauntAoE = "", false
+  T.tauntCache = nil
+
   -- A mob lost from tank mode's list is offered by its full guid.
   T.guidByLow[0xBEEF] = whelpGuid
   T:LostAggro(0xBEEF, "Whelp", nil, NOW)
