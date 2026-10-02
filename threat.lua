@@ -132,6 +132,8 @@ T.defaults = {
   -- only the ones in trouble get a row.
   mobFramesCollapse = "auto",  -- "auto" | "always" | "never"
   mobFramesCollapseAt = 4,     -- auto: collapse above this many mobs
+  mobFramesExpandAt = 80,      -- collapsed, a mob comes back out when the
+                               -- runner-up has this % of your threat
 
   -- target frame
   frame = true,
@@ -219,6 +221,7 @@ function T:Sanitize(s)
   s.mobFramesMax = math.floor(clamp(s.mobFramesMax, 2, 15, d.mobFramesMax))
   s.mobFramesCollapse = oneOf(s.mobFramesCollapse, { "auto", "always", "never" }, d.mobFramesCollapse)
   s.mobFramesCollapseAt = math.floor(clamp(s.mobFramesCollapseAt, 1, 15, d.mobFramesCollapseAt))
+  s.mobFramesExpandAt = math.floor(clamp(s.mobFramesExpandAt, 30, 130, d.mobFramesExpandAt))
   s.lastWindow = oneOf(s.lastWindow, { "window", "docked" }, "docked")
   if type(s.window) ~= "table" then s.window = {} end
   local w = s.window

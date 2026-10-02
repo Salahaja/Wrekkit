@@ -1174,6 +1174,7 @@ step("threat meter", function()
     if u == "target" then return 1, drakes[1] end
     return realExistsMF(u)
   end
+  NOW = NOW + 0.3
   T.tankMobs[0xD002] = { creature = "Drake 2", name = "Fuff", perc = 88, pull = 80, at = NOW }
   UI.mobs.lastUpdate = nil
   UI.mobs:Update()
@@ -1188,7 +1189,7 @@ step("threat meter", function()
     end
   end
   if marked ~= 1 then error(marked .. " rows marked as the target, not 1") end
-  if drake2pct ~= "80%" then error("a held mob's row shows " .. tostring(drake2pct) .. ", not 80%") end
+  if drake2pct ~= "88%" then error("a held mob's row shows " .. tostring(drake2pct) .. ", not its 88% share") end
   -- Collapsed, the target keeps its row even when nothing is wrong with it.
   T:Settings().mobFramesCollapse = "always"
   UI.mobs.lastUpdate = nil
@@ -1198,6 +1199,28 @@ step("threat meter", function()
     if row:IsShown() and row.mob and row.mob.guid == drakes[1] then targetRow = true end
   end
   if not targetRow then error("collapsed, the targeted mob lost its row") end
+  -- Collapsed, a held mob with someone at 80% of your threat comes back out
+  -- -- without blinking, which is for real trouble -- and goes back below it.
+  local function drake2Row()
+    for _, row in ipairs(UI.mobs.rows) do
+      if row:IsShown() and row.mob and row.mob.guid == drakes[2] then return row end
+    end
+  end
+  local r2 = drake2Row()
+  if not r2 then error("a mob at 88% of your threat stayed collapsed") end
+  if r2.trouble then error("a mob at 88% share but 80% to pull should not blink") end
+  NOW = NOW + 0.3
+  T.tankMobs[0xD002] = { creature = "Drake 2", name = "Fuff", perc = 70, pull = 64, at = NOW }
+  UI.mobs.lastUpdate = nil
+  UI.mobs:Update()
+  if drake2Row() then error("a mob at 70% of your threat came out of the summary") end
+  T:Settings().mobFramesExpandAt = 65
+  NOW = NOW + 0.3
+  T.tankMobs[0xD002].at = NOW
+  UI.mobs.lastUpdate = nil
+  UI.mobs:Update()
+  if not drake2Row() then error("with the line at 65%, 70% should show") end
+  T:Settings().mobFramesExpandAt = 80
   T:Settings().mobFramesCollapse = "auto"
   STUB.UnitExists = realExistsMF
   T.tankMobs[0xD002] = nil
