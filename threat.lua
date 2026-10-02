@@ -119,7 +119,9 @@ T.defaults = {
 
   -- taunting
   tauntPopup = true,       -- a button to click when a mob gets away
-  tauntSpell = "",         -- empty: find Taunt / Growl in the spellbook
+  tauntSpell = "",         -- empty: the class's own (T.TAUNT_DEFAULTS);
+                           -- else names, comma-separated, best first
+  tauntAoE = false,        -- also fall back to Challenging Shout / Roar
   tauntKeepTarget = true,  -- cast at the mob without changing target
   -- tauntX / tauntY: where the popup was dragged, from screen centre
 
@@ -419,6 +421,7 @@ end
 
 --- What the role check sees, for /wrek threat role.
 function T:ExplainRole()
+  self.tauntCache = nil
   local _, class = UnitClass("player")
   local s = self:Settings()
   self.roleAt = nil
@@ -427,6 +430,13 @@ function T:ExplainRole()
   if s.tankMode ~= "auto" then
     W.Print("  (the setting overrides detection; set it to auto to use it)")
   end
+  local wants, custom = self:TauntWants()
+  local names, have = {}, {}
+  for _, w in ipairs(wants) do table.insert(names, w.name) end
+  for _, sp in ipairs(self:TauntSpells()) do table.insert(have, sp.name) end
+  W.Print("  taunts " .. (custom and "(yours)" or "(class default)") .. ": " ..
+    (table.getn(names) > 0 and table.concat(names, ", ") or "none for this class") ..
+    "; in your spellbook: " .. (table.getn(have) > 0 and table.concat(have, ", ") or "none"))
   local up = string.upper(class or "")
   if up == "WARRIOR" or up == "DRUID" then
     for i = 1, (GetNumShapeshiftForms and GetNumShapeshiftForms() or 0) do
@@ -1272,35 +1282,75 @@ end
 --[[ The taunts this character knows, from the spellbook, best first. Found
      by icon rather than name so every client language works; a name typed
      in settings (a server's own taunt, say) wins over all of them. ]]
-local TAUNT_ICONS = {
-  "Spell_Nature_Reincarnation",     -- Taunt
-  "Ability_Physical_Taunt",         -- Growl
-  "Ability_Warrior_PunishingBlow",  -- Mocking Blow
+--[[ Each tank class's taunts, best first. Matched in the spellbook by icon
+     where the icon is certain (any client language), and by English name
+     as well, which is the only way to recognise a server's own additions.
+     AoE taunts are only used if "Use AoE taunts" is on: they are long
+     cooldowns, and spending one on a single loose whelp is a mistake. ]]
+T.TAUNT_DEFAULTS = {
+  WARRIOR = {
+    { name = "Taunt", icon = "spell_nature_reincarnation" },
+    { name = "Mocking Blow", icon = "ability_warrior_punishingblow" },
+    { name = "Challenging Shout", icon = "ability_bullrush", aoe = true },
+  },
+  DRUID = {
+    { name = "Growl", icon = "ability_physical_taunt" },
+    { name = "Challenging Roar", icon = "ability_druid_challangingroar", aoe = true },
+  },
+  PALADIN = {
+    { name = "Hand of Reckoning" },
+    { name = "Righteous Defense" },
+  },
+  SHAMAN = {
+    { name = "Earthshaker Slam" },
+  },
 }
 
+--- The taunt list in force: the names typed in settings (comma-separated,
+--- in that order), else the class's defaults.
+function T:TauntWants()
+  local custom = self:Settings().tauntSpell or ""
+  local wants = {}
+  for name in string.gfind(custom, "[^,]+") do
+    name = string.gsub(string.gsub(name, "^%s+", ""), "%s+$", "")
+    if name ~= "" then table.insert(wants, { name = name }) end
+  end
+  if table.getn(wants) > 0 then return wants, true end
+  local _, class = UnitClass("player")
+  local aoe = self:Settings().tauntAoE
+  for _, w in ipairs(self.TAUNT_DEFAULTS[string.upper(class or "")] or {}) do
+    if aoe or not w.aoe then table.insert(wants, w) end
+  end
+  return wants, false
+end
+
+--[[ The taunts this character knows, from the spellbook, in the order of
+     TauntWants. Later spellbook entries are higher ranks of the same spell,
+     so they replace earlier ones. Cached for ten seconds. ]]
 function T:TauntSpells()
   local now = GetTime()
   if self.tauntCache and now - self.tauntCacheAt < 10 then return self.tauntCache end
+  local wants = self:TauntWants()
   local found = {}
-  local custom = string.lower(self:Settings().tauntSpell or "")
   if GetSpellName then
     local i = 1
     while true do
       local name = GetSpellName(i, "spell")
       if not name then break end
-      local icon = GetSpellTexture and GetSpellTexture(i, "spell") or ""
-      local rank = 0
-      if custom ~= "" and string.lower(name) == custom then rank = 1 end
-      for r, want in ipairs(TAUNT_ICONS) do
-        if string.find(icon, want, 1, true) then rank = r + 1 end
+      local icon = string.lower((GetSpellTexture and GetSpellTexture(i, "spell")) or "")
+      local lname = string.lower(name)
+      for r, w in ipairs(wants) do
+        if lname == string.lower(w.name)
+           or (w.icon and string.find(icon, w.icon, 1, true)) then
+          found[r] = { index = i, name = name, icon = GetSpellTexture and GetSpellTexture(i, "spell") }
+          break
+        end
       end
-      -- Later entries are higher ranks of the same spell: they replace.
-      if rank > 0 then found[rank] = { index = i, name = name, icon = icon } end
       i = i + 1
     end
   end
   local list = {}
-  for r = 1, table.getn(TAUNT_ICONS) + 1 do
+  for r = 1, table.getn(wants) do
     if found[r] then table.insert(list, found[r]) end
   end
   self.tauntCache, self.tauntCacheAt = list, now
@@ -1345,7 +1395,7 @@ function T:Taunt(t)
     if wait then
       W.Print(string.format("taunt is on cooldown: %.1fs.", wait))
     else
-      W.Print("no taunt in your spellbook. Name one under Threat -> Taunt spell.")
+      W.Print("no taunt found in your spellbook. Name yours under Threat -> Taunt spells.")
     end
     return false
   end

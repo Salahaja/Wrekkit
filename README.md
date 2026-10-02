@@ -223,8 +223,20 @@ to three): your taunt's icon, the mob, who it is on, and the cooldown
 counting down on the icon. **Click to taunt it**; right-click to dismiss.
 With SuperWoW the taunt goes straight at that mob and your target stays
 where it was (*Taunt without retargeting*); without it, the mob is targeted
-first. If Taunt is on cooldown it uses Mocking Blow; Growl for druids. A
-server with its own taunt: type its name under *Taunt spell*. A mob that
+first. Each tank class has its own taunts, tried in order until one is off cooldown:
+
+| class | taunts |
+| --- | --- |
+| Warrior | Taunt, then Mocking Blow |
+| Druid | Growl |
+| Paladin | Hand of Reckoning, then Righteous Defense |
+| Shaman | Earthshaker Slam |
+
+*Use AoE taunts too* adds Challenging Shout / Challenging Roar as a last
+resort (off by default -- they are long cooldowns). To use your own, type
+them under *Taunt spells*, comma-separated, best first: that list replaces
+the class's. `/wrek threat role` shows which taunts are in force and which
+of them your spellbook has. A mob that
 comes back to you, dies, or is ten seconds old leaves the bar by itself.
 
 The same action is on a key -- *Key Bindings -> Wrekkit -> Taunt the mob

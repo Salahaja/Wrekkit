@@ -571,6 +571,8 @@ local function textField(self, label, get, set)
   text:SetPoint("LEFT", f, "LEFT", 0, 0)
   text:SetText(label)
   local box = UI.SearchBox(f, 110, function(v) set(v) end, "auto")
+  -- Room for a list of names, not just one.
+  if box.editBox then box.editBox:SetMaxLetters(64) end
   box:SetPoint("RIGHT", f, "RIGHT", 0, 0)
   box:SetHeight(18)
   f.Refresh = function() box:SetValue(get()) end
@@ -780,9 +782,15 @@ function S:BuildThreat()
     { "With SuperWoW the taunt goes straight at", "the mob and your target stays put. Off, or",
       "without SuperWoW, the mob is targeted first." })
 
-  textField(self, "Taunt spell",
+  textField(self, "Taunt spells",
     function() return ts().tauntSpell end,
     function(v) ts().tauntSpell = v or ""; T.tauntCache = nil end)
+
+  check(self, "Use AoE taunts too",
+    function() return ts().tauntAoE == true end,
+    function(v) ts().tauntAoE = v and true or false; T.tauntCache = nil end,
+    { "Challenging Shout / Challenging Roar when", "the single-target taunts are on cooldown.",
+      "Off by default: they are long cooldowns." })
 
   ------------------------------------------------------------------
   self.building = "plates"
