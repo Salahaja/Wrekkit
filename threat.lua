@@ -103,6 +103,15 @@ T.defaults = {
   tankWarnAt = 85,         -- ... at this % of the way to pulling it
   warnLostAggro = true,    -- a mob you held turned to someone else
 
+  -- flashing: keeps going for as long as the danger lasts, unlike the
+  -- warnings above, which say it once
+  flash = true,
+  flashAt = 85,            -- you, at this % to pull (or a mob on you)
+  tankFlashAt = 90,        -- tanking: the runner-up on any mob you hold
+  flashFrame = true,       -- blink the target-frame %
+  flashScreen = false,     -- pulse the screen edges as well
+  flashSpeed = 3,          -- blinks a second
+
   -- target frame
   frame = true,
   frameStyle = "clean",    -- "clean" (number + bar) | "number" | "badge"
@@ -171,6 +180,9 @@ function T:Sanitize(s)
   -- A danger line below the warning line would skip the warning entirely.
   if s.dangerAt < s.warnAt then s.dangerAt = s.warnAt end
   s.tankWarnAt = clamp(s.tankWarnAt, 30, 120, d.tankWarnAt)
+  s.flashAt = clamp(s.flashAt, 30, 150, d.flashAt)
+  s.tankFlashAt = clamp(s.tankFlashAt, 30, 150, d.tankFlashAt)
+  s.flashSpeed = clamp(s.flashSpeed, 1, 6, d.flashSpeed)
   s.textSize = math.floor(clamp(s.textSize, 14, 48, d.textSize))
   s.frameScale = clamp(s.frameScale, 0.6, 2.5, d.frameScale)
   s.plateMemory = clamp(s.plateMemory, 0, 30, d.plateMemory)
@@ -865,6 +877,41 @@ function T:ForMob(key, guid)
   return nil
 end
 
+--[[ Should things be flashing right now? Returns the percentage and colour
+     to flash with, or nil.
+
+     Not tanking: you are at flashAt or more of the way to pulling, or a
+     mob is already on you. Tanking: whoever is closest to pulling the
+     target, or any other mob you hold, is at tankFlashAt or more. Checked
+     on every pass rather than fired once, so it flashes exactly as long
+     as the danger lasts and stops on its own when it passes. ]]
+function T:Alarm()
+  local s = self:Settings()
+  if not s.enabled or not s.flash then return nil end
+  local cur = self:Live()
+  local me = cur and cur.me
+  if self:IsTank() then
+    local worst
+    if me and me.tank then
+      local runner = self:Runner(cur)
+      worst = runner and runner.pull
+    end
+    local now = GetTime()
+    for _, m in pairs(self.tankMobs) do
+      if now - m.at <= STALE and (not worst or m.pull > worst) then worst = m.pull end
+    end
+    if worst and worst >= s.tankFlashAt then return worst, RED end
+    return nil
+  end
+  if not me then return nil end
+  if me.tank then return 100, RED end
+  -- Always the distance to pulling, whatever the display shows: that is
+  -- what the limit is set in.
+  local pull = me.pull or T.PullPercent(me)
+  if pull >= s.flashAt then return pull, self:Color(self:Shown(me)) end
+  return nil
+end
+
 --- Anything a nameplate could show? Lets the plate pass skip its work.
 function T:AnythingForPlates()
   return self.current ~= nil or next(self.memory) ~= nil
@@ -896,14 +943,14 @@ function T:Demo(seconds)
   if tank then
     rows = {
       row(me, classOf(me), true, 48200, 100, true),
-      row("Stabbs", "ROGUE", false, 45100, 94, true),
+      row("Stabbs", "ROGUE", false, 48200, 100, true),
       row("Frosty", "MAGE", false, 33600, 70, false),
       row("Dotsworth", "WARLOCK", false, 21000, 44, false),
       row("Mendy", "PRIEST", false, 9800, 20, false),
     }
   else
     rows = {
-      row(me, classOf(me), false, 51100, 106, false),
+      row(me, classOf(me), false, 55400, 115, false),
       row("Tanky", "WARRIOR", true, 48200, 100, true),
       row("Stabbs", "ROGUE", false, 40400, 84, true),
       row("Frosty", "MAGE", false, 33600, 70, false),

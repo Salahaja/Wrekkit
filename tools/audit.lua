@@ -989,6 +989,32 @@ step("threat meter", function()
     run(c)
   end
 
+  -- Flashing: on above the limit, off below it, for both roles.
+  if T.demoUntil then T:StopDemo() end
+  T:Settings().tankMode = "off"
+  T:Settings().flashScreen = true
+  T:OnMessage("TWTv4=Fuff:1:3400:100:1;Auditor:0:3000:96:1;")   -- 87% to pull
+  if not T:Alarm() then error("87% to pull should flash at the default 85") end
+  UI.threatFrames:UpdateAlarm()
+  UI.threatFrames:UpdateWarning()
+  T:Settings().flashAt = 95
+  if T:Alarm() then error("87% should not flash with the limit at 95") end
+  T:Settings().flashAt = 85
+  T:Settings().tankMode = "on"
+  T:OnMessage("TWTv4=Auditor:1:3400:100:1;Fuff:0:3300:97:1;")    -- runner 88%
+  if T:Alarm() then error("a runner-up at 88% should not flash a tank at 90") end
+  T:OnMessage("TWTv4=Auditor:1:3400:100:1;Fuff:0:3400:100:1;")   -- runner 91%
+  if not T:Alarm() then error("a runner-up at 91% should flash a tank") end
+  UI.threatFrames:UpdateAlarm()
+  UI.threatFrames:UpdateWarning()
+  T:Settings().flash = false
+  if T:Alarm() then error("switched off, nothing should flash") end
+  UI.threatFrames:UpdateAlarm()
+  T:Settings().flash = true
+  T:Settings().flashScreen = false
+  T:Settings().tankMode = "off"
+  T.heldKey, T.fired = nil, {}
+
   -- The target-frame %: every style, dragged, saved, reset.
   local TFm = UI.threatFrames
   T:OnMessage("TWTv4=Fuff:1:3400:100:1;Auditor:0:3000:88:1;")

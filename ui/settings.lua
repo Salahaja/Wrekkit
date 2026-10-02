@@ -672,6 +672,38 @@ function S:BuildThreat()
     { "Not tanking, and a mob turns on you." })
 
   ------------------------------------------------------------------
+  heading(self, "Flash while close")
+
+  get, set = opt("flash")
+  check(self, "Flash while close", get, set,
+    { "Keeps flashing for as long as you are over", "the limit, and stops on its own when you",
+      "drop back. Warnings above say it once." })
+
+  stepper(self, "Flash me at",
+    function() return ts().flashAt end,
+    function(v) ts().flashAt = v; redraw() end,
+    30, 150, 5,
+    function(v) return v .. "% to pull" end)
+
+  stepper(self, "Tanking, flash at",
+    function() return ts().tankFlashAt end,
+    function(v) ts().tankFlashAt = v; redraw() end,
+    30, 150, 5,
+    function(v) return v .. "% (runner-up)" end)
+
+  stepper(self, "Flash speed",
+    function() return ts().flashSpeed end,
+    function(v) ts().flashSpeed = v end,
+    1, 6, 1,
+    function(v) return v .. "/s" end)
+
+  get, set = opt("flashFrame")
+  check(self, "Blink the target %", get, set)
+  get, set = opt("flashScreen")
+  check(self, "Pulse screen edges", get, set,
+    { "Red edges around the screen, pulsing until", "the danger passes. Hard to miss." })
+
+  ------------------------------------------------------------------
   heading(self, "Tanking")
 
   get, set = opt("tankAlerts")

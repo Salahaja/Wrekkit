@@ -598,11 +598,65 @@ function TF:Flash(level)
   f:Show()
 end
 
+--[[ The continuous flash. The condition is asked ten times a second (in
+     the tick); the blink itself runs every frame so it is smooth. A
+     one-off warning flash still plays over it. ]]
+function TF:UpdateAlarm()
+  local s = T:Settings()
+  local pct, color = T:Alarm()
+  if self.moving then pct = nil end
+  self.alarm = pct and color or nil
+  if self.alarm and s.flashScreen then
+    local f = self:CreateWarning()
+    if not self.alarmScreen then
+      self.alarmScreen = true
+      local c = self.alarm
+      for _, b in ipairs(f.bands) do
+        local g = b._grad
+        if b.SetGradientAlpha then
+          b:SetGradientAlpha(g[1], c[1], c[2], c[3], g[2] * 0.45, c[1], c[2], c[3], g[3] * 0.45)
+        else
+          b:SetVertexColor(c[1], c[2], c[3], 0.25)
+        end
+        b:Show()
+      end
+    end
+    if not f:IsShown() then f:Show() end
+  elseif self.alarmScreen then
+    self.alarmScreen = nil
+    if self.warn and not self.flashAt then
+      for _, b in ipairs(self.warn.bands) do b:Hide() end
+    end
+  end
+end
+
+--- 0..1, the blink at this moment.
+function TF:Blink()
+  local speed = T:Settings().flashSpeed
+  return math.abs(math.sin(GetTime() * math.pi * speed))
+end
+
 function TF:UpdateWarning()
+  -- The target-frame % blinks while the alarm holds, steady otherwise.
+  local ind = self.ind
+  if ind and ind:IsShown() then
+    if self.alarm and T:Settings().flashFrame then
+      ind:SetAlpha(0.25 + 0.75 * self:Blink())
+    elseif ind:GetAlpha() ~= 1 then
+      ind:SetAlpha(1)
+    end
+  end
+
   local f = self.warn
   if not f or not f:IsShown() then return end
   local now = GetTime()
   local textOn, flashOn = false, false
+
+  if self.alarmScreen and not self.flashAt then
+    local a = self:Blink()
+    for _, b in ipairs(f.bands) do b:SetAlpha(a) end
+    flashOn = true
+  end
 
   if self.messageAt then
     local age = now - self.messageAt
@@ -625,8 +679,13 @@ function TF:UpdateWarning()
       for _, b in ipairs(f.bands) do b:SetAlpha(a) end
       flashOn = true
     else
-      for _, b in ipairs(f.bands) do b:Hide() end
       self.flashAt = nil
+      if self.alarmScreen then
+        -- Back to the alarm's own colour after the one-off flash.
+        self.alarmScreen = nil
+      else
+        for _, b in ipairs(f.bands) do b:Hide() end
+      end
     end
   end
 
@@ -672,6 +731,7 @@ local function tick()
   local now = GetTime()
   if now - (TF.lastTick or 0) < TICK then return end
   TF.lastTick = now
+  TF:UpdateAlarm()
   TF:UpdateIndicator()
   TF:UpdatePlates()
   UI.threat:UpdateVisibility()

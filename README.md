@@ -188,6 +188,21 @@ dropping 5 points below it, so a number hovering on a line cannot repeat
 the alert every half second. Large text mid-screen, a red pulse at the
 screen edges and a sound -- each switchable.
 
+#### Flash while close
+
+The warnings say it once; this keeps going. While you are over the limit
+the target-frame % blinks -- and, if you tick *Pulse screen edges*, red
+edges pulse around the screen -- until you drop back under it, then it
+stops on its own. Set where it starts in *Flash while close*:
+
+- **Flash me at** (85% to pull by default): your own threat, when not
+  tanking. A mob turning on you always flashes.
+- **Tanking, flash at** (90% by default): whoever is closest to pulling the
+  target *or any other mob you hold*.
+- **Flash speed**, 1-6 blinks a second.
+
+*Preview* trips it at the default limits, so you can see it out of combat.
+
 #### Target frame and nameplates
 
 **Target frame**: your threat % drawn straight on the frame the way
