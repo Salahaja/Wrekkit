@@ -213,9 +213,14 @@ watched:
   called loose. Name your co-tanks under *Co-tanks* and their mobs are left
   alone.
 
-This needs nameplates switched on (the `V` key) and SuperWoW; without
-SuperWoW the held-mob list and its alerts still work, loose detection does
-not.
+**With or without SuperWoW.** Mobs are found two ways. Every client can
+ask what each member of the group is targeting, and what *that* mob is
+targeting -- so every mob anyone in your group has targeted is watched,
+with its health and who it is hitting. With SuperWoW every mob with a
+nameplate is watched as well (switch plates on with `V`), by GUID, so a
+mob nobody has targeted is caught too. Without SuperWoW same-named mobs
+are told apart by health, and the taunt bar reaches a mob through the
+group member targeting it (it changes your target to do so).
 
 **Taunting it back.** When a mob you were tanking turns away, or one goes
 loose, a small **Taunt** bar pops up with a button per mob (newest first, up
@@ -287,7 +292,8 @@ nameplates *and* from every enemy the combat log has seen this pull, so one
 with no plate in view is still listed while the client knows it. Settings
 (Frames & plates -> Mob frames): on/off, *when tanking* (default) or
 *always*, from how many mobs (2), at most how many rows (8). Drag the title
-to move the stack, or place it with `/wrek threat move`. Needs SuperWoW.
+to move the stack, or place it with `/wrek threat move`. Without SuperWoW the
+stack lists every mob someone in your group has targeted.
 
 Not tanking, you get the opposite: warnings as *you* approach the line, and
 **"AGGRO! <mob> is on you"** if one turns on you -- targeted or not, the

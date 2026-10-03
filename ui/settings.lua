@@ -761,8 +761,9 @@ function S:BuildThreat()
 
   get, set = opt("watchMobs")
   check(self, "Watch mobs I'm not targeting", get, set,
-    { "Reads every mob's own target from its", "nameplate: LOOSE on one hitting a group",
-      "member, AGGRO (not tanking) on one hitting", "you. Needs nameplates on and SuperWoW." })
+    { "Reads every mob's own target: LOOSE on one",
+      "hitting a group member, AGGRO (not tanking)", "on one hitting you. With SuperWoW, every mob",
+      "with a plate; without, every mob your group", "has targeted." })
 
   get, set = opt("mobSummary")
   check(self, "Mob count under the %", get, set,
@@ -879,7 +880,8 @@ function S:BuildThreat()
   get, set = opt("mobFrames")
   check(self, "Mob frames", get, set,
     { "A small frame per mob in the fight: its", "health, and who it is hitting. Click to",
-      "target, right-click to taunt. A mob loose", "on someone else blinks red. Needs SuperWoW." })
+      "target, right-click to taunt. A mob loose", "on someone else blinks red. Without",
+      "SuperWoW: the mobs your group has targeted." })
 
   get, set = pick("mobFramesFor")
   choice(self, "Show them",

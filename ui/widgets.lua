@@ -877,11 +877,19 @@ function UI.ScrollList(parent, rowHeight, makeRow)
 
   function list:EnsureRows(n)
     local scrollW = (self:MaxOffset() > 0) and 8 or 0
-    for i = table.getn(self.rows) + 1, n do
+    local have = table.getn(self.rows)
+    for i = have + 1, n do
       self.rows[i] = self.makeRow(self, self.rowHeight)
     end
-    -- Re-anchor every row each pass: the scrollbar appearing or vanishing
-    -- changes the right inset, and the row height is a live setting.
+    -- Re-anchor when the layout changed: the scrollbar appearing or
+    -- vanishing moves the right inset, and the row height is a live
+    -- setting. Not on every repaint -- SetPoint on every row twice a
+    -- second, or every frame of a resize drag, is layout work for nothing.
+    if have == table.getn(self.rows) and self._anchorW == scrollW
+       and self._anchorH == self.rowHeight then
+      return
+    end
+    self._anchorW, self._anchorH = scrollW, self.rowHeight
     for i = 1, table.getn(self.rows) do
       local row = self.rows[i]
       local y = -(i - 1) * self.rowHeight
@@ -1087,8 +1095,12 @@ function UI.Window(name, width, height, title, opts)
     end
   end
   grip:RegisterForDrag("LeftButton")
-  grip:SetScript("OnDragStart", function() f:StartSizing("BOTTOMRIGHT") end)
+  grip:SetScript("OnDragStart", function()
+    f._sizing = true
+    f:StartSizing("BOTTOMRIGHT")
+  end)
   grip:SetScript("OnDragStop", function()
+    f._sizing = nil
     f:StopMovingOrSizing()
     if f.SavePosition then f:SavePosition() end
     if f.OnResize then f:OnResize() end
@@ -1153,12 +1165,26 @@ function UI.Window(name, width, height, title, opts)
     end
   end
 
+  --[[ During a drag the size changes every frame, and a relayout every
+       frame was what made dragging a window bigger stutter: each one
+       ranks, repaints and re-anchors every row. While the grip is held
+       the relayout runs at most ten times a second -- a pending one is
+       left alone rather than pushed back, so the bars still follow the
+       mouse -- and letting go does one final pass (OnDragStop). ]]
   f._resizeKey = "resize:" .. tostring(name or f)
+  local function relayout()
+    f._resizePending = nil
+    if f.OnResize then f:OnResize() end
+  end
   f:SetScript("OnSizeChanged", function()
     if not f.OnResize then return end
-    W.After(0, function()
-      if f.OnResize then f:OnResize() end
-    end, f._resizeKey)
+    if f._sizing then
+      if f._resizePending then return end
+      f._resizePending = true
+      W.After(0.1, relayout, f._resizeKey)
+    else
+      W.After(0, relayout, f._resizeKey)
+    end
   end)
 
   return f

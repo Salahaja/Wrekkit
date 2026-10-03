@@ -951,3 +951,101 @@ function R:Series(encounters, windowSec)
 
   return series, maxT + 1, peak, detail
 end
+
+----------------------------------------------------------------------
+-- caching
+----------------------------------------------------------------------
+
+--[[ View and Series over a set of finished pulls give the same answer
+     every time they are asked, and asking is expensive: over a long
+     session it is tens of milliseconds and megabytes of throwaway tables,
+     and Lua 5.0 pays for that garbage with a stop-the-world collection.
+     Opening the report, switching a tab or clicking a pull all asked
+     again, so a busy evening made the window hitch harder each time.
+
+     A cache remembers the last answer per question, keyed by a fingerprint
+     of the pulls: the list itself (compared entry by entry), each pull's
+     totals, and `rev`, which the paths that change a stored pull without
+     touching its totals bump. A pull still being recorded is never cached.
+     Anything the fingerprint cannot see calls R:Invalidate.
+
+     Each window keeps its own cache. Rank writes its scratch fields onto
+     the rows it ranks, so two windows sharing one view would repaint each
+     other's numbers. ]]
+R.gen = 0
+
+--- Drop every cached answer, for changes the fingerprint cannot see.
+function R:Invalidate()
+  self.gen = self.gen + 1
+end
+
+local Cache = {}
+Cache.__index = Cache
+
+--- A new, empty cache. One per window.
+function R:NewCache()
+  return setmetatable({ slots = {} }, Cache)
+end
+
+-- The fingerprint's running sum, or nil if a pull is still live.
+local function fingerprint(encounters)
+  local live = W.encounter and W.encounter.live
+  local sum = 0
+  for i = 1, table.getn(encounters) do
+    local e = encounters[i]
+    if e == live then return nil end
+    local t = e.totals
+    sum = sum + (e.rev or 0)
+    if t then sum = sum + (t.damage or 0) + (t.healing or 0) + (t.taken or 0) end
+  end
+  return sum
+end
+
+local function sameList(a, b)
+  local n = table.getn(a)
+  if n ~= table.getn(b) then return false end
+  for i = 1, n do
+    if a[i] ~= b[i] then return false end
+  end
+  return true
+end
+
+-- Answer from slot `slot` (asked with options `optsKey`), or
+-- build it with `make` and remember it.
+function Cache:Get(slot, optsKey, encounters, make)
+  local sum = fingerprint(encounters)
+  if not sum then
+    self.slots[slot] = nil
+    return make()
+  end
+  local basis = (W.db and W.db.dpsBasis) or "combat"
+  local c = self.slots[slot]
+  if c and c.gen == R.gen and c.sum == sum and c.opts == optsKey
+     and c.basis == basis and sameList(c.list, encounters) then
+    return unpack(c.result)
+  end
+  -- Copy the list: callers may reuse and refill theirs.
+  local list = {}
+  for i = 1, table.getn(encounters) do list[i] = encounters[i] end
+  local result = { make() }
+  self.slots[slot] = { gen = R.gen, sum = sum, opts = optsKey, basis = basis,
+    list = list, result = result }
+  return unpack(result)
+end
+
+--- R:View through the cache.
+function Cache:View(encounters, opts)
+  local key = ((opts and opts.petMode) or "merge") .. "/" .. ((opts and opts.enemyBy) or "name")
+  return self:Get("view", key, encounters, function() return R:View(encounters, opts) end)
+end
+
+--- R:Series through the cache.
+function Cache:Series(encounters, windowSec)
+  return self:Get("series", tostring(windowSec or 3), encounters,
+    function() return R:Series(encounters, windowSec) end)
+end
+
+--- Forget everything in this cache.
+function Cache:Clear()
+  self.slots = {}
+end

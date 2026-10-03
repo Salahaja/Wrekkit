@@ -807,43 +807,18 @@ end
      rebuilding it was all cost: hundreds of tables a second for a picture
      that did not move. A pull still being recorded is never cached.
 
-     The fingerprint is cheap and catches every way a finished pull's
-     numbers move: its totals, and `rev`, which the paths that change a
-     stored pull without touching its totals (a raider's own report
-     filling a gap) bump. Anything else -- the list itself, the pet mode,
-     the per-second basis -- is compared outright. ]]
-local viewCache = {}
+     The cache and its fingerprint live in report.lua (R:NewCache). ]]
+local viewCache
 
 local function cachedView(encounters, petMode)
-  local live = W.encounter.live
-  local n = table.getn(encounters)
-  local sum = 0
-  for i = 1, n do
-    local e = encounters[i]
-    if e == live then
-      viewCache.view = nil
-      return W.report:View(encounters, { petMode = petMode })
-    end
-    local t = e.totals
-    sum = sum + (e.rev or 0)
-    if t then sum = sum + (t.damage or 0) + (t.healing or 0) + (t.taken or 0) end
-  end
-  local c = viewCache
-  local basis = (W.db and W.db.dpsBasis) or "combat"
-  if c.view and c.n == n and c.sum == sum and c.petMode == petMode
-     and c.basis == basis and c.first == encounters[1] and c.last == encounters[n] then
-    return c.view
-  end
-  c.view = W.report:View(encounters, { petMode = petMode })
-  c.n, c.sum, c.petMode, c.basis = n, sum, petMode, basis
-  c.first, c.last = encounters[1], encounters[n]
-  return c.view
+  viewCache = viewCache or W.report:NewCache()
+  return viewCache:View(encounters, { petMode = petMode })
 end
 
 --- Forget the cached view, for anything that changes stored pulls in a
 --- way the fingerprint cannot see.
 function M:InvalidateView()
-  viewCache.view = nil
+  W.report:Invalidate()
 end
 
 --- Repaints run on a ticker, so an error here would fire twice a second and
