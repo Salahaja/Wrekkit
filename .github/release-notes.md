@@ -10,6 +10,12 @@
   - **With SuperWoW**, the scan adds to the nameplates. A mob that someone in the raid has targeted is listed and watched even when its plate is not on screen.
 - Clicking a mob frame targets that mob in both setups.
 
+## Fixed
+- **Lag when opening the report or resizing windows.** With a long session recorded, every open, tab click and frame of a resize drag re-added the whole history. That cost about 30 ms and 4 MB of garbage each time, which caused the hitches.
+  - Finished fights are now added up once and reused until they change. Opening the report is about 15 times cheaper.
+  - While you drag a window's resize grip, it now redraws at most ten times a second, with one final redraw when you let go.
+  - Bars that have not moved are no longer re-anchored on every repaint.
+
 ## Note
 Without SuperWoW, a mob nobody in your group has targeted stays unseen, and taunting a mob changes your target. SuperWoW is still recommended.
 
