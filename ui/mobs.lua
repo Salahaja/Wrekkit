@@ -24,8 +24,10 @@ Order is first-seen and never reshuffles, so a row stays where the eye left
 it; trouble is shown by colour, not by moving. Drag the title to move the
 stack, or place it with the rest in /wrek threat move.
 
-Needs SuperWoW. Without it no mob can be asked about by guid, and the stack
-stays hidden.
+With SuperWoW every mob is asked about by guid, from the plates, the
+combat log and the group scan. Without it, the stack comes from the group
+scan alone: every mob someone in your group has targeted, told apart by
+name and health (see W.threat:ScanGroup).
 ]]
 
 local W = Wrekkit
@@ -115,11 +117,41 @@ function MF:Collect()
     end
   end
   local enc = W.encounter.live
-  if enc and enc.enemies then
+  if enc and enc.enemies and SpellInfo then
     for guid in pairs(enc.enemies) do consider(guid, now) end
   end
-  for guid, m in pairs(self.list) do
-    if m.seen ~= now then self.list[guid] = nil end
+
+  --[[ The group scan's mobs: what everyone in the group has targeted.
+       With SuperWoW they carry a guid and are asked about like the rest
+       (so a mob with no plate in view still shows); without, they ARE the
+       list, read straight from the scan. ]]
+  for key, g in pairs(T.groupMobs) do
+    if g.guid then
+      consider(g.guid, now)
+    else
+      local m = self.list[key]
+      if not m then
+        nextOrder = nextOrder + 1
+        m = { order = nextOrder }
+        self.list[key] = m
+      end
+      m.key, m.unit, m.name, m.hp, m.max = key, g.unit, g.name, g.hp, g.max
+      m.who, m.whoClass, m.onMe, m.isTarget = g.who, g.whoClass, g.onMe, g.isTarget
+      m.state = g.state
+      m.pull, m.share = nil, nil
+      -- Your target is the one mob the server reports on by name.
+      local live = g.isTarget and T:Live()
+      if live and live.me and live.me.tank then
+        local runner = T:Runner(live)
+        m.share = runner and runner.perc or 0
+        m.pull = runner and runner.pull or nil
+      end
+      m.seen = now
+    end
+  end
+
+  for key, m in pairs(self.list) do
+    if m.seen ~= now then self.list[key] = nil end
   end
 end
 
@@ -209,9 +241,17 @@ local function makeRow(parent, i)
       local m = b.mob
       if not m or m.sample then return end
       if arg1 == "RightButton" then
-        T:Taunt({ guid = m.guid, name = m.name, who = m.who })
+        T:Taunt({ guid = m.guid, unit = m.unit, name = m.name, who = m.who })
       elseif TargetUnit then
-        TargetUnit(m.guid)
+        -- By guid with SuperWoW; else the token the group scan found it
+        -- through, if it still names this mob.
+        if m.guid then
+          TargetUnit(m.guid)
+        elseif m.unit and UnitExists(m.unit) and UnitName(m.unit) == m.name then
+          TargetUnit(m.unit)
+        elseif TargetByName then
+          TargetByName(m.name, true)
+        end
       end
     end)
   end)
@@ -342,7 +382,10 @@ local function threatText(m, tank)
   if tank and m.share and m.state ~= "loose" then
     return T.PctText(m.share), T:TankColor(m.pull or m.share / 1.1), true
   end
-  local pct, color, fresh, text = T:ForMob(m.guid, m.guid)
+  -- Without a guid the target is the only mob with a reading, by name.
+  local key = m.guid or (m.isTarget and m.name and ("name:" .. m.name))
+  if not key then return nil end
+  local pct, color, fresh, text = T:ForMob(key, m.guid)
   if not pct then return nil end
   if text == "LOOSE" or text == "AGGRO" or text == "LOST" then
     return "!", T.RED, true
@@ -352,7 +395,7 @@ end
 
 local function paintMob(b, m, tank, s, blink, targetGuid)
   b.mob, b.summary = m, nil
-  b:SetSelected(m.selected or (targetGuid ~= nil and m.guid == targetGuid))
+  b:SetSelected(m.selected or m.isTarget or (targetGuid ~= nil and m.guid == targetGuid))
   b.name:SetText(m.name or "?")
   b.hp:Show()
   local frac = (m.max and m.max > 0) and (m.hp / m.max) or 1
@@ -415,7 +458,7 @@ function MF:Update()
   local list
   if moving then
     list = SAMPLE
-  elseif SpellInfo and s.enabled and s.mobFrames then
+  elseif s.enabled and s.mobFrames then
     self:Collect()
     list = self:Sorted()
   else
@@ -446,7 +489,7 @@ function MF:Update()
   local show, fine, elsewhere = {}, 0, 0
   for _, m in ipairs(list) do
     local kind = classify(m, tank, s)
-    local isTarget = m.selected or (targetGuid ~= nil and m.guid == targetGuid)
+    local isTarget = m.selected or m.isTarget or (targetGuid ~= nil and m.guid == targetGuid)
     if not collapsed or kind == "trouble" or kind == "watch" or isTarget then
       table.insert(show, m)
     elseif kind == "fine" then

@@ -782,6 +782,7 @@ local function tick()
   local now = GetTime()
   if now - (TF.lastTick or 0) < TICK then return end
   TF.lastTick = now
+  if UnitAffectingCombat and UnitAffectingCombat("player") then T:ScanGroup() end
   TF:UpdateAlarm()
   TF:UpdateIndicator()
   TF:UpdatePlates()
