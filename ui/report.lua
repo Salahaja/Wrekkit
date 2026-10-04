@@ -720,10 +720,17 @@ function R:FillTable(pane, list, view, metricKey, title)
   list:SetData(rows, paintRow)
 end
 
-function R:RefreshChart()
+--- This window's own cache of View and Series (see report.lua): opening
+--- it, switching tabs or clicking a pull must not re-add the whole session.
+function R:Cache()
+  self.cache = self.cache or W.report:NewCache()
+  return self.cache
+end
+
+function R:RefreshChart(view)
   local encounters = self:SelectedEncounters()
-  local series, n, peak, detail = W.report:Series(encounters, 3)
-  local view = W.report:View(encounters, { petMode = self.state.petMode })
+  local series, n, peak, detail = self:Cache():Series(encounters, 3)
+  view = view or self:Cache():View(encounters, { petMode = self.state.petMode })
   self.chart:SetSeries(series, n, peak, view.deaths, detail)
 end
 
@@ -823,7 +830,7 @@ function R:RefreshInner()
 
   local session = self:Session()
   local encounters, isAll = self:SelectedEncounters()
-  local view = W.report:View(encounters, { petMode = self.state.petMode })
+  local view = self:Cache():View(encounters, { petMode = self.state.petMode })
 
   -- header
   local n = table.getn(encounters)
@@ -854,7 +861,7 @@ function R:RefreshInner()
   if tab == "summary" then
     self.mainPane:Hide()
     self.chart:Show() self.sumLeft:Show() self.sumRight:Show()
-    self:RefreshChart()
+    self:RefreshChart(view)
     self:FillTable(self.sumLeft, self.sumLeftList, view, "damage", "Damage Done")
     self:FillTable(self.sumRight, self.sumRightList, view, "healing", "Healing Done")
   elseif tab == "deaths" then

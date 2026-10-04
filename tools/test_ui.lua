@@ -458,6 +458,101 @@ step("meter builds", function() UI.meter:Create() end)
 step("meter shows", function() UI.meter:Show() end)
 step("meter refreshes", function() UI.meter:Refresh() end)
 
+--[[ The report and the meter ask for the same aggregate again and again;
+     over finished pulls the answer must come from the cache, and anything
+     that changes those pulls must make it ask again. ]]
+
+step("finished pulls are aggregated once, not on every refresh", function()
+  local list = {}
+  for _, e in ipairs(Wrekkit.db.encounters) do
+    if e ~= Wrekkit.encounter.live then table.insert(list, e) end
+  end
+  if table.getn(list) == 0 then error("no finished pulls to test with") end
+  local cache = Wrekkit.report:NewCache()
+  local built = 0
+  local real = Wrekkit.report.View
+  Wrekkit.report.View = function(self, x, y) built = built + 1 return real(self, x, y) end
+
+  local a = cache:View(list, { petMode = "merge" })
+  local b = cache:View(list, { petMode = "merge" })
+  local copy = {} for i, e in ipairs(list) do copy[i] = e end
+  local c = cache:View(copy, { petMode = "merge" })
+  local once = built
+  cache:View(list, { petMode = "separate" })
+  local otherMode = built
+  local e1 = list[1]
+  e1.rev = (e1.rev or 0) + 1
+  cache:View(list, { petMode = "separate" })
+  local afterRev = built
+  Wrekkit.report:Invalidate()
+  cache:View(list, { petMode = "separate" })
+  local afterInvalidate = built
+  local live = Wrekkit.encounter.live
+  Wrekkit.encounter.live = e1
+  cache:View(list, { petMode = "separate" })
+  cache:View(list, { petMode = "separate" })
+  local whileLive = built
+  Wrekkit.encounter.live = live
+  Wrekkit.report.View = real
+
+  if once ~= 1 or a ~= b or b ~= c then error("the same pulls were aggregated " .. once .. " times") end
+  if otherMode ~= 2 then error("changing the pet mode reused the old view") end
+  if afterRev ~= 3 then error("a pull whose rev moved was served from the cache") end
+  if afterInvalidate ~= 4 then error("Invalidate did not drop the cache") end
+  if whileLive ~= 6 then error("a pull still being recorded was cached") end
+end)
+
+step("a row's ability detail is built on first use and still adds up", function()
+  local list = {}
+  for _, e in ipairs(Wrekkit.db.encounters) do table.insert(list, e) end
+  local view = Wrekkit.report:View(list, { petMode = "merge" })
+  local row
+  for _, r in ipairs(view.rows) do if r.isPlayer and r.damage > 0 then row = r break end end
+  if not row then error("no player row with damage") end
+  if rawget(row, "dmgAbility") ~= nil then error("detail was built eagerly") end
+  -- Saved pulls keep each actor's top abilities only, so compare with
+  -- what the row's own actors hold rather than with the row's total.
+  local src = rawget(row, "_src")
+  if not src then error("the row kept no sources to build detail from") end
+  local want = 0
+  for i = 1, table.getn(src), 2 do
+    Wrekkit.report.eachAbility(src[i].dmgAbility, function(_, ab) want = want + (ab.amount or 0) end)
+  end
+  local sum = 0
+  for _, a in pairs(row.dmgAbility) do sum = sum + (a.amount or 0) end
+  if want <= 0 or math.abs(sum - want) > 0.5 then
+    error(string.format("abilities add to %d, the actors hold %d", sum, want))
+  end
+  if rawget(row, "_src") ~= nil then error("sources kept after the detail was built") end
+  if type(row.auras) ~= "table" then error("auras missing after build") end
+end)
+
+step("reopening the report does not re-aggregate the session", function()
+  UI.report:Show()
+  UI.report.state.tab = "summary"
+  local built, series = 0, 0
+  local realV, realS = Wrekkit.report.View, Wrekkit.report.Series
+  Wrekkit.report.View = function(self, x, y) built = built + 1 return realV(self, x, y) end
+  Wrekkit.report.Series = function(self, x, y) series = series + 1 return realS(self, x, y) end
+  UI.report:Refresh()
+  local first, firstS = built, series
+  for _ = 1, 5 do UI.report.frame:Hide() UI.report:Show() end
+  Wrekkit.report.View, Wrekkit.report.Series = realV, realS
+  UI.report.frame:Hide()
+
+  local live = false
+  for _, e in ipairs(UI.report:SelectedEncounters()) do
+    if e == Wrekkit.encounter.live then live = true end
+  end
+  if live then return end
+  if first > 1 then error("one summary refresh aggregated " .. first .. " times") end
+  if built ~= first or series ~= firstS then
+    error("five reopens aggregated " .. (built - first) .. " more views and "
+      .. (series - firstS) .. " more series")
+  end
+end)
+
+
 step("meter renders every metric", function()
   for _, m in ipairs(Wrekkit.metrics.list) do
     UI.meter:SetMetric(m.key)
@@ -1228,6 +1323,7 @@ step("slash commands run", function()
   run("debug")
 end)
 
+
 step("reset clears cleanly", function()
   Wrekkit.ResetData("current")
   Wrekkit.ResetData("all")
@@ -1336,6 +1432,37 @@ step("a burst of resizes collapses into a single relayout", function()
   if calls > 1 then
     error("25 size changes produced " .. calls .. " relayouts, expected 1")
   end
+end)
+
+--[[ Dragging the grip resizes every frame. Relayouts while it is held are
+     rationed to ten a second, and letting go always does a final one. ]]
+
+step("a held resize grip relays out at most ten times a second", function()
+  local win = UI.meter.frame
+  local calls = 0
+  local realOnResize = win.OnResize
+  win.OnResize = function() calls = calls + 1 end
+  local handler = win:GetScript("OnSizeChanged")
+  local ticker = _G["WrekkitTicker"]
+  local tick = ticker and ticker:GetScript("OnUpdate")
+
+  win.grip:GetScript("OnDragStart")()
+  local t0 = NOW
+  -- one simulated second of dragging at 60 frames a second
+  for _ = 1, 60 do
+    handler()
+    NOW = NOW + 1 / 60
+    if tick then tick() end
+  end
+  local during = calls
+  win.grip:GetScript("OnDragStop")()
+  local after = calls
+  win.OnResize = realOnResize
+
+  if during < 2 then error("the window stopped following the drag (" .. during .. " relayouts)") end
+  if during > 11 then error(during .. " relayouts in one second of dragging") end
+  if after ~= during + 1 then error("letting go of the grip did not relayout") end
+  if t0 > NOW then error("clock went backwards") end
 end)
 
 --[[ The window's minimum size must leave the list a positive height at every

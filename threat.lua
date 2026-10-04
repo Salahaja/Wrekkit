@@ -1074,16 +1074,23 @@ local function isCoTank(name)
 end
 
 --- Look at one mob, by guid, and return "loose" / "onme" once confirmed.
-function T:WatchMob(guid, mobName)
+--[[ id is the mob's guid, or -- without SuperWoW -- a key from the group
+     scan (see ScanGroup). unit is how to ask the client about it: the guid
+     itself, or a unit token such as "raid7target"; tunit is what that unit
+     is targeting ("raid7targettarget"), passed in so no string is built. ]]
+function T:WatchMob(id, mobName, unit, tunit)
   local s = self:Settings()
-  if not s.enabled or not s.watchMobs or not guid then return nil end
+  if not s.enabled or not s.watchMobs or not id then return nil end
+  local guid = (type(id) == "string" and string.sub(id, 1, 2) == "0x") and id or nil
+  unit = unit or guid
+  if not unit then return nil end
   local now = GetTime()
   local state, who
 
-  local inFight = UnitAffectingCombat and UnitAffectingCombat(guid)
-  local hostile = not UnitCanAttack or UnitCanAttack("player", guid)
+  local inFight = UnitAffectingCombat and UnitAffectingCombat(unit)
+  local hostile = not UnitCanAttack or UnitCanAttack("player", unit)
   if inFight and hostile then
-    local tok = guid .. "target"
+    local tok = tunit or (unit .. "target")
     if UnitExists(tok) then
       if UnitIsUnit(tok, "player") then
         if not self:IsTank() then state = "onme" end
@@ -1095,22 +1102,24 @@ function T:WatchMob(guid, mobName)
   end
 
   -- Remembered so tank mode's low guids can be turned back into a mob.
-  local low = T.LowGuid(guid)
+  local low = guid and T.LowGuid(guid)
   if low then self.guidByLow[low] = guid end
 
-  local w = self.watch[guid]
+  local w = self.watch[id]
   if not state then
-    if w then self.watch[guid] = nil end
+    if w then self.watch[id] = nil end
     return nil
   end
   if not w or w.state ~= state or w.who ~= who then
     w = { state = state, who = who, since = now }
-    self.watch[guid] = w
+    self.watch[id] = w
   end
   w.at, w.name = now, mobName or w.name
+  -- Without a guid, the token is how the taunt bar reaches it later.
+  if not guid then w.unit = unit end
   if not w.confirmed and now - w.since >= LOOSE_CONFIRM then
     w.confirmed = true
-    if state == "loose" then self:QueueTaunt(guid, w.name, who, "loose") end
+    if state == "loose" then self:QueueTaunt(guid, w.name, who, "loose", w.unit) end
     if state == "loose" and s.warnLostAggro then
       self:Alert("LOOSE: " .. (w.name or "a mob") .. " on " .. (who or "?"), "danger")
     elseif state == "onme" and s.warnPulled and not (self.current and self.current.guid == guid) then
@@ -1119,6 +1128,129 @@ function T:WatchMob(guid, mobName)
     end
   end
   return w.confirmed and state or nil
+end
+
+----------------------------------------------------------------------
+-- the group scan: mobs found through what the group is targeting
+----------------------------------------------------------------------
+
+--[[ Every client, SuperWoW or not, can ask what each member of the group
+     is targeting ("raid7target") and what THAT is targeting
+     ("raid7targettarget") -- the trick vanilla threat addons were built
+     on. So every mob anyone in the group has targeted is known, with its
+     health and who it is hitting.
+
+     With SuperWoW each one also gives its guid, and joins the nameplate
+     mobs by it. Without SuperWoW it is the only way to see any mob but
+     your own target, and a mob is told apart from others of the same
+     name by its health. A mob nobody has targeted stays unseen -- the
+     price of no SuperWoW, and why it is still worth having.
+
+     The tokens are built once; a pass makes no strings. ]]
+local SCAN_EVERY = 0.25
+local TOKENS
+local function buildTokens()
+  TOKENS = {}
+  local function add(u) table.insert(TOKENS, { u = u, t = u .. "target" }) end
+  add("target")
+  add("pettarget")
+  for i = 1, 4 do add("party" .. i .. "target") add("partypet" .. i .. "target") end
+  for i = 1, 40 do add("raid" .. i .. "target") add("raidpet" .. i .. "target") end
+end
+
+T.groupMobs = {}     -- key -> { key, guid, unit, tunit, name, hp, max, who, ... }
+local found = {}     -- this pass's entries, reused
+local nextKey = 0
+
+--- A living hostile in the fight, by unit token.
+local function fightingUnit(u)
+  if UnitIsDead and UnitIsDead(u) then return false end
+  if UnitCanAttack and not UnitCanAttack("player", u) then return false end
+  if UnitIsPlayer and UnitIsPlayer(u) == 1 then return false end
+  if UnitAffectingCombat and not UnitAffectingCombat(u) then return false end
+  return true
+end
+
+local function hpPercent(u)
+  local hp, max = UnitHealth(u) or 0, UnitHealthMax(u) or 0
+  if max <= 0 then return 100 end
+  return hp / max * 100
+end
+
+--[[ Which entry from the last pass is this mob? By guid when there is
+     one; otherwise the same name and the nearest health -- mobs lose
+     health, they do not trade it -- or a new entry. ]]
+local function match(guid, name, hp, taken)
+  if guid then return T.groupMobs[guid] end
+  local best, bestDiff
+  for _, e in pairs(T.groupMobs) do
+    if not e.guid and e.name == name and not taken[e] then
+      local d = math.abs((e.hpPct or 0) - hp)
+      if d <= 25 and (not best or d < bestDiff) then best, bestDiff = e, d end
+    end
+  end
+  return best
+end
+
+function T:ScanGroup()
+  local s = self:Settings()
+  if not s.enabled or not (s.watchMobs or s.mobFrames) then return end
+  local now = GetTime()
+  if now - (self.lastScan or 0) < SCAN_EVERY then return end
+  self.lastScan = now
+  if not TOKENS then buildTokens() end
+
+  local n = 0
+  local taken = {}
+  local fresh = {}
+  for i = 1, table.getn(TOKENS) do
+    local tk = TOKENS[i]
+    local u = tk.u
+    local exists, guid = UnitExists(u)
+    if exists and fightingUnit(u) then
+      if type(guid) ~= "string" or string.sub(guid, 1, 2) ~= "0x" then guid = nil end
+      -- The same mob through another member's target?
+      local dup = false
+      for j = 1, n do
+        local f = found[j]
+        if (guid and f.guid == guid) or (not guid and not f.guid and UnitIsUnit(u, f.unit)) then
+          dup = true
+          break
+        end
+      end
+      if not dup then
+        local name = UnitName(u) or "?"
+        local hp = hpPercent(u)
+        local e = match(guid, name, hp, taken)
+        if not e then
+          nextKey = nextKey + 1
+          e = { key = guid or ("mob" .. nextKey), guid = guid, first = now }
+        end
+        taken[e] = true
+        e.unit, e.tunit, e.name, e.hpPct = u, tk.t, name, hp
+        e.hp, e.max = UnitHealth(u) or 0, UnitHealthMax(u) or 0
+        e.isTarget = (u == "target") or UnitIsUnit(u, "target") and true or false
+        e.who, e.whoClass, e.onMe = nil, nil, false
+        if UnitExists(tk.t) then
+          e.onMe = UnitIsUnit(tk.t, "player") and true or false
+          e.who = UnitName(tk.t)
+          local _, class = UnitClass(tk.t)
+          e.whoClass = class
+        end
+        e.seen = now
+        e.state = self:WatchMob(e.key, name, u, tk.t)
+        n = n + 1
+        found[n] = e
+        fresh[e.key] = e
+      end
+    end
+  end
+  for j = n + 1, table.getn(found) do found[j] = nil end
+  -- Mobs nobody is targeting now are kept a moment: targets flick.
+  for key, e in pairs(self.groupMobs) do
+    if not fresh[key] and now - (e.seen or 0) <= 2 then fresh[key] = e end
+  end
+  self.groupMobs = fresh
 end
 
 --- How many confirmed mobs are in a state right now.
@@ -1245,16 +1377,18 @@ end
 local TAUNT_KEEP = 10
 T.taunts = {}
 
-function T:QueueTaunt(guid, name, who, reason)
+function T:QueueTaunt(guid, name, who, reason, unit)
   if not self:IsTank() then return end
   local now = GetTime()
   for _, t in ipairs(self.taunts) do
     if (guid and t.guid == guid) or (not guid and not t.guid and t.name == name) then
       t.at, t.who, t.reason = now, who or t.who, reason
+      t.unit = unit or t.unit
       return t
     end
   end
-  local t = { guid = guid, name = name or "a mob", who = who, reason = reason, at = now }
+  local t = { guid = guid, name = name or "a mob", who = who, reason = reason, at = now,
+              unit = unit }
   table.insert(self.taunts, 1, t)
   while table.getn(self.taunts) > 3 do table.remove(self.taunts) end
   return t
@@ -1406,8 +1540,13 @@ function T:Taunt(t)
     cast = pcall(CastSpellByName, spell.name, t.guid)
   end
   if not cast then
+    --[[ Reach the mob: its guid with SuperWoW; without, the unit token the
+         group scan found it through (someone's target), if that token still
+         names this mob; failing both, by name. ]]
     if t.guid and TargetUnit then
       pcall(TargetUnit, t.guid)
+    elseif t.unit and TargetUnit and UnitExists(t.unit) and UnitName(t.unit) == t.name then
+      pcall(TargetUnit, t.unit)
     elseif t.name and TargetByName then
       pcall(TargetByName, t.name, true)
     end
@@ -1478,6 +1617,7 @@ end
 function T:OnCombatEnd()
   self.fired = {}
   self.watch = {}
+  self.groupMobs = {}
   self.guidByLow = {}
   self.taunts = {}
   if W.ui and W.ui.mobs then W.ui.mobs:Reset() end

@@ -1397,6 +1397,90 @@ step("tank detection: Righteous Fury, every way a client may report it", functio
   T.roleAt = nil
 end)
 
+step("without SuperWoW: mobs found through the group's targets", function()
+  local T, UI = W.threat, W.ui
+  local realSpell, realCast = STUB.SpellInfo, STUB.CastSpellByName
+  local realParty = STUB.GetNumPartyMembers
+  STUB.SpellInfo, STUB.CastSpellByName = nil, nil
+  STUB.GetNumPartyMembers = function() return 2 end
+  T:Settings().tankMode = "on"
+  T:Settings().mobFramesFor = "tank"
+  T:Settings().mobFramesMin = 1
+  T:Settings().mobFramesCollapse = "never"
+  T.watch, T.groupMobs, T.taunts = {}, {}, {}
+  W.capture.groupMembers["Elfpriest"] = true
+  W.encounter:CombatStart()
+
+  -- party1 has the whelp targeted; the whelp is on the priest.
+  WORLD["party1target"] = { name = "Whelp", isPlayer = false, maxHealth = 100, health = 60 }
+  WORLD["party1targettarget"] = { name = "Elfpriest", isPlayer = true, class = "PRIEST" }
+  -- party2 has the same whelp: one mob, not two (UnitIsUnit says so).
+  WORLD["party2target"] = WORLD["party1target"]
+  WORLD["party2targettarget"] = WORLD["party1targettarget"]
+  local realIsUnit = STUB.UnitIsUnit
+  STUB.UnitIsUnit = function(a, b)
+    if (a == "party2target" and b == "party1target") or (a == "party1target" and b == "party2target") then
+      return 1
+    end
+    return a == b
+  end
+
+  T.lastScan = nil
+  T:ScanGroup()
+  local count = 0
+  for _ in pairs(T.groupMobs) do count = count + 1 end
+  if count ~= 1 then error("the scan found " .. count .. " mobs, not 1") end
+  NOW = NOW + 1.2
+  T.lastScan = nil
+  T:ScanGroup()
+  if T:CountWatch("loose") ~= 1 then error("the whelp on the priest is not loose without SuperWoW") end
+  local q = T:Taunts()[1]
+  if not q or q.unit ~= "party1target" then error("the taunt bar cannot reach it: " .. tostring(q and q.unit)) end
+
+  UI.mobs.lastUpdate = nil
+  UI.mobs:Update()
+  if not UI.mobs.frame or not UI.mobs.frame:IsShown() then error("no mob frames without SuperWoW") end
+  local row
+  for _, r in ipairs(UI.mobs.rows) do
+    if r:IsShown() and r.mob and r.mob.name == "Whelp" then row = r end
+  end
+  if not (row and string.find(row.who:GetText() or "", "Elfpriest", 1, true)) then
+    error("the mob frame does not show the whelp on the priest")
+  end
+  if not row.trouble then error("the loose whelp's frame is not marked") end
+
+  local acts = {}
+  STUB.TargetUnit = function(u) table.insert(acts, "target:" .. u) end
+  STUB.CastSpell = function(i) table.insert(acts, "cast" .. i) end
+  arg1 = "LeftButton"
+  row:GetScript("OnClick")()
+  if acts[1] ~= "target:party1target" then error("clicking did not target it: " .. tostring(acts[1])) end
+  acts = {}
+  local realName, realTex, realCd = STUB.GetSpellName, STUB.GetSpellTexture, STUB.GetSpellCooldown
+  STUB.GetSpellName = function(i) return (i == 1) and "Taunt" or nil end
+  STUB.GetSpellTexture = function(i) return "Interface\\Icons\\Spell_Nature_Reincarnation" end
+  STUB.GetSpellCooldown = function() return 0, 0, 1 end
+  T.tauntCache = nil
+  T:TauntNext()
+  STUB.GetSpellName, STUB.GetSpellTexture, STUB.GetSpellCooldown = realName, realTex, realCd
+  T.tauntCache = nil
+  if acts[1] ~= "target:party1target" or not acts[2] then
+    error("taunting without SuperWoW: " .. table.concat(acts, ", "))
+  end
+
+  STUB.UnitIsUnit = realIsUnit
+  STUB.SpellInfo, STUB.CastSpellByName = realSpell, realCast
+  STUB.GetNumPartyMembers = realParty
+  for _, k in ipairs({ "party1target", "party1targettarget", "party2target", "party2targettarget" }) do
+    WORLD[k] = nil
+  end
+  T.watch, T.groupMobs, T.taunts = {}, {}, {}
+  T:Settings().mobFramesMin = 2
+  T:Settings().mobFramesCollapse = "auto"
+  T:Settings().tankMode = "auto"
+  W.encounter:CombatEnd()
+end)
+
 step("skins: pfUI's own backdrop is used when pfUI is loaded", function()
   local UI = W.ui
   local was = UI.skin
