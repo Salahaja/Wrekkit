@@ -730,9 +730,21 @@ end
 
 function R:RefreshChart(view)
   local encounters = self:SelectedEncounters()
-  local series, n, peak, detail = self:Cache():Series(encounters, 3)
+  local series, n, peak, detail, base = self:Cache():Series(encounters, 3)
   view = view or self:Cache():View(encounters, { petMode = self.state.petMode })
-  self.chart:SetSeries(series, n, peak, view.deaths, detail)
+  -- Deaths are on the session's clock; the chart's starts at the first
+  -- chosen pull (see R:Series). Copies, so the cached view is untouched.
+  local deaths = view.deaths
+  if base and base ~= 0 then
+    deaths = {}
+    for i, d in ipairs(view.deaths) do
+      local c = {}
+      for k, v in pairs(d) do c[k] = v end
+      c.t = (d.t or 0) - base
+      deaths[i] = c
+    end
+  end
+  self.chart:SetSeries(series, n, peak, deaths, detail)
 end
 
 ----------------------------------------------------------------------

@@ -845,6 +845,22 @@ check("deaths survived", table.getn(reloaded[1].deaths), 1)
 local rSeries, rn, rpeak = Wrekkit.report:Series(reloaded, 3)
 check("timeline survived", rpeak > 0, true)
 
+-- One pull picked from late in the night is charted on its own clock.
+do
+  local late = {}
+  for k, v in pairs(reloaded[1]) do late[k] = v end
+  late.offset = 5400
+  local _, ln, _, _, lbase = Wrekkit.report:Series({ late }, 3)
+  local _, n0 = Wrekkit.report:Series({ reloaded[1] }, 3)
+  check("a late pull's timeline starts at its own second 0", lbase, 5400)
+  check("and spans only that pull", ln, n0 - math.floor(reloaded[1].offset or 0))
+  local early = {}
+  for k, v in pairs(reloaded[1]) do early[k] = v end
+  early.offset = 5000
+  local _, both = Wrekkit.report:Series({ early, late }, 3)
+  check("two pulls keep their distance apart", both, 400 + ln)
+end
+
 -- Loading twice must not double the numbers.
 Wrekkit.store:Load()
 local before = table.getn(Wrekkit.db.encounters)
