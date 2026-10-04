@@ -161,6 +161,13 @@ function W.Status()
   line("Stored      " .. n .. " encounter" .. (n == 1 and "" or "s") ..
     "   (kept: " .. (W.db.keepDays or 7) .. " days" ..
       (((W.db.maxEncounters or 0) > 0) and (", at most " .. W.db.maxEncounters) or ", no limit") .. ")")
+  if W.archive then
+    local list = W.archive:List()
+    local kept = 0
+    for _, e in ipairs(list) do if e.kept then kept = kept + 1 end end
+    line("Raid files  " .. (W.archive:Active() and (table.getn(list) .. " (" .. kept .. " kept)" ..
+      (W.archive.loaded and (", open: " .. W.archive.loaded.key) or "")) or "off"))
+  end
 
   ------------------------------------------------------------------
   -- continuity

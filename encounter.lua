@@ -1358,6 +1358,7 @@ function W.SetBoss(enc, isBoss)
       rec.bossBy = "you"
     end
   end
+  if W.archive then W.archive:Touch(enc) end
   return enc.boss
 end
 
@@ -1644,6 +1645,8 @@ function E:Persist(enc)
   end
 
   table.insert(W.db.encounters, rec)
+  -- Into its raid's (or run's) own file as well; see archive.lua.
+  if W.archive then W.Guard("archive write", function() W.archive:Append(rec) end) end
 
   --[[ Older pulls leave by age (W.TrimHistory), and only if they were not
        locked. Said once a session if a count cap someone set starts

@@ -274,6 +274,7 @@ function W.SetLocked(enc, locked)
   if not enc then return end
   enc.locked = locked and true or nil
   W.store:Rewrite()
+  if W.archive then W.archive:Touch(enc) end
   if W.ui and W.ui.report and W.ui.report.frame then W.ui.report:Refresh() end
 end
 
@@ -303,6 +304,22 @@ function W.TrimHistory(list)
   list = list or (W.db and W.db.encounters)
   if not list then return 0 end
   local removed = 0
+  --[[ A pull its raid's file already holds stays in SavedVariables only
+       for the night in progress (W.archive.HOLD); after that the report
+       reads it from the file. See archive.lua. ]]
+  if W.archive and W.archive:Active() and time then
+    local cutoff = time() - W.archive.HOLD
+    local i = 1
+    while i <= table.getn(list) do
+      local e = list[i]
+      if e.archived and not e.locked and (e.startTime or 0) > 0 and e.startTime < cutoff then
+        table.remove(list, i)
+        removed = removed + 1
+      else
+        i = i + 1
+      end
+    end
+  end
   local days = (W.db and W.db.keepDays) or 7
   if days > 0 and time then
     local cutoff = time() - days * 86400
@@ -768,6 +785,14 @@ function W.ResetData(scope)
   if scope == "all" then
     -- Locked encounters survive even this. See the note on W.SetLocked.
     local removed, kept, spared = W.PruneEncounters(nil)
+    -- Raid files go too, except the ones kept on purpose, and so do
+    -- writes still queued for pulls that were just removed.
+    if W.archive then
+      W.archive:DropQueued()
+      for _, e in ipairs(W.archive:List()) do
+        if not e.kept then W.archive:Delete(e.key) end
+      end
+    end
     W.encounter:StartNewSession()
     W.capture.units = {}
     if kept > 0 then

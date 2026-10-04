@@ -364,6 +364,7 @@ dofile("metrics.lua")
 dofile("report.lua")
 dofile("diagnostics.lua")
 dofile("store.lua")
+dofile("archive.lua")
 dofile("sync.lua")
 dofile("announce.lua")
 dofile("threat.lua")
@@ -1698,6 +1699,34 @@ local function makePull(seconds)
   return list[table.getn(list)]
 end
 
+step("a new session starting does not change the pulls being looked at", function()
+  makePull(8)
+  local picked = makePull(8)
+  if not picked then error("no pull recorded") end
+  UI.report:Show()
+  UI.report.state.sessionId = nil
+  UI.report.state.sessionIndex = 1
+  UI.report.state.selected = { [tostring(picked.sessionId) .. ":" .. tostring(picked.id)] = true }
+  UI.report:Refresh()
+  local before = UI.report:SelectedEncounters()
+
+  -- Somewhere new: the newest session is now a different one.
+  NOW = NOW + 4000
+  Wrekkit.encounter:StartNewSession()
+  makePull(8)
+  UI.report:Refresh()
+
+  local after, all = UI.report:SelectedEncounters()
+  UI.report.frame:Hide()
+  if all then error("the picked pull was dropped for the whole session") end
+  if table.getn(after) ~= 1 or after[1].id ~= picked.id or after[1].sessionId ~= picked.sessionId then
+    error("the report now shows a different pull")
+  end
+  if table.getn(before) ~= 1 then error("the pick did not take") end
+  UI.report.state.selected = {}
+  UI.report.state.sessionId = nil
+end)
+
 local function meterRows()
   -- An earlier step may have left the meter hidden, and RefreshInner does
   -- nothing at all for a hidden window.
@@ -2110,6 +2139,7 @@ local function raidNight()
   UI.report.state.selected = {}
   UI.report.state.scope = nil
   UI.report.state.sessionIndex = 1
+  UI.report.state.sessionId = nil
   makePull(8)                                   -- trash
   local a = makePull(8)
   local b = makePull(8)

@@ -693,10 +693,26 @@ addon's share) and what the last tidy freed.
 
 ## Saving and sharing
 
-**SavedVariables** hold the history automatically: every pull from the last
-7 days (a raid week), with no limit on how many. Both are in Settings ->
-Recording -> History (*Keep pulls for*, and *Keep at most*, which is "no
-limit" by default). A locked pull is kept however old it is.
+**One file per raid ID.** With Nampower, each pull is written as it ends to a
+file for its lockout: `CustomData\Wrekkit_<character>_<zone>_<raid ID>.txt`.
+Two nights on the same Molten Core ID share a file. Dungeons and the open
+world have no lockout ID, so each run gets its own file, named by date and
+time. SavedVariables keep only the night in progress (the last 12 hours) and
+anything locked, so the game's memory stays small however much history you
+have.
+
+Older raids are listed under *Saved raids and runs* in the report's session
+menu; picking one reads its file in (one at a time). With a raid on screen,
+the same menu can **keep** it past the history length or **delete** it, which
+removes that raid and nothing else. `/wrek raids` lists them, and
+`/wrek raids open|keep|delete <n>` does the same from chat. Raids are kept for
+7 days unless kept on purpose (Settings -> Recording -> History, *Keep pulls
+for*). The client cannot delete a file, so a deleted raid's file is emptied.
+
+Without Nampower's file API, or with *Save each raid to its own file* turned
+off, the whole history stays in SavedVariables as before: every pull from the
+last 7 days, with no limit on how many (*Keep at most* can set one). A locked
+pull is kept however old it is.
 
 **Boss or trash** is decided when a pull ends. A pull is a boss if the client
 calls the enemy a world boss, if it shows the skull level, or if it is a known
