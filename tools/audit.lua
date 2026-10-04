@@ -1530,6 +1530,23 @@ step("the other combat events", function()
   local view = W.report:View(W.db.encounters, { petMode = "merge" })
   local rows = W.report:Rank(view, "dispels")
   if table.getn(rows) == 0 then error("dispels were recorded nowhere") end
+
+  -- Per fight, and with what: clicking the row lists the spells.
+  local last = W.db.encounters[table.getn(W.db.encounters)]
+  local one = W.report:View({ last }, { petMode = "merge" })
+  local drow = W.report:Rank(one, "dispels")[1]
+  if not drow or drow.dispels ~= 2 then
+    error("this fight's dispels read " .. tostring(drow and drow.dispels))
+  end
+  local list, total = W.report:Abilities(drow, "dispels")
+  if total ~= 2 or not list[1] or list[1].id ~= 527 then
+    error("the dispel detail lists " .. table.getn(list or {}) .. " spell(s), total " .. tostring(total))
+  end
+
+  -- The report has a tab for it.
+  local found
+  for _, t in ipairs(W.ui.report.tabs) do if t.key == "dispels" then found = t end end
+  if not found or found.metric ~= "dispels" then error("the report has no Dispels tab") end
 end)
 
 step("receive a shared encounter", function()

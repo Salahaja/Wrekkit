@@ -291,6 +291,47 @@ function W.CountLocked()
   return n
 end
 
+--[[ How much history is kept: a raid week, however many pulls that is.
+
+     It used to be the newest 60 pulls, which a full Molten Core clear with
+     its trash runs past before the last bosses -- the first ones of the
+     night were gone by the end of it. Now a pull is kept for keepDays
+     (seven by default, one lockout) and the count is unlimited. A count
+     cap is still there for anyone who wants one (maxEncounters, 0 = none).
+     A locked pull is never removed by either. ]]
+function W.TrimHistory(list)
+  list = list or (W.db and W.db.encounters)
+  if not list then return 0 end
+  local removed = 0
+  local days = (W.db and W.db.keepDays) or 7
+  if days > 0 and time then
+    local cutoff = time() - days * 86400
+    local i = 1
+    while i <= table.getn(list) do
+      local e = list[i]
+      if not e.locked and (e.startTime or 0) > 0 and e.startTime < cutoff then
+        table.remove(list, i)
+        removed = removed + 1
+      else
+        i = i + 1
+      end
+    end
+  end
+  local cap = (W.db and W.db.maxEncounters) or 0
+  if cap > 0 then
+    while table.getn(list) > cap do
+      local victim
+      for i = 1, table.getn(list) do
+        if not list[i].locked then victim = i break end
+      end
+      if not victim then break end
+      table.remove(list, victim)
+      removed = removed + 1
+    end
+  end
+  return removed
+end
+
 --- Delete unlocked encounters. `days` nil or 0 means every unlocked one.
 --- Returns removed, kept, lockedSpared.
 function W.PruneEncounters(days)
@@ -657,18 +698,10 @@ function St:Recover()
   -- comes from the history (E:SessionFromHistory), restored pulls included.
   W.db.session = nil
 
-  -- The history's own cap, oldest unlocked out first: a lost session that
-  -- ran past it leaves exactly what a clean logout would have.
+  -- The history's own limits (W.TrimHistory): a lost session leaves
+  -- exactly what a clean logout would have.
   table.sort(list, byStart)
-  local maxKeep = W.db.maxEncounters or 60
-  while table.getn(list) > maxKeep do
-    local victim
-    for i = 1, table.getn(list) do
-      if not list[i].locked then victim = i break end
-    end
-    if not victim then break end
-    table.remove(list, victim)
-  end
+  W.TrimHistory(list)
 
   local n = 0
   for _, e in ipairs(list) do

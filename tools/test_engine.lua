@@ -106,7 +106,7 @@ UnitClass = function(u)
   if u == "player" then return "Warrior", "WARRIOR" end
   return d.class and string.lower(d.class), d.class
 end
-UnitLevel = function(u) return 60 end
+UnitLevel = function(u) local d = WORLD[u] return (d and d.level) or 60 end
 UnitHealth = function(u) local d = WORLD[u] return d and d.health or 0 end
 UnitHealthMax = function(u) local d = WORLD[u] return d and d.maxHealth or 0 end
 UnitIsUnit = function(a, b) return a == b end
@@ -2091,6 +2091,94 @@ check("lowering the threshold catches smaller bosses",
   Wrekkit.IsBoss(nowBoss), true)
 Wrekkit.db.bossHealth = 40000
 
+-- In a raid, the client's word beats health. Molten Core trash has far
+-- more than the threshold and used to be saved as a boss every time.
+do
+  local realRaid = GetNumRaidMembers
+  GetNumRaidMembers = function() return 20 end
+  WORLD["0xSurger"] = { name = "Lava Surger", isPlayer = false, maxHealth = 180000,
+    health = 180000, rank = "elite", level = 62 }
+  WORLD["0xMagma"] = { name = "Magmadar", isPlayer = false, maxHealth = 800000,
+    health = 800000, rank = "elite", level = -1 }
+  WORLD["0xTwin"] = { name = "Basalthar", isPlayer = false, maxHealth = 600000,
+    health = 600000, rank = "elite", level = 63 }
+  WORLD["0xSkull"] = { name = "Some New Boss", isPlayer = false, maxHealth = 300000,
+    health = 300000, rank = "elite", level = -1 }
+  check("raid trash with lots of health is trash", Wrekkit.IsBoss(pullOn("0xSurger")), false)
+  check("a skull-level raid boss is a boss", Wrekkit.IsBoss(pullOn("0xMagma")), true)
+  check("a known boss is a boss whatever its level", Wrekkit.IsBoss(pullOn("0xTwin")), true)
+  check("an unknown skull is a boss too", Wrekkit.IsBoss(pullOn("0xSkull")), true)
+
+  -- A boss fight is named after the boss, not a bigger add.
+  WORLD["0xBigAdd"] = { name = "Core Rager", isPlayer = false, maxHealth = 2000000,
+    health = 2000000, rank = "elite", level = 62 }
+  Wrekkit.encounter:CombatStart()
+  for _ = 1, 8 do
+    fire("AUTO_ATTACK_SELF", "0xP1", "0xBigAdd", 300, 0, 0, 1, 0, 0, 0)
+    fire("AUTO_ATTACK_SELF", "0xP1", "0xMagma", 300, 0, 0, 1, 0, 0, 0)
+    advance(1)
+  end
+  Wrekkit.encounter:CombatEnd()
+  Wrekkit.encounter:Finish()
+  local list = Wrekkit.report:CurrentSession().encounters
+  local mixed = list[table.getn(list)]
+  check("a boss with a bigger add is named after the boss", mixed.name, "Magmadar")
+  check("and is a boss", Wrekkit.IsBoss(mixed), true)
+  local rec = Wrekkit.db.encounters[table.getn(Wrekkit.db.encounters)]
+  check("the boss's level is saved for later", rec.bossLevel, -1)
+  GetNumRaidMembers = realRaid
+end
+
+-- Pulls saved under the old rule are judged again, once.
+do
+  local recs = {
+    { name = "Lava Surger", boss = true, bossBy = "guess", actors = {} },
+    { name = "Garr", boss = false, bossBy = "guess", actors = {} },
+    { name = "Firesworn", boss = false, bossBy = "guess",
+      actors = { x = { name = "Garr", isPlayer = false } } },
+    { name = "Lava Surger", boss = true, bossBy = "you", actors = {} },
+  }
+  local changed = Wrekkit.RejudgeBosses(recs)
+  check("old trash marked a boss is trash now", recs[1].boss, false)
+  check("a known boss is a boss now", recs[2].boss, true)
+  check("a known boss among the enemies counts", recs[3].boss, true)
+  check("a mark made by hand is left alone", recs[4].boss, true)
+  check("the re-check counts what it changed", changed, 3)
+  recs[1].boss = true
+  Wrekkit.RejudgeBosses(recs)
+  check("and runs once per pull", recs[1].boss, true)
+end
+
+Wrekkit.ResetData("all")
+
+-- History: a raid week, however many pulls that is.
+do
+  local saved = Wrekkit.db.encounters
+  local now = time()
+  local list = {}
+  for i = 1, 150 do table.insert(list, { id = i, startTime = now - 3600 }) end
+  table.insert(list, 1, { id = "old", startTime = now - 8 * 86400 })
+  table.insert(list, 1, { id = "oldLocked", startTime = now - 30 * 86400, locked = true })
+  Wrekkit.db.keepDays, Wrekkit.db.maxEncounters = 7, 0
+  local removed = Wrekkit.TrimHistory(list)
+  check("a week of pulls is kept, with no count cap", table.getn(list), 151)
+  check("a pull older than the week goes", removed, 1)
+  check("a locked pull stays however old", list[1].id, "oldLocked")
+  Wrekkit.db.maxEncounters = 100
+  Wrekkit.TrimHistory(list)
+  check("a count cap still applies if set", table.getn(list), 100)
+  Wrekkit.db.maxEncounters = 0
+  Wrekkit.db.encounters = saved
+
+  local db = { maxEncounters = 60 }
+  Wrekkit.SanitizeDB(db)
+  check("the old 60-pull cap becomes no limit", db.maxEncounters, 0)
+  db.maxEncounters = 60
+  Wrekkit.SanitizeDB(db)
+  check("but a 60 chosen later is kept", db.maxEncounters, 60)
+  check("a week is the default", db.keepDays, 7)
+end
+
 Wrekkit.ResetData("all")
 
 ----------------------------------------------------------------------
@@ -2158,7 +2246,7 @@ Wrekkit.db.maxEncounters = 3
 local said = 0
 local realPrint = Wrekkit.Print
 Wrekkit.Print = function(msg)
-  if string.find(tostring(msg), "history is full", 1, true) then said = said + 1 end
+  if string.find(tostring(msg), "history is capped", 1, true) then said = said + 1 end
 end
 
 for i = 1, 6 do

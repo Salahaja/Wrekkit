@@ -717,14 +717,7 @@ function S:OnMessage(prefix, msg, channel, sender)
     end
     if not replaced then table.insert(W.db.encounters, rec) end
 
-    while table.getn(W.db.encounters) > (W.db.maxEncounters or 60) do
-      local victim
-      for i = 1, table.getn(W.db.encounters) do
-        if not W.db.encounters[i].locked then victim = i break end
-      end
-      if not victim then break end
-      table.remove(W.db.encounters, victim)
-    end
+    W.TrimHistory(W.db.encounters)
 
     W.Print("Got |cffe0a22c" .. (rec.name or "?") .. "|r from " .. sender .. ".")
     -- A replaced pull can carry the same totals as the copy it replaced.

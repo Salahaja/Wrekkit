@@ -57,6 +57,7 @@ local function newActor(guid, u)
     ownerName = u and u.ownerName or nil,
     maxHealth = u and u.maxHealth or 0,
     rank = u and u.rank or nil,
+    level = u and u.level or nil,
 
     damage = 0, taken = 0, healing = 0, overheal = 0,
     absorbed = 0, deaths = 0, dispels = 0, interrupts = 0,
@@ -74,6 +75,7 @@ local function newActor(guid, u)
     healAbility = {},   -- spellId -> { name, amount, over, hits, crits }
     takenAbility = {},  -- spellId -> { name, amount, hits, max }
     consumeItem = {},   -- itemId  -> { name, amount = times used }
+    dispelAbility = {}, -- spellId -> { name, amount = times }
   }
 end
 
@@ -860,10 +862,19 @@ function E:Miss(casterGuid, targetGuid, spellId, missInfo)
   row.missBy[code] = (row.missBy[code] or 0) + 1
 end
 
+--- Someone removed an effect. Counted per spell as well as in total, so
+--- clicking a healer's dispels says what they were, not only how many.
 function E:Dispel(casterGuid, targetGuid, spellId)
   if not self.live then return end
   local src = self:Actor(casterGuid)
-  if src then src.dispels = src.dispels + 1 end
+  if not src then return end
+  src.dispels = src.dispels + 1
+  if not src.dispelAbility then src.dispelAbility = {} end
+  local name = W.capture:Spell(spellId)
+  local row = abilityRow(src.dispelAbility, spellId or 0, name)
+  row.amount = row.amount + 1
+  row.hits = row.hits + 1
+  if name then row.name = name end
 end
 
 function E:Environmental(guid, damageType, damage, absorb, resist)
@@ -1193,52 +1204,145 @@ end
 
 --- Name the encounter after the beefiest enemy present, which is what makes
 --- a boss pull read as "Onyxia" and trash read as "Onyxian Warder".
+--[[ Raid and world bosses by name, for when the client will not say.
+
+     Private servers do not always flag their bosses as "worldboss", and a
+     pull saved before rank and level were recorded has nothing else to go
+     on. A name here is a boss wherever it is met. ]]
+local KNOWN_BOSSES = {}
+for _, n in ipairs({
+  -- Molten Core, with Turtle WoW's additions
+  "Lucifron", "Magmadar", "Gehennas", "Garr", "Shazzrah", "Baron Geddon",
+  "Sulfuron Harbinger", "Golemagg the Incinerator", "Majordomo Executus",
+  "Ragnaros", "Incindis", "Basalthar", "Smoldaris", "Sorcerer-Thane Thaurissan",
+  -- Onyxia's Lair
+  "Onyxia",
+  -- Blackwing Lair
+  "Razorgore the Untamed", "Vaelastrasz the Corrupt", "Broodlord Lashlayer",
+  "Firemaw", "Ebonroc", "Flamegor", "Chromaggus", "Nefarian", "Lord Victor Nefarius",
+  -- Zul'Gurub
+  "High Priestess Jeklik", "High Priest Venoxis", "High Priestess Mar'li",
+  "High Priest Thekal", "High Priestess Arlokk", "Bloodlord Mandokir",
+  "Jin'do the Hexxer", "Gahz'ranka", "Hakkar", "Gri'lek", "Hazza'rah",
+  "Renataki", "Wushoolay",
+  -- Ruins of Ahn'Qiraj
+  "Kurinnaxx", "General Rajaxx", "Moam", "Buru the Gorger",
+  "Ayamiss the Hunter", "Ossirian the Unscarred",
+  -- Temple of Ahn'Qiraj
+  "The Prophet Skeram", "Lord Kri", "Princess Yauj", "Vem",
+  "Battleguard Sartura", "Fankriss the Unyielding", "Viscidus",
+  "Princess Huhuran", "Emperor Vek'lor", "Emperor Vek'nilash", "Ouro",
+  "C'Thun", "Eye of C'Thun",
+  -- Naxxramas
+  "Anub'Rekhan", "Grand Widow Faerlina", "Maexxna", "Noth the Plaguebringer",
+  "Heigan the Unclean", "Loatheb", "Instructor Razuvious", "Gothik the Harvester",
+  "Thane Korth'azz", "Lady Blaumeux", "Highlord Mograine", "Sir Zeliek",
+  "Patchwerk", "Grobbulus", "Gluth", "Thaddius", "Sapphiron", "Kel'Thuzad",
+  -- world bosses
+  "Azuregos", "Lord Kazzak", "Emeriss", "Lethon", "Taerar", "Ysondre",
+}) do KNOWN_BOSSES[n] = true end
+
+W.KNOWN_BOSSES = KNOWN_BOSSES
+
+-- What the client said about an enemy, from the unit cache where it has
+-- caught up since the actor was made.
+local function enemyInfo(e)
+  local u = e.guid and W.capture:Unit(e.guid)
+  local rank = (u and u.rank) or e.rank
+  local level = (u and u.level) or e.level
+  local hp = e.maxHealth or 0
+  if u and (u.maxHealth or 0) > hp then hp = u.maxHealth end
+  return rank, level, hp
+end
+
+--[[ Was this enemy a boss?
+
+     In order, and the first that knows decides:
+       - the client calls it a "worldboss";
+       - its level is the skull (-1) while you are high enough that a
+         skull can only mean a boss -- raid trash is 63 at most, so from
+         54 up the skull is never just a level gap;
+       - its name is a known raid or world boss;
+       - in a raid group, the client told us its rank and level and
+         neither says boss: it is not one, however much health it has.
+         Molten Core trash has several times the old health threshold,
+         which is how every trash pull came to be saved as a boss;
+       - otherwise health is the guess, and the threshold is a setting.
+         Out of a raid that is the only way to tell a dungeon boss, which
+         is an ordinary elite with a number for a level, from its trash.
+     A wrong guess is shown on the row and one click fixes it. ]]
+local function isBossEnemy(e)
+  if not e then return false end
+  local rank, level, hp = enemyInfo(e)
+  if rank == "worldboss" then return true end
+  if level == -1 then
+    local mine = UnitLevel and UnitLevel("player") or 60
+    if (mine or 0) >= 54 then return true end
+  end
+  if e.name and KNOWN_BOSSES[e.name] then return true end
+  local raid = GetNumRaidMembers and (GetNumRaidMembers() or 0) > 0
+  if raid and (rank or level) then return false end
+  return hp >= ((W.db and W.db.bossHealth) or 40000)
+end
+
+--[[ The enemy a pull is named after: a boss if one was fought (the
+     biggest, if several), otherwise the biggest thing in the fight. Adds
+     in a boss fight can outlast or out-health it; the row should still say
+     who the fight was. ]]
 local function deriveName(enc)
-  local best, bestHP, bestDmg = nil, -1, -1
+  local best, bestHP, bestDmg, bestBoss = nil, -1, -1, false
   local anyDead = false
   for _, e in pairs(enc.enemies) do
     if e.dead then anyDead = true end
     local hp = e.maxHealth or 0
     local dmg = e.taken or 0
-    if hp > bestHP or (hp == bestHP and dmg > bestDmg) then
-      best, bestHP, bestDmg = e, hp, dmg
+    local boss = isBossEnemy(e)
+    local better
+    if boss ~= bestBoss then
+      better = boss
+    else
+      better = hp > bestHP or (hp == bestHP and dmg > bestDmg)
+    end
+    if better then
+      best, bestHP, bestDmg, bestBoss = e, hp, dmg, boss
     end
   end
-  return (best and best.name) or "Trash", anyDead, best
+  return (best and best.name) or "Trash", anyDead, best, bestBoss
 end
 
---[[ Was this a boss pull?
+--[[ Pulls stored under an older rule are judged again, once each.
 
-     Asked of the biggest thing in the fight -- the same enemy the encounter
-     is named after, so the answer always agrees with the name on the row.
+     The first rule called anything with 40000 health a boss, and Molten
+     Core trash clears that several times over. A pull marked by hand is
+     left alone. One saved with rank and level is judged on those; an
+     older one has only names to go on, so it is a boss if what it was
+     named after, or any enemy in it, is a known boss. ]]
+local BOSS_RULE = 2
 
-     The client's own classification is trusted first, because it is the only
-     source that actually knows. Health is the fallback, and it is a fallback
-     rather than the rule for a reason: no single number separates a raid boss
-     from a dungeon boss from a beefy trash pack across all content, so the
-     threshold is a setting and the answer is always correctable by hand.
-
-     A wrong guess here is visible -- the row is marked in the sidebar -- and
-     one click fixes it. That is the whole design: guess, show the guess, and
-     make it cheap to overrule. ]]
-local function looksLikeBoss(primary)
-  if not primary then return false end
-
-  --[[ Asked of the unit cache as well as the actor, because an actor copies
-       its metadata the first time it is seen -- which is the instant the
-       fight starts, when the client may not have resolved the thing yet.
-       Whatever the actor recorded then is frozen; the cache has had the
-       whole pull to catch up, and this runs at the end of it. ]]
-  local u = primary.guid and W.capture:Unit(primary.guid)
-  local rank = (u and u.rank) or primary.rank
-  if rank == "worldboss" then return true end
-
-  local hp = primary.maxHealth or 0
-  local cached = (u and u.maxHealth) or 0
-  if cached > hp then hp = cached end
-
-  local floor = (W.db and W.db.bossHealth) or 40000
-  return hp >= floor
+function W.RejudgeBosses(list)
+  local changed = 0
+  for _, rec in ipairs(list or {}) do
+    if rec.bossRule ~= BOSS_RULE then
+      rec.bossRule = BOSS_RULE
+      if rec.bossBy ~= "you" then
+        local boss = KNOWN_BOSSES[rec.name or ""] or false
+        if not boss and rec.bossRank == "worldboss" then boss = true end
+        if not boss and rec.bossLevel == -1 then boss = true end
+        if not boss and not (rec.bossRank or rec.bossLevel) then
+          for _, a in pairs(rec.actors or {}) do
+            if not a.isPlayer and a.name and KNOWN_BOSSES[a.name] then
+              boss = true
+              break
+            end
+          end
+        end
+        if (rec.boss == true) ~= boss then changed = changed + 1 end
+        rec.boss = boss
+        rec.bossBy = "guess"
+      end
+    end
+  end
+  return changed
 end
 
 --- Mark or unmark a pull by hand. Sticks: an override is never re-guessed.
@@ -1283,14 +1387,19 @@ function E:Finish()
   self:CloseAuras(enc)
   self:CloseActive(enc)
 
-  local name, anyDead, primary = deriveName(enc)
+  local name, anyDead, primary, isBoss = deriveName(enc)
   enc.name = name
   enc.kill = anyDead
+  -- Kept so the guess can be made again under better rules later.
+  if primary then
+    local rank, level = enemyInfo(primary)
+    enc.bossRank, enc.bossLevel = rank, level
+  end
   --[[ Decided here, at the end of the pull, and then left alone. Judging it
        later would mean re-judging it every time the report is drawn, and a
        pull that changed its mind about being a boss between two refreshes
        would be worse than one that guessed wrong once. ]]
-  enc.boss = looksLikeBoss(primary)
+  enc.boss = isBoss
   enc.bossBy = "guess"
 
   local session = self.session
@@ -1404,6 +1513,9 @@ function E:Persist(enc)
     -- exists on the live encounter is a flag the report never sees.
     boss = enc.boss,
     bossBy = enc.bossBy,
+    bossRank = enc.bossRank,
+    bossLevel = enc.bossLevel,
+    bossRule = 2,
     totals = enc.totals,
     deaths = enc.deaths,
     -- Seconds per player with their pets, as one union (see markActive).
@@ -1521,6 +1633,7 @@ function E:Persist(enc)
       healAbility = keepDetail and topAbilities(a.healAbility, limit) or nil,
       takenAbility = keepDetail and topAbilities(a.takenAbility, limit) or nil,
       consumeItem = keepDetail and topAbilities(a.consumeItem, limit) or nil,
+      dispelAbility = (a.dispels or 0) > 0 and topAbilities(a.dispelAbility, limit) or nil,
     }
   end
 
@@ -1532,37 +1645,17 @@ function E:Persist(enc)
 
   table.insert(W.db.encounters, rec)
 
-  --[[ Ring buffer, but locked encounters are never the ones evicted.
-
-       Dropping the oldest outright would quietly delete the pull someone
-       deliberately kept. Instead find the oldest UNLOCKED one; if every
-       stored encounter is locked there is nothing to give up, so the buffer
-       is allowed to exceed its cap rather than break the promise the lock
-       makes. ]]
-  local maxKeep = W.db.maxEncounters or 60
-  local evicted = 0
-  while table.getn(W.db.encounters) > maxKeep do
-    local victim = nil
-    for i = 1, table.getn(W.db.encounters) do
-      if not W.db.encounters[i].locked then victim = i break end
-    end
-    if not victim then break end
-    table.remove(W.db.encounters, victim)
-    evicted = evicted + 1
-  end
-
-  --[[ Say so the first time the buffer starts eating history.
-
-       Silently dropping the oldest pull is the correct behaviour for a ring
-       buffer and the wrong behaviour for a log: someone who has been
-       raiding all week has no way to know their Tuesday is being deleted to
-       make room for Thursday. Said ONCE per session, because the buffer
-       evicts on every pull once it is full and a message each time would be
-       nagging rather than informing. ]]
-  if evicted > 0 and not self.warnedEviction then
+  --[[ Older pulls leave by age (W.TrimHistory), and only if they were not
+       locked. Said once a session if a count cap someone set starts
+       removing pulls this week: a log that quietly drops Tuesday to make
+       room for Thursday is worse than one that says so. ]]
+  local before = table.getn(W.db.encounters)
+  local evicted = W.TrimHistory(W.db.encounters)
+  local cap = W.db.maxEncounters or 0
+  if evicted > 0 and cap > 0 and before > cap and not self.warnedEviction then
     self.warnedEviction = true
     W.Print(string.format(
-      "history is full at %d pulls, so the oldest are being dropped.", maxKeep))
-    W.Print("raise it in settings, or lock the ones worth keeping.")
+      "history is capped at %d pulls, so the oldest are being dropped.", cap))
+    W.Print("set \"Keep at most\" to no limit in settings, or lock the ones worth keeping.")
   end
 end

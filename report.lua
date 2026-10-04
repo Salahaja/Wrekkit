@@ -232,7 +232,7 @@ end
      keeps the actors it was summed from (_src, actor and pull in pairs)
      and fills the tables in from them on first touch. ]]
 local DETAIL = { auras = true, dmgAbility = true, healAbility = true,
-                 takenAbility = true, consumeItem = true }
+                 takenAbility = true, consumeItem = true, dispelAbility = true }
 
 lazyDetail.__index = function(row, k)
   if not DETAIL[k] then return nil end
@@ -241,6 +241,7 @@ lazyDetail.__index = function(row, k)
   row._src = nil
   row.auras = {}
   row.dmgAbility, row.healAbility, row.takenAbility, row.consumeItem = {}, {}, {}, {}
+  row.dispelAbility = {}
   for i = 1, table.getn(src), 2 do
     local a, enc = src[i], src[i + 1]
     addAuras(row, a.auras, enc)
@@ -248,6 +249,7 @@ lazyDetail.__index = function(row, k)
     addAbilities(row.healAbility, a.healAbility)
     addAbilities(row.takenAbility, a.takenAbility)
     addAbilities(row.consumeItem, a.consumeItem)
+    addAbilities(row.dispelAbility, a.dispelAbility)
   end
   return row[k]
 end
@@ -262,6 +264,7 @@ local function addDetail(row, a, enc)
       addAbilities(row.healAbility, a.healAbility)
       addAbilities(row.takenAbility, a.takenAbility)
       addAbilities(row.consumeItem, a.consumeItem)
+      addAbilities(row.dispelAbility, a.dispelAbility)
       return
     end
     src = {}
