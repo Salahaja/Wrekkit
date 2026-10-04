@@ -922,8 +922,21 @@ function R:Series(encounters, windowSec)
   local detail = {}
   local maxT = 0
 
+  --[[ The axis starts where the first chosen pull starts, not where the
+       night did. One pull picked out of a long session used to sit at the
+       far right of an axis hours wide, squeezed to a sliver; now it fills
+       the chart and second 0 is its pull. Several pulls keep their places
+       relative to each other. The shift is returned so whatever is drawn
+       alongside (deaths) can be moved by the same amount. ]]
+  local base
   for _, enc in ipairs(encounters) do
-    local off = math.floor(enc.offset or 0)
+    local o = math.floor(enc.offset or 0)
+    if not base or o < base then base = o end
+  end
+  base = base or 0
+
+  for _, enc in ipairs(encounters) do
+    local off = math.floor(enc.offset or 0) - base
     local buckets = enc.bucket or {}
     for i = 0, (enc.maxBucket or 0) do
       local b = buckets[i]
@@ -1000,7 +1013,7 @@ function R:Series(encounters, windowSec)
     if series.hl[i] > peak then peak = series.hl[i] end
   end
 
-  return series, maxT + 1, peak, detail
+  return series, maxT + 1, peak, detail, base
 end
 
 ----------------------------------------------------------------------
