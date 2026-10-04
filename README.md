@@ -693,8 +693,16 @@ addon's share) and what the last tidy freed.
 
 ## Saving and sharing
 
-**SavedVariables** hold the rolling history automatically (60 encounters by
-default, `WrekkitDB.maxEncounters`).
+**SavedVariables** hold the history automatically: every pull from the last
+7 days (a raid week), with no limit on how many. Both are in Settings ->
+Recording -> History (*Keep pulls for*, and *Keep at most*, which is "no
+limit" by default). A locked pull is kept however old it is.
+
+**Boss or trash** is decided when a pull ends. A pull is a boss if the client
+calls the enemy a world boss, if it shows the skull level, or if it is a known
+raid or world boss by name. In a raid, trash with a lot of health is still
+trash. Outside a raid, health is the guess (`WrekkitDB.bossHealth`). A wrong
+guess is marked on the row, and one click fixes it.
 
 **The journal** at `CustomData\Wrekkit_<character>.txt` is appended to as each
 encounter finishes (see *Surviving interruptions* above). It is plain text,

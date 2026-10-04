@@ -1,28 +1,22 @@
-**Mob watching and mob frames now work with or without SuperWoW.**
-
-## New
-- **A group scan that works on any 1.12 client.** Wrekkit now reads what every member of your group is targeting, and what each of those mobs is targeting. Every mob anyone in the group has targeted is watched, with its health and who it is hitting.
-  - **Without SuperWoW:**
-    - **LOOSE detection** works, including the alert.
-    - **Mob frames** work.
-    - **The Taunt bar** reaches the mob through the group member targeting it.
-    - Mobs with the same name are told apart by their health.
-  - **With SuperWoW**, the scan adds to the nameplates. A mob that someone in the raid has targeted is listed and watched even when its plate is not on screen.
-- Clicking a mob frame targets that mob in both setups.
+**Boss pulls are told apart from trash again, and a whole raid week is kept.**
 
 ## Fixed
-- **Lag when opening the report or resizing windows.** With a long session recorded, every open, tab click and frame of a resize drag re-added the whole history. That cost about 30 ms and 4 MB of garbage each time, which caused the hitches.
-  - Finished fights are now added up once and reused until they change. Opening the report is about 15 times cheaper.
-  - While you drag a window's resize grip, it now redraws at most ten times a second, with one final redraw when you let go.
-  - Bars that have not moved are no longer re-anchored on every repaint.
-- **Less garbage in combat, so fewer freezes.** The meter rebuilds the live fight twice a second, and each rebuild copied every player's per-ability and per-buff tables. Only a click into a player's breakdown ever reads them. They are now built only when something asks for them, which cuts the meter's in-combat garbage by about two thirds. Each cleanup of that garbage froze the game for 70–90 ms.
+- **Trash saved as bosses.** A pull counted as a boss if the biggest enemy had 40,000 health or more. Nearly all Molten Core trash is above that, so almost every pull was marked BOSS. A pull is now a boss if:
+  - the game calls the enemy a world boss;
+  - the enemy shows the skull level (with you at 54 or higher, a skull can only mean a boss);
+  - or it is a known raid or world boss by name. This covers Molten Core (including Turtle's Incindis, Basalthar, Smoldaris and Sorcerer-Thane Thaurissan), Onyxia, BWL, ZG, AQ20, AQ40, Naxxramas and the world bosses.
 
-## Note
-Without SuperWoW, a mob nobody in your group has targeted stays unseen, and taunting a mob changes your target. SuperWoW is still recommended.
+  In a raid, trash with a lot of health is now trash. Outside a raid, health is still used, since that's the only way to tell a 5-man boss from its trash.
+- **Fights already saved are re-checked once** when you log in, and chat says how many changed. Ones you marked by hand are left alone. Older saves didn't record enough about the enemy, so they are judged by name alone. A boss that isn't in the list can be re-marked with one click on its row.
+- **A boss fight is named after the boss,** even when an add has more health.
+- **History lost bosses from a long night.** It used to keep only the newest 60 pulls, which a full clear with trash goes past. It now keeps **every pull from the last 7 days**, a raid week, **with no limit on how many**.
+  - Settings → Recording → History has *Keep pulls for* (1–90 days) and *Keep at most* (**no limit** by default).
+  - If you never changed the old 60-pull limit, it moves to no limit automatically.
+  - Locked pulls are kept however old they are.
 
 ## Install
 
-Download `Wrekkit-0.8.2.zip` and extract it into `<your client>\Interface\AddOns\`. You should end up with `Interface\AddOns\Wrekkit\Wrekkit.toc`. Do **not** use the "Source code" links. **Fully restart the client** after installing. `/wrek status` should then report **v0.8.2**.
+Download `Wrekkit-0.8.3.zip` and extract it into `<your client>\Interface\AddOns\`. You should end up with `Interface\AddOns\Wrekkit\Wrekkit.toc`. Do **not** use the "Source code" links. **Fully restart the client** after installing. `/wrek status` should then report **v0.8.3**.
 
 ## Requirements
 

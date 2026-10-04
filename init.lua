@@ -31,6 +31,10 @@ f:SetScript("OnEvent", function()
 
     W.Print("v" .. W.version .. " ready. |cffe0a22c/wrek|r for the meter, " ..
       "|cffe0a22c/wrek report|r for the full view.")
+    if W.pendingNote then
+      W.Print(W.pendingNote)
+      W.pendingNote = nil
+    end
 
     --[[ Bring the meter back up if it was up last time (the default).
          Deferred a moment rather than done inline: frame movers like
@@ -65,6 +69,8 @@ f:SetScript("OnEvent", function()
     if not W.store.recovered then
       W.store.recovered = true
       W.Guard("crash recovery", function() W.store:Recover() end)
+      -- Pulls brought back from the journal may predate the boss rule.
+      W.Guard("boss rule", function() W.RejudgeBosses(W.db.encounters) end)
     end
   end
 end)

@@ -438,11 +438,17 @@ function S:Create()
   ------------------------------------------------------------------
   heading(self, "History")
 
+  stepper(self, "Keep pulls for",
+    function() return W.db.keepDays or 7 end,
+    function(v) W.db.keepDays = v W.TrimHistory() end,
+    1, 90, 1,
+    function(v) return v .. ((v == 1) and " day" or " days") end)
+
   stepper(self, "Keep at most",
-    function() return W.db.maxEncounters or 60 end,
+    function() return W.db.maxEncounters or 0 end,
     function(v) W.db.maxEncounters = v end,
-    10, 500, 10,
-    function(v) return v .. " pulls" end)
+    0, 1000, 50,
+    function(v) return (v == 0) and "no limit" or (v .. " pulls") end)
 
   check(self, "Write each pull to disk",
     function() return W.db.autoSave ~= false end,

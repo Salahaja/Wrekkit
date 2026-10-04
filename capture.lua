@@ -285,6 +285,11 @@ function C:Unit(guid)
     local ok, rank = pcall(UnitClassification, guid)
     if ok and type(rank) == "string" and rank ~= "" then u.rank = rank end
   end
+  -- -1 is the skull: a boss, or something ten or more levels above you.
+  if u.level == nil and UnitLevel then
+    local ok, level = pcall(UnitLevel, guid)
+    if ok and type(level) == "number" and level ~= 0 then u.level = level end
+  end
 
   return u
 end

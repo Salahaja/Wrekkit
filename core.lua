@@ -211,7 +211,8 @@ end
 
 W.defaults = {
   debug = false,
-  maxEncounters = 60,      -- ring buffer of stored encounters
+  keepDays = 7,            -- pulls are kept this long (a raid week)
+  maxEncounters = 0,       -- optional count cap; 0 = no limit
   maxAbilities = 24,       -- per-actor ability rows persisted
   minTrashDuration = 6,    -- seconds; shorter combats are dropped
   trackOpenWorld = false,  -- only record inside instances by default
@@ -264,7 +265,14 @@ end
      at load, so nothing downstream has to guard against them. ]]
 function W.SanitizeDB(db)
   clampSetting(db, "fontScale", 0.7, 1.8, 1.0)
-  clampSetting(db, "maxEncounters", 1, 1000, 60)
+  -- 60 was the old fixed cap, and dropped bosses from a long night. Saved
+  -- files that still carry it move to no limit, once.
+  if not db.historyRule then
+    if db.maxEncounters == 60 then db.maxEncounters = 0 end
+    db.historyRule = 1
+  end
+  clampSetting(db, "maxEncounters", 0, 5000, 0)
+  clampSetting(db, "keepDays", 1, 90, 7)
   clampSetting(db, "maxAbilities", 4, 100, 24)
   clampSetting(db, "minTrashDuration", 1, 60, 6)
   clampSetting(db, "resumeWindow", 60, 7200, 1200)
@@ -311,6 +319,10 @@ function W.InitDB()
   -- The threat settings are checked again on first use (W.threat:Settings).
   if type(WrekkitDB.threat) == "table" then WrekkitDB.threat._ok = nil end
   W.db = WrekkitDB
+  if W.RejudgeBosses then
+    local n = W.RejudgeBosses(WrekkitDB.encounters)
+    if n > 0 then W.pendingNote = n .. " saved pull(s) re-checked for boss or trash." end
+  end
 end
 
 ----------------------------------------------------------------------

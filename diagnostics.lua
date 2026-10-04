@@ -159,7 +159,8 @@ function W.Status()
   local stored = (W.db and W.db.encounters) or {}
   local n = table.getn(stored)
   line("Stored      " .. n .. " encounter" .. (n == 1 and "" or "s") ..
-    "   (kept: " .. (W.db.maxEncounters or 60) .. ")")
+    "   (kept: " .. (W.db.keepDays or 7) .. " days" ..
+      (((W.db.maxEncounters or 0) > 0) and (", at most " .. W.db.maxEncounters) or ", no limit") .. ")")
 
   ------------------------------------------------------------------
   -- continuity
