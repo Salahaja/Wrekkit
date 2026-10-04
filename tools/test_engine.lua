@@ -230,6 +230,7 @@ dofile("metrics.lua")
 dofile("report.lua")
 dofile("diagnostics.lua")
 dofile("store.lua")
+dofile("archive.lua")
 dofile("sync.lua")
 dofile("announce.lua")
 dofile("threat.lua")
@@ -3152,6 +3153,181 @@ Wrekkit.capture.buffs = {}
 TH.clearRaid()
 Wrekkit.ResetData("all")
 end
+
+----------------------------------------------------------------------
+print("\n-- per-raid files --")
+----------------------------------------------------------------------
+;(function()
+local A = Wrekkit.archive
+Wrekkit.ResetData("all")
+Wrekkit.db.archives = {}
+A.loaded = nil
+
+local function aPull(seconds)
+  IN_COMBAT = true
+  fire("PLAYER_REGEN_DISABLED")
+  for _ = 1, (seconds or 8) do
+    Wrekkit.encounter:Damage("0xP1", "0xBoss", 11267, 100, {})
+    advance(1)
+  end
+  IN_COMBAT = false
+  fire("PLAYER_REGEN_ENABLED")
+  Wrekkit.encounter:Finish()
+  -- Writing a pull to its file is spread over frames; finish it here.
+  A:Flush()
+  return Wrekkit.db.encounters[table.getn(Wrekkit.db.encounters)]
+end
+
+local p1 = aPull(10)
+local p2 = aPull(12)
+local key = A:KeyFor(p1)
+local e = A:Index()[key]
+check("a raid pull lands in its raid's file", p1.archived, key)
+check("  the file is named after the raid ID", e and string.find(e.file, tostring(p1.instanceId), 1, true) ~= nil and (p1.instanceId or 0) > 0, true)
+check("  two pulls on one raid ID share it", p2.archived, key)
+check("  the index counts them", e and e.pulls, 2)
+
+-- Written whole and read back the same.
+local back = A:Read(key)
+check("the file reads back every pull", table.getn(back), 2)
+local v1 = Wrekkit.report:View({ p1 }, {})
+local v2 = Wrekkit.report:View({ back[1] }, {})
+check("  with the same damage", v2.totals.damage, v1.totals.damage)
+check("  and the same players", table.getn(v2.rows), table.getn(v1.rows))
+check("  and the ability detail", back[1].actors and next(back[1].actors) ~= nil, true)
+
+-- Another raid ID is another file.
+local realId = SAVED_ID
+SAVED_ID = 9999
+Wrekkit.encounter:StartNewSession()
+local p3 = aPull(8)
+SAVED_ID = realId
+check("another raid ID gets its own file", p3.archived ~= key, true)
+check("  and its own index entry", table.getn(A:List()), 2)
+
+-- A dungeon has no raid ID: one file per run.
+local realSaved = GetNumSavedInstances
+GetNumSavedInstances = function() return 0 end
+Wrekkit.encounter:StartNewSession()
+advance(5000)
+local d1 = aPull(8)
+GetNumSavedInstances = realSaved
+check("a dungeon run is filed by its run", string.sub(d1.archived or "", 1, 4), "run:")
+
+-- A write torn by a crash costs that line and nothing else.
+DISK[e.file] = DISK[e.file] .. "\nR~{[\"id\"]=77,[\"sess"
+local p4 = aPull(8)
+Wrekkit.encounter:StartNewSession()
+-- (p4 went to the same raid only if it is the same ID)
+local after = A:Read(key)
+check("a torn line is skipped, the rest still read", table.getn(after) >= 2, true)
+
+-- Nothing in a file can run code.
+check("a file cannot call a function", A.Deserialize("{[1]=print(\"x\")}"), nil)
+check("or reach a global", A.Deserialize("os"), nil)
+
+-- Older than the night in progress: out of SavedVariables, still on disk.
+local before = table.getn(Wrekkit.db.encounters)
+advance(A.HOLD + 60)
+Wrekkit.TrimHistory()
+check("old archived pulls leave SavedVariables", table.getn(Wrekkit.db.encounters) < before, true)
+local function inSessions(rec)
+  for _, s in ipairs(Wrekkit.report:Sessions()) do
+    for _, r in ipairs(s.encounters) do
+      if r.id == rec.id and r.sessionId == rec.sessionId then return true end
+    end
+  end
+  return false
+end
+check("  and from the report until opened", inSessions(p1), false)
+A:Load(key)
+check("opening the raid brings them back", inSessions(p1), true)
+
+-- A change to a pull from a file is written to the file.
+local loadedP1
+for _, r in ipairs(A.loaded.list) do if r.id == p1.id and r.sessionId == p1.sessionId then loadedP1 = r end end
+Wrekkit.SetBoss(loadedP1, true)
+A:Unload()
+local reread
+for _, r in ipairs(A:Read(key)) do if r.id == p1.id and r.sessionId == p1.sessionId then reread = r end end
+check("marking a boss in an old raid sticks", reread and reread.boss, true)
+check("letting go of it frees it", inSessions(p1), false)
+
+-- Keep, expire, delete.
+check("keeping a raid", A:SetKept(key, true), true)
+advance(8 * 86400)
+local gone = A:Cleanup()
+check("expired raids are removed", gone, 2)
+check("  but a kept one stays", A:Index()[key] ~= nil, true)
+local file = A:Index()[key].file
+A:Delete(key)
+check("deleting a raid removes it from the list", A:Index()[key], nil)
+check("  and empties its file", DISK[file], "")
+
+-- The index survives a lost SavedVariables through its mirror.
+local p5 = aPull(8)
+local k5 = p5.archived
+Wrekkit.db.archives = {}
+check("the index comes back from its mirror", A:RestoreIndex() >= 1, true)
+check("  with the raid in it", A:Index()[k5] ~= nil, true)
+
+-- History from before this release moves into files.
+local old = aPull(8)
+old.archived = nil
+A:Index()[A:KeyFor(old)].ids = {}
+local moved = A:MigrateNow()
+check("earlier pulls are moved into files", moved >= 1, true)
+check("  and marked as moved", old.archived ~= nil, true)
+local again = A:MigrateNow()
+check("  only once", again, 0)
+
+-- The write is spread over frames: queued at the end of the pull, on
+-- disk once the slices are done, and the same text as one write.
+do
+  IN_COMBAT = true
+  fire("PLAYER_REGEN_DISABLED")
+  for _ = 1, 8 do Wrekkit.encounter:Damage("0xP1", "0xBoss", 11267, 100, {}) advance(1) end
+  IN_COMBAT = false
+  fire("PLAYER_REGEN_ENABLED")
+  Wrekkit.encounter:Finish()
+  local q = Wrekkit.db.encounters[table.getn(Wrekkit.db.encounters)]
+  check("a finished pull is queued, not written in that frame", q.archived, nil)
+  local ticker = _G["WrekkitTicker"]
+  for _ = 1, 200 do
+    if q.archived then break end
+    advance(0.02)
+    ticker:GetScript("OnUpdate")()
+  end
+  check("  and is on disk a few frames later", q.archived ~= nil, true)
+  local found
+  for _, r in ipairs(A:Read(q.archived)) do if r.id == q.id and r.sessionId == q.sessionId then found = r end end
+  check("  whole", found and found.totals and found.totals.damage, q.totals.damage)
+end
+
+-- Deleting everything also drops writes still waiting in the queue.
+do
+  IN_COMBAT = true
+  fire("PLAYER_REGEN_DISABLED")
+  for _ = 1, 8 do Wrekkit.encounter:Damage("0xP1", "0xBoss", 11267, 100, {}) advance(1) end
+  IN_COMBAT = false
+  fire("PLAYER_REGEN_ENABLED")
+  Wrekkit.encounter:Finish()
+  local q = Wrekkit.db.encounters[table.getn(Wrekkit.db.encounters)]
+  Wrekkit.ResetData("all")
+  A:Flush()
+  check("a reset does not write the pulls it removed", q.archived, nil)
+end
+
+-- Turned off, nothing is written.
+Wrekkit.db.archiveFiles = false
+local off = aPull(8)
+check("turned off, a pull stays out of files", off.archived, nil)
+Wrekkit.db.archiveFiles = nil
+
+A.loaded = nil
+Wrekkit.ResetData("all")
+Wrekkit.db.archives = {}
+end)()
 
 ----------------------------------------------------------------------
 print("\n-- saved settings --")

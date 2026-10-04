@@ -2124,6 +2124,59 @@ step("crash recovery once a login, and the mark at logout", function()
   end
 end)
 
+step("raids saved to their own files: open, keep, delete from the report", function()
+  local A = W.archive
+  if not A:Active() then error("the file API stubs should make per-raid files active") end
+  -- Everything recorded so far is on disk; move past the night in progress
+  -- so it leaves SavedVariables, as the next day's login would find it.
+  A:MigrateNow()
+  if table.getn(A:List()) == 0 then error("no raid files were written") end
+  NOW = NOW + A.HOLD + 60
+  W.TrimHistory()
+  local R = W.ui.report
+  R:Show()
+
+  local items, pick
+  local realMenu = W.ui.Menu
+  W.ui.Menu = function(_, _, its, onPick) items, pick = its, onPick end
+  local ok, err = pcall(function()
+    R:SessionMenu()
+    local open
+    for _, it in ipairs(items or {}) do
+      if type(it.value) == "string" and string.sub(it.value, 1, 5) == "open:" then open = it end
+    end
+    if not open then error("the session menu lists no saved raids") end
+    pick(open.value, open)
+    local s = R:Session()
+    if not s or s.archive ~= string.sub(open.value, 6) then error("opening a saved raid did not show it") end
+    if table.getn(s.encounters) == 0 then error("the opened raid has no pulls") end
+
+    -- Now the menu offers keep and delete for it.
+    R:SessionMenu()
+    local keep, del
+    for _, it in ipairs(items) do
+      if type(it.value) == "string" then
+        if string.sub(it.value, 1, 5) == "keep:" then keep = it end
+        if string.sub(it.value, 1, 7) == "delete:" then del = it end
+      end
+    end
+    if not (keep and del) then error("no keep/delete for the raid on screen") end
+    local key = string.sub(keep.value, 6)
+    pick(keep.value, keep)
+    if not A:Index()[key].kept then error("keep did not take") end
+    pick(del.value, del)
+    if R.pendingDelete ~= key then error("delete did not ask first") end
+    R:ConfirmDeleteArchive()
+    if A:Index()[key] then error("the raid was not deleted") end
+  end)
+  W.ui.Menu = realMenu
+  if not ok then error(err) end
+
+  -- And from chat.
+  SlashCmdList["WREKKIT"]("raids")
+  R.frame:Hide()
+end)
+
 ----------------------------------------------------------------------
 -- report
 ----------------------------------------------------------------------

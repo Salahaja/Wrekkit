@@ -598,11 +598,18 @@ end
 -- menus
 ----------------------------------------------------------------------
 
+--[[ The sessions in memory, then the raids and runs saved to their own
+     files (archive.lua), then what can be done with the raid on screen.
+
+     Picking a saved raid reads its file in; keeping one holds it past the
+     history length; deleting one removes that raid and nothing else. ]]
 function R:SessionMenu()
   local sessions = W.report:Sessions()
   local items = {}
+  local shown = {}
   for i, s in ipairs(sessions) do
     local when = date("%m/%d %H:%M", s.startTime)
+    if s.archive then shown[s.archive] = true end
     table.insert(items, {
       text = (s.zone or "?") .. "  " .. when,
       value = i,
@@ -612,12 +619,113 @@ function R:SessionMenu()
   if table.getn(items) == 0 then
     items = { { text = "No sessions recorded", disabled = true } }
   end
+
+  local A = W.archive
+  if A and A:Active() then
+    local older = {}
+    for _, e in ipairs(A:List()) do
+      if not shown[e.key] then table.insert(older, e) end
+    end
+    if table.getn(older) > 0 then
+      table.insert(items, { text = "Saved raids and runs", header = true })
+      -- A menu, not a browser: the rest are on /wrek raids.
+      for i, e in ipairs(older) do
+        if i > 15 then
+          table.insert(items, { text = (table.getn(older) - 15) .. " more: /wrek raids", disabled = true })
+          break
+        end
+        table.insert(items, { text = A:Describe(e), value = "open:" .. e.key })
+      end
+    end
+
+    local cur = self:Session()
+    local key = cur and cur.archive
+    local e = key and A:Index()[key]
+    if e then
+      table.insert(items, { text = "This " .. (e.raid and "raid" or "run"), header = true })
+      table.insert(items, {
+        text = e.kept and "Stop keeping it" or ("Keep it past " .. ((W.db and W.db.keepDays) or 7) .. " days"),
+        value = "keep:" .. key,
+      })
+      table.insert(items, { text = "Delete it...", value = "delete:" .. key })
+    end
+  end
+
   UI.Menu(self.frame, self.sessionBtn, items, function(value)
+    if type(value) == "string" then
+      local _, _, verb, key = string.find(value, "^(%a+):(.+)$")
+      W.Guard("session menu", function() R:ArchiveAction(verb, key) end)
+      return
+    end
     self.state.sessionIndex = value
     self.state.sessionId = sessions[value] and sessions[value].id or nil
     self.state.selected = {}
     self:Refresh()
   end, SIDEBAR - 12)
+end
+
+--- Open, keep or delete a saved raid from the session menu.
+function R:ArchiveAction(verb, key)
+  local A = W.archive
+  if not (A and key) then return end
+  local e = A:Index()[key]
+  if not e then return end
+  if verb == "open" then
+    A:Load(key)
+    -- Show its newest session.
+    local best
+    for i, s in ipairs(W.report:Sessions()) do
+      if s.archive == key and (not best or s.startTime > best.startTime) then best = s best.i = i end
+    end
+    self.state.selected = {}
+    self.state.scope = nil
+    self.state.drill = nil
+    if best then
+      self.state.sessionId = best.id
+      self.state.sessionIndex = best.i
+    end
+    self:Refresh()
+  elseif verb == "keep" then
+    local kept = A:SetKept(key, not e.kept)
+    W.Print((kept and "Keeping " or "No longer keeping ") .. A:Describe(e) .. ".")
+    self:Refresh()
+  elseif verb == "delete" then
+    R.pendingDelete = key
+    if StaticPopup_Show and type(StaticPopupDialogs) == "table" then
+      StaticPopupDialogs["WREKKIT_DELETE_ARCHIVE"].text =
+        "Delete " .. A:Describe(e) .. "?\nThis cannot be undone."
+      StaticPopup_Show("WREKKIT_DELETE_ARCHIVE")
+    else
+      R:ConfirmDeleteArchive()
+    end
+  end
+end
+
+function R:ConfirmDeleteArchive()
+  local key = R.pendingDelete
+  R.pendingDelete = nil
+  local A = W.archive
+  local e = A and key and A:Index()[key]
+  if not e then return end
+  local what = A:Describe(e)
+  A:Delete(key)
+  W.Print("Deleted " .. what .. ".")
+  self.state.selected = {}
+  self.state.sessionId = nil
+  self.state.sessionIndex = 1
+  self:Refresh()
+end
+
+if type(StaticPopupDialogs) == "table" then
+  StaticPopupDialogs["WREKKIT_DELETE_ARCHIVE"] = {
+    text = "Delete this raid?\nThis cannot be undone.",
+    button1 = "Delete",
+    button2 = "Cancel",
+    OnAccept = function() W.Guard("delete raid", function() R:ConfirmDeleteArchive() end) end,
+    timeout = 30,
+    whileDead = 1,
+    hideOnEscape = 1,
+  }
 end
 
 ----------------------------------------------------------------------

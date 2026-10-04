@@ -438,6 +438,11 @@ function S:Create()
   ------------------------------------------------------------------
   heading(self, "History")
 
+  check(self, "Save each raid to its own file",
+    function() return W.db.archiveFiles ~= false end,
+    function(v) W.db.archiveFiles = v and true or false end,
+    { "One file per raid ID (one per dungeon", "run) in CustomData. Older raids load", "from their file when opened, so memory", "stays small. Needs Nampower." })
+
   stepper(self, "Keep pulls for",
     function() return W.db.keepDays or 7 end,
     function(v) W.db.keepDays = v W.TrimHistory() end,

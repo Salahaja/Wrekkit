@@ -71,6 +71,8 @@ f:SetScript("OnEvent", function()
       W.Guard("crash recovery", function() W.store:Recover() end)
       -- Pulls brought back from the journal may predate the boss rule.
       W.Guard("boss rule", function() W.RejudgeBosses(W.db.encounters) end)
+      -- Per-raid files: move older history out, drop what has expired.
+      W.Guard("archive", function() W.archive:Start() end)
     end
   end
 end)

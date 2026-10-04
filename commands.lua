@@ -52,6 +52,8 @@ local HELP = {
   { "/wrek reset", "start a new log (history is kept)" },
   { "/wrek reset all", "delete every recorded encounter" },
   { "/wrek keep", "lock the last encounter so nothing deletes it" },
+  { "/wrek raids", "list the raids and runs saved to their own files" },
+  { "/wrek raids open|keep|delete <n>", "open, keep past the history length, or delete one" },
   { "/wrek prune [days]", "delete unlocked encounters older than N days" },
   { "/wrek prune all", "delete every unlocked encounter" },
   { "/wrek share [chan]", "send the last pull to other Wrekkit users" },
@@ -196,6 +198,46 @@ local function handler(msg)
       "|cffe0a22c" .. (enc.name or "?") .. "|r." ..
       (locked and " Nothing will delete it." or "") ..
       "  (" .. W.CountLocked() .. " kept in total)")
+
+  elseif cmd == "raids" or cmd == "raid" then
+    local A = W.archive
+    if not (A and A:Active()) then
+      W.Print("per-raid files need Nampower's file API (or are turned off in settings).")
+      return
+    end
+    local list = A:List()
+    local n = tonumber(a[3] or "")
+    local verb = a[2]
+    if verb == "open" or verb == "keep" or verb == "delete" then
+      local e = n and list[n]
+      if not e then
+        W.Print("no raid number " .. tostring(a[3]) .. " - /wrek raids lists them.")
+        return
+      end
+      if verb == "open" then
+        W.ui.report:Show()
+        W.ui.report:ArchiveAction("open", e.key)
+      elseif verb == "keep" then
+        W.ui.report:ArchiveAction("keep", e.key)
+      else
+        W.ui.report.pendingDelete = e.key
+        if StaticPopup_Show then
+          W.ui.report:ArchiveAction("delete", e.key)
+        else
+          W.ui.report:ConfirmDeleteArchive()
+        end
+      end
+      return
+    end
+    if table.getn(list) == 0 then
+      W.Print("no raids saved to files yet.")
+      return
+    end
+    W.Print("saved raids and runs (newest first):")
+    for i, e in ipairs(list) do
+      DEFAULT_CHAT_FRAME:AddMessage("   |cffe0a22c" .. i .. "|r  " .. A:Describe(e))
+    end
+    W.Print("/wrek raids open|keep|delete <n>")
 
   elseif cmd == "prune" then
     local days = tonumber(a[2])

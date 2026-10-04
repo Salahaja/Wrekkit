@@ -33,12 +33,26 @@ function R:Sessions()
       table.insert(out, s)
     end
     if rec.startTime < s.startTime then s.startTime = rec.startTime end
+    if rec.archived then s.archive = rec.archived end
     table.insert(s.encounters, rec)
     if isLive then s.hasLive = true end
   end
 
   local stored = (W.db and W.db.encounters) or {}
-  for _, rec in ipairs(stored) do place(rec, false) end
+  local have = {}
+  for _, rec in ipairs(stored) do
+    place(rec, false)
+    have[tostring(rec.sessionId) .. ":" .. tostring(rec.id)] = true
+  end
+
+  -- An older raid read in from its own file (archive.lua). Pulls still in
+  -- SavedVariables are the same pulls; those copies win.
+  local loaded = W.archive and W.archive.loaded
+  if loaded then
+    for _, rec in ipairs(loaded.list) do
+      if not have[tostring(rec.sessionId) .. ":" .. tostring(rec.id)] then place(rec, false) end
+    end
+  end
 
   local live = W.encounter.live
   if live and live.totals and (live.totals.damage > 0 or live.totals.healing > 0) then

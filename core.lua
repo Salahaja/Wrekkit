@@ -212,6 +212,7 @@ end
 W.defaults = {
   debug = false,
   keepDays = 7,            -- pulls are kept this long (a raid week)
+  archiveFiles = true,     -- one file per raid ID / dungeon run (archive.lua)
   maxEncounters = 0,       -- optional count cap; 0 = no limit
   maxAbilities = 24,       -- per-actor ability rows persisted
   minTrashDuration = 6,    -- seconds; shorter combats are dropped
