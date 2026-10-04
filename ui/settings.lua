@@ -583,7 +583,7 @@ local function textField(self, label, get, set)
   text:SetText(label)
   local box = UI.SearchBox(f, 110, function(v) set(v) end, "auto")
   -- Room for a list of names, not just one.
-  if box.editBox then box.editBox:SetMaxLetters(64) end
+  if box.editBox then box.editBox:SetMaxLetters(120) end
   box:SetPoint("RIGHT", f, "RIGHT", 0, 0)
   box:SetHeight(18)
   f.Refresh = function() box:SetValue(get()) end

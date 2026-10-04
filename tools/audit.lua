@@ -2124,6 +2124,87 @@ step("crash recovery once a login, and the mark at logout", function()
   end
 end)
 
+step("other tanks: their threat and the mobs they take raise nothing", function()
+  local T, UI = W.threat, W.ui
+  local s = T:Settings()
+  s.tankMode, s.coTanks = "on", "Fuff"
+  T.fired, T.lost, T.taunts, T.tankMobs, T.heldKey = {}, {}, {}, {}, nil
+  local alerts = {}
+  local realAlert = T.Alert
+  T.Alert = function(self, text, level) table.insert(alerts, text) end
+  -- Onyxia targeted.
+  local realExists, realTarget = STUB.UnitExists, WORLD["target"]
+  WORLD["0xF00000000000ABCD"] = WORLD["0xF00000000000ABCD"] or { name = "Onyxia", isPlayer = false,
+    rank = "worldboss", maxHealth = 1200000, health = 1200000 }
+  WORLD["target"] = WORLD["0xF00000000000ABCD"]
+  STUB.UnitExists = function(u)
+    if u == "target" then return 1, "0xF00000000000ABCD" end
+    return realExists(u)
+  end
+  T.reqKey = nil
+  local ok, err = pcall(function()
+    -- Fuff, a co-tank, is right behind you; Elfpriest is the real runner-up.
+    T:OnMessage("TWTv4=Auditor:1:3000:100:1;Fuff:0:2950:98:1;Elfpriest:0:1500:50:0;" ..
+                "#TMTv1=Onyxia:43981:Fuff:98;")
+    for _, a in ipairs(alerts) do
+      if string.find(a, "Fuff", 1, true) then error("warned about a co-tank: " .. a) end
+    end
+    local live = T:Live()
+    local runner = T:Runner(live)
+    if not runner or runner.name ~= "Elfpriest" then
+      local names = {}
+      for _, r in ipairs((live and live.rows) or {}) do table.insert(names, r.name .. (r.tank and "*" or "")) end
+      error("the runner-up is " .. tostring(runner and runner.name) .. " in " .. table.concat(names, ","))
+    end
+    if (T.tankMobs[43981].pull or 0) ~= 0 then error("a co-tank behind you still reads as danger") end
+    local worst = T:Alarm()
+    if worst and worst >= s.tankFlashAt then error("flashing for a co-tank") end
+
+    -- Fuff taunts Onyxia off you: a swap, not lost aggro.
+    alerts = {}
+    T:OnMessage("TWTv4=Fuff:1:3400:100:1;Auditor:0:3000:88:1;")
+    for _, a in ipairs(alerts) do
+      if string.find(a, "LOST", 1, true) then error("a swap to a co-tank was called lost: " .. a) end
+    end
+    if table.getn(T:Taunts()) ~= 0 then error("the taunt bar offered a mob a co-tank took") end
+
+    -- The same to someone who is not a tank is still lost.
+    s.coTanks = ""
+    T.fired, T.lost, T.taunts, T.heldKey = {}, {}, {}, nil
+    T:OnMessage("TWTv4=Auditor:1:3000:100:1;Fuff:0:2950:98:1;")
+    T:OnMessage("TWTv4=Fuff:1:3400:100:1;Auditor:0:3000:88:1;")
+    local lost = false
+    for _, a in ipairs(alerts) do if string.find(a, "LOST AGGRO", 1, true) then lost = true end end
+    if not lost then error("losing a mob to a non-tank is no longer announced") end
+
+    -- Marking: by name, by toggle, and by right-click in the threat window.
+    if not T:ToggleCoTank("Fuff") or not T:IsCoTank("fuff") then error("marking by name failed") end
+    T:ToggleCoTank("Bob")
+    if s.coTanks ~= "Fuff, Bob" then error("the list reads " .. s.coTanks) end
+    T:ToggleCoTank("Bob")
+    if T:IsCoTank("Bob") or s.coTanks ~= "Fuff" then error("unmarking failed: " .. s.coTanks) end
+
+    UI.threat:Refresh()
+    local row = UI.threat.list.rows[1]
+    UI.threat.Paint(row, { row = { name = "Elfpriest", class = "PRIEST", threat = 1, perc = 50, pull = 38 }, shown = 38 })
+    local click = row:GetScript("OnClick")
+    if not click then error("a player row takes no click") end
+    arg1 = "RightButton"
+    click()
+    arg1 = nil
+    if not T:IsCoTank("Elfpriest") then error("right-click did not mark them") end
+
+    SlashCmdList["WREKKIT"]("threat tanks")
+    SlashCmdList["WREKKIT"]("threat cotank elfpriest")
+    if T:IsCoTank("Elfpriest") then error("/wrek threat cotank did not toggle them off") end
+  end)
+  T.Alert = realAlert
+  STUB.UnitExists, WORLD["target"] = realExists, realTarget
+  s.tankMode, s.coTanks = "auto", ""
+  T.fired, T.lost, T.taunts, T.tankMobs, T.heldKey = {}, {}, {}, {}, nil
+  if not ok then error(err) end
+end)
+
 step("raids saved to their own files: open, keep, delete from the report", function()
   local A = W.archive
   if not A:Active() then error("the file API stubs should make per-raid files active") end

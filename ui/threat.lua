@@ -161,6 +161,10 @@ local function rowTooltip(frame, item)
     GameTooltip:AddLine(r.melee and "In melee range: pulls at 110%." or
       "At range: pulls at 130%.", DIM[1], DIM[2], DIM[3])
   end
+  if not r.isMe then
+    GameTooltip:AddLine(T:IsCoTank(r.name) and "Right-click: no longer a tank" or
+      "Right-click: mark as one of the tanks", DIM[1], DIM[2], DIM[3])
+  end
   GameTooltip:Show()
 end
 
@@ -209,7 +213,27 @@ function TW.Paint(row, item, index)
   local r = item.row
   local name = r.name
   if r.tank then name = "|cff5a9bff[T]|r " .. name end
+  -- One of the other tanks: their numbers raise no warnings for you.
+  if not r.tank and not r.isMe and T:IsCoTank(r.name) then
+    name = name .. " |cff5a9bff(tank)|r"
+  end
   if r.isMe then name = "|cffe0a22c>|r " .. name end
+
+  -- Right-click a player to mark or unmark them as one of the tanks.
+  if not r.isMe and r.name then
+    row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    local who = r.name
+    row:SetScript("OnClick", function()
+      if arg1 ~= "RightButton" then return end
+      W.Guard("co-tank click", function()
+        local on = T:ToggleCoTank(who)
+        W.Print(who .. (on and " is marked as a tank: their threat and the mobs they take raise no warnings."
+          or " is no longer marked as a tank."))
+        if TW.Refresh then TW:Refresh() end
+        if W.ui.meter and W.ui.meter.frame and W.ui.meter.frame:IsShown() then W.ui.meter:Refresh() end
+      end)
+    end)
+  end
 
   local value
   if s.showThreat and s.showTPS then

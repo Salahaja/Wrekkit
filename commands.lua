@@ -68,6 +68,8 @@ local HELP = {
   { "/wrek threat test", "15s of test data, to place frames and plates" },
   { "/wrek threat move", "place the target-frame %, taunt bar and mob frames" },
   { "/wrek taunt", "taunt the mob that got away (for a macro)" },
+  { "/wrek threat cotank [name]", "mark or unmark another tank (no name: your target)" },
+  { "/wrek threat tanks", "list the other tanks" },
   { "/wrek threat role", "show why you are or are not seen as the tank" },
   { "/wrek threat resetpos", "put the target-frame % back above the frame" },
   { "/wrek threat config", "threat settings" },
@@ -374,6 +376,22 @@ local function handler(msg)
         off = "never: you get damage-dealer warnings.",
       }
       W.Print("I'm the tank: " .. said[s.tankMode])
+    elseif sub == "cotank" or sub == "cotanks" or sub == "tanks" then
+      -- A name, else the player you have targeted, else the list.
+      local name = a[3]
+      if (not name or name == "") and UnitExists("target") and UnitIsPlayer("target") then
+        name = UnitName("target")
+      end
+      if name and name ~= "" and sub == "cotank" then
+        name = string.upper(string.sub(name, 1, 1)) .. string.lower(string.sub(name, 2))
+        local on = W.threat:ToggleCoTank(name)
+        W.Print(name .. (on and " is marked as a tank: their threat and the mobs they take raise no warnings."
+          or " is no longer marked as a tank."))
+      else
+        local list = W.threat:Settings().coTanks or ""
+        W.Print("other tanks: " .. (list ~= "" and list or "none") ..
+          ".  /wrek threat cotank [name] adds or removes one (no name: your target).")
+      end
     elseif sub == "role" then
       T:ExplainRole()
     elseif sub == "move" or sub == "unlock" or sub == "lock" then
