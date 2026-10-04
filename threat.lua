@@ -602,6 +602,44 @@ function T:ParseThreat(text, now)
   return rows
 end
 
+--[[ The other tanks: names in Settings -> Threat -> Co-tanks (or marked
+     with /wrek threat cotank, or a right-click in the threat window).
+
+     A raid with three or four tanks has them trading mobs and taunting
+     bosses off each other all night. None of that is a tank losing a mob:
+     a mob on a co-tank is held, a co-tank close to your threat is a swap
+     being set up, and a mob that turns to one is not a taunt you owe. So
+     wherever a warning, the taunt bar or a mob frame asks "who is it on"
+     or "who is next", a co-tank's name is passed over. ]]
+local coTankList, coTankFor = {}, nil
+function T:IsCoTank(name)
+  if not name then return false end
+  local raw = self:Settings().coTanks or ""
+  if raw ~= coTankFor then
+    coTankFor = raw
+    coTankList = {}
+    for n in string.gfind(raw, "[^,%s]+") do coTankList[string.lower(n)] = true end
+  end
+  return coTankList[string.lower(name)] or false
+end
+
+--- Add or remove a co-tank by name. Returns whether they are one now.
+function T:SetCoTank(name, on)
+  if not name or name == "" then return false end
+  local s = self:Settings()
+  local keep, low = {}, string.lower(name)
+  for n in string.gfind(s.coTanks or "", "[^,%s]+") do
+    if string.lower(n) ~= low then table.insert(keep, n) end
+  end
+  if on then table.insert(keep, name) end
+  s.coTanks = table.concat(keep, ", ")
+  return on and true or false
+end
+
+function T:ToggleCoTank(name)
+  return self:SetCoTank(name, not self:IsCoTank(name))
+end
+
 --- Parse tank mode's "TMTv1=creature:lowGuid:runnerUp:perc;..." into the
 --- set of mobs you hold, entries updated in place.
 function T:ParseTankMode(text, now)
@@ -622,6 +660,11 @@ function T:ParseTankMode(text, now)
       -- they are in melee range. Melee is the closer line, so it is the one
       -- assumed: a warning a little early beats one a little late.
       m.pull = m.perc / T.PULL_MELEE * 100
+      -- The runner-up is another tank: a swap, not a threat. The server
+      -- names only the closest one, so there is no one behind them to
+      -- measure instead; the mob reads as safely held.
+      m.coTank = self:IsCoTank(name) or nil
+      if m.coTank then m.perc, m.pull = 0, 0 end
       seen[low] = true
     end
   end
@@ -773,8 +816,9 @@ end
 function T:Runner(cur)
   cur = cur or self.current
   if not cur then return nil end
+  -- The closest one who is not tanking it and not one of the other tanks.
   for _, r in ipairs(cur.rows) do
-    if not r.tank then return r end
+    if not r.tank and not self:IsCoTank(r.name) then return r end
   end
   return nil
 end
@@ -881,11 +925,17 @@ end
 
 --- A mob a tank held has turned away. Said once, and marked on its plate.
 function T:LostAggro(key, mobName, toName, now, guid)
+  guid = guid or (type(key) == "number" and self.guidByLow[key]) or nil
+  -- Tank mode only says the mob left; ask it who it went to.
+  if not toName and guid and UnitExists and UnitExists(guid .. "target") then
+    toName = UnitName(guid .. "target")
+  end
+  -- Taken by another tank (a swap, a taunt off you): nothing was lost.
+  if toName and self:IsCoTank(toName) then return end
   local last = self.lost[key]
   if last and now - last < LOST_SHOW then return end
   self.lost[key] = now
   self.fired["tank:" .. tostring(key)] = nil
-  guid = guid or (type(key) == "number" and self.guidByLow[key]) or nil
   self:QueueTaunt(guid, mobName, toName, "lost")
   if not self:Settings().warnLostAggro then return end
   local text = "LOST AGGRO: " .. (mobName or "a mob")
@@ -1062,16 +1112,7 @@ local LOOSE_CONFIRM = 1.0
 T.watch = {}         -- guid -> { state, who, name, since, at, confirmed }
 T.guidByLow = {}     -- low 16 bits -> full guid, for every mob seen
 
-local coTankList, coTankFor = {}, nil
-local function isCoTank(name)
-  local raw = T:Settings().coTanks
-  if raw ~= coTankFor then
-    coTankFor = raw
-    coTankList = {}
-    for n in string.gfind(raw, "[^,%s]+") do coTankList[string.lower(n)] = true end
-  end
-  return name and coTankList[string.lower(name)] or false
-end
+local isCoTank = function(name) return T:IsCoTank(name) end
 
 --- Look at one mob, by guid, and return "loose" / "onme" once confirmed.
 --[[ id is the mob's guid, or -- without SuperWoW -- a key from the group

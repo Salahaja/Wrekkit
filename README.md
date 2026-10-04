@@ -210,8 +210,16 @@ watched:
   `LOOSE` blinking on its plate, a *Loose* section in the window naming who
   it is on, an alert -- **"LOOSE: Whelp on Mendy"** -- and the flash. The
   one-second wait is so a mob throwing one fireball at a priest is not
-  called loose. Name your co-tanks under *Co-tanks* and their mobs are left
-  alone.
+  called loose.
+- **Other tanks**: with three or four tanks trading mobs and taunting the
+  boss off each other, none of that is a tank losing a mob. Mark the other
+  tanks and Wrekkit treats them as tanks: a mob on one is held, a mob taunted
+  off you by one is not *LOST* and not offered on the Taunt bar, and one of
+  them close to your threat is not a runner-up warning or a flash (the next
+  non-tank is measured instead). Mark them by right-clicking their name in
+  the threat window, with `/wrek threat cotank` (your target, or a name), or
+  under *Co-tanks* in Settings -> Threat. `/wrek threat tanks` lists them,
+  and they show as *(tank)* in the threat window.
 
 **With or without SuperWoW.** Mobs are found two ways. Every client can
 ask what each member of the group is targeting, and what *that* mob is
