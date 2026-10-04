@@ -14,6 +14,9 @@
   - If you never changed the old 60-pull limit, it moves to no limit automatically.
   - Locked pulls are kept however old they are.
 
+## New
+- **Dispels per fight.** The report window has a **Dispels** tab. Pick one fight, several, or the whole session to see who dispelled how many times. Click a player to see which spells they dispelled. That breakdown is only recorded from this version on; older fights show the counts only.
+
 ## Install
 
 Download `Wrekkit-0.8.3.zip` and extract it into `<your client>\Interface\AddOns\`. You should end up with `Interface\AddOns\Wrekkit\Wrekkit.toc`. Do **not** use the "Source code" links. **Fully restart the client** after installing. `/wrek status` should then report **v0.8.3**.

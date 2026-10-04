@@ -25,6 +25,7 @@ R.tabs = {
   { key = "healing", label = "Healing", metric = "healing" },
   { key = "taken", label = "Taken", metric = "taken" },
   { key = "enemies", label = "Enemies", metric = "enemy" },
+  { key = "dispels", label = "Dispels", metric = "dispels" },
   { key = "deaths", label = "Deaths" },
 }
 
@@ -281,7 +282,7 @@ function R:Create()
   if not W.db.report then W.db.report = { point = "CENTER", x = 0, y = 0, w = 900, h = 600 } end
 
   local f = UI.Window("WrekkitReport", W.db.report.w, W.db.report.h, "Wrekkit", {
-    minW = 620, minH = 400,
+    minW = 680, minH = 400,
     -- Above the live meter: they overlap constantly, and the meter is the
     -- one you want behind.
     strata = "HIGH",

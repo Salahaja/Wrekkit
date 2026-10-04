@@ -75,6 +75,7 @@ local function newActor(guid, u)
     healAbility = {},   -- spellId -> { name, amount, over, hits, crits }
     takenAbility = {},  -- spellId -> { name, amount, hits, max }
     consumeItem = {},   -- itemId  -> { name, amount = times used }
+    dispelAbility = {}, -- spellId -> { name, amount = times }
   }
 end
 
@@ -861,10 +862,19 @@ function E:Miss(casterGuid, targetGuid, spellId, missInfo)
   row.missBy[code] = (row.missBy[code] or 0) + 1
 end
 
+--- Someone removed an effect. Counted per spell as well as in total, so
+--- clicking a healer's dispels says what they were, not only how many.
 function E:Dispel(casterGuid, targetGuid, spellId)
   if not self.live then return end
   local src = self:Actor(casterGuid)
-  if src then src.dispels = src.dispels + 1 end
+  if not src then return end
+  src.dispels = src.dispels + 1
+  if not src.dispelAbility then src.dispelAbility = {} end
+  local name = W.capture:Spell(spellId)
+  local row = abilityRow(src.dispelAbility, spellId or 0, name)
+  row.amount = row.amount + 1
+  row.hits = row.hits + 1
+  if name then row.name = name end
 end
 
 function E:Environmental(guid, damageType, damage, absorb, resist)
@@ -1623,6 +1633,7 @@ function E:Persist(enc)
       healAbility = keepDetail and topAbilities(a.healAbility, limit) or nil,
       takenAbility = keepDetail and topAbilities(a.takenAbility, limit) or nil,
       consumeItem = keepDetail and topAbilities(a.consumeItem, limit) or nil,
+      dispelAbility = (a.dispels or 0) > 0 and topAbilities(a.dispelAbility, limit) or nil,
     }
   end
 

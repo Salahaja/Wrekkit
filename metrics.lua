@@ -131,6 +131,7 @@ M.list = {
     key = "dispels", label = "Dispels", short = "DISP", side = "player",
     value = function(r) return r.dispels end,
     sub = function(r) return tostring(r.dispels) end,
+    detail = "dispelAbility",
     integer = true,
   },
   {
