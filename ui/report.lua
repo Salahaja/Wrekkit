@@ -29,7 +29,7 @@ R.tabs = {
   { key = "deaths", label = "Deaths" },
 }
 
-R.state = { tab = "summary", selected = {}, sessionIndex = 1, search = "",
+R.state = { tab = "summary", selected = {}, sessionIndex = 1, sessionId = nil, search = "",
             petMode = "merge", sortKey = nil, drill = nil, drillAbility = nil,
             groupOnly = false, pickedOnly = false }
 
@@ -41,14 +41,44 @@ local function encKey(enc)
   return tostring(enc.sessionId) .. ":" .. tostring(enc.id)
 end
 
+--[[ The session on screen, held by its id rather than its place in the list.
+
+     The list is newest-first, so the place of every session moves down one
+     the moment a new one starts -- a new zone, or the first pull after a
+     break. Held by place, the window went on showing "the second session",
+     which was now a different night, and the pulls picked in it no longer
+     matched anything, so it fell back to the whole session. That is the
+     window changing what it showed by itself.
+
+     Nothing chosen yet means "the newest", and follows it. Choosing a
+     session, or picking pulls in one, pins it by id. A pinned session that
+     is no longer stored (older than the history keeps) falls back to the
+     newest, and the stale picks are dropped. ]]
 function R:Session()
   local sessions = W.report:Sessions()
   self.sessions = sessions
-  local s = sessions[self.state.sessionIndex]
-  if not s then
-    self.state.sessionIndex = 1
-    s = sessions[1]
+  local st = self.state
+  local s
+  if st.sessionId ~= nil then
+    for i, cand in ipairs(sessions) do
+      if cand.id == st.sessionId then s = cand st.sessionIndex = i break end
+    end
+    if not s then
+      st.sessionId = nil
+      st.selected = {}
+      st.scope = nil
+      st.drill = nil
+    end
   end
+  if not s then
+    s = sessions[st.sessionIndex]
+    if not s then
+      st.sessionIndex = 1
+      s = sessions[1]
+    end
+  end
+  -- Picking pulls pins the session they were picked in.
+  if s and next(st.selected) ~= nil then st.sessionId = s.id end
   return s
 end
 
@@ -584,6 +614,7 @@ function R:SessionMenu()
   end
   UI.Menu(self.frame, self.sessionBtn, items, function(value)
     self.state.sessionIndex = value
+    self.state.sessionId = sessions[value] and sessions[value].id or nil
     self.state.selected = {}
     self:Refresh()
   end, SIDEBAR - 12)

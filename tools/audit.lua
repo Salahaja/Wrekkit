@@ -1954,6 +1954,7 @@ step("report drilldown repaints", function()
 
   local function drill(sessionIndex)
     W.ui.report.state.sessionIndex = sessionIndex
+    W.ui.report.state.sessionId = nil
     W.ui.report.state.tab = "damage"
     W.ui.report.state.drill = nil
     W.ui.report.state.drillAbility = nil
@@ -1991,6 +1992,7 @@ step("report drilldown repaints", function()
   local r = W.ui.report.mainList.rows[1]
   if r and r:GetScript("OnClick") then r:GetScript("OnClick")() end
   W.ui.report.state.sessionIndex = 1
+  W.ui.report.state.sessionId = nil
   W.ui.report.state.drill = nil
   W.ui.report.state.drillAbility = nil
   W.ui.report.state.tab = "summary"

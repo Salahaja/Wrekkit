@@ -1,12 +1,13 @@
-**The timeline fits the fight you picked.**
+**The report stays on what you picked.**
 
 ## Fixed
-- **Timeline for one fight.** Clicking a single fight used to draw it on the whole night's time axis, so a 3-minute boss was squeezed into a sliver at the far right of a chart several hours wide. The axis now starts at the first fight you picked, so a single fight fills the chart and 0:00 is the pull. Deaths and the hover detail line up with it.
-- With several fights picked, the axis starts at the first one and keeps the gaps between them as they were.
+- **The report changed what it was showing by itself.** The window remembered which session you were viewing by its place in a newest-first list. When a new session began (a new zone, or the first pull after a long break), every older session moved down one place. The window then showed a different night, and the fights you had picked no longer matched, so it fell back to "All encounters".
+
+  It now remembers the session itself. Picking fights, or choosing a session from the menu, keeps you there until you change it. Until you pick something, it follows the newest session as before.
 
 ## Install
 
-Download `Wrekkit-0.8.4.zip` and extract it into `<your client>\Interface\AddOns\`. You should end up with `Interface\AddOns\Wrekkit\Wrekkit.toc`. Do **not** use the "Source code" links. **Fully restart the client** after installing. `/wrek status` should then report **v0.8.4**.
+Download `Wrekkit-0.8.5.zip` and extract it into `<your client>\Interface\AddOns\`. You should end up with `Interface\AddOns\Wrekkit\Wrekkit.toc`. Do **not** use the "Source code" links. **Fully restart the client** after installing. `/wrek status` should then report **v0.8.5**.
 
 ## Requirements
 
