@@ -502,6 +502,31 @@ step("finished pulls are aggregated once, not on every refresh", function()
   if whileLive ~= 6 then error("a pull still being recorded was cached") end
 end)
 
+step("a row's ability detail is built on first use and still adds up", function()
+  local list = {}
+  for _, e in ipairs(Wrekkit.db.encounters) do table.insert(list, e) end
+  local view = Wrekkit.report:View(list, { petMode = "merge" })
+  local row
+  for _, r in ipairs(view.rows) do if r.isPlayer and r.damage > 0 then row = r break end end
+  if not row then error("no player row with damage") end
+  if rawget(row, "dmgAbility") ~= nil then error("detail was built eagerly") end
+  -- Saved pulls keep each actor's top abilities only, so compare with
+  -- what the row's own actors hold rather than with the row's total.
+  local src = rawget(row, "_src")
+  if not src then error("the row kept no sources to build detail from") end
+  local want = 0
+  for i = 1, table.getn(src), 2 do
+    Wrekkit.report.eachAbility(src[i].dmgAbility, function(_, ab) want = want + (ab.amount or 0) end)
+  end
+  local sum = 0
+  for _, a in pairs(row.dmgAbility) do sum = sum + (a.amount or 0) end
+  if want <= 0 or math.abs(sum - want) > 0.5 then
+    error(string.format("abilities add to %d, the actors hold %d", sum, want))
+  end
+  if rawget(row, "_src") ~= nil then error("sources kept after the detail was built") end
+  if type(row.auras) ~= "table" then error("auras missing after build") end
+end)
+
 step("reopening the report does not re-aggregate the session", function()
   UI.report:Show()
   UI.report.state.tab = "summary"

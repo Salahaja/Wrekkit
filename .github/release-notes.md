@@ -15,6 +15,7 @@
   - Finished fights are now added up once and reused until they change. Opening the report is about 15 times cheaper.
   - While you drag a window's resize grip, it now redraws at most ten times a second, with one final redraw when you let go.
   - Bars that have not moved are no longer re-anchored on every repaint.
+- **Less garbage in combat, so fewer freezes.** The meter rebuilds the live fight twice a second, and each rebuild copied every player's per-ability and per-buff tables. Only a click into a player's breakdown ever reads them. They are now built only when something asks for them, which cuts the meter's in-combat garbage by about two thirds. Each cleanup of that garbage froze the game for 70–90 ms.
 
 ## Note
 Without SuperWoW, a mob nobody in your group has targeted stays unseen, and taunting a mob changes your target. SuperWoW is still recommended.

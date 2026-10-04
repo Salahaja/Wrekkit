@@ -116,8 +116,10 @@ R.eachAbility = eachAbility
 -- merging
 ----------------------------------------------------------------------
 
+local lazyDetail = {}
+
 local function blankRow(a, key)
-  return {
+  return setmetatable({
     key = key,
     name = a.name or "?",
     class = a.class or "UNKNOWN",
@@ -127,9 +129,9 @@ local function blankRow(a, key)
     damage = 0, taken = 0, healing = 0, overheal = 0, absorbed = 0,
     deaths = 0, dispels = 0, interrupts = 0,
     hits = 0, crits = 0, misses = 0, consumes = 0, active = 0,
-    auras = {},
-    dmgAbility = {}, healAbility = {}, takenAbility = {}, consumeItem = {},
-  }
+    -- auras and the four ability tables are built on first use; see
+    -- lazyDetail below.
+  }, lazyDetail)
 end
 
 local function addAbilities(dst, src)
@@ -217,6 +219,57 @@ local function addAuras(row, auras, enc)
       add(id, au.name, W.encounter:AuraSeconds(enc, au), au.applied)
     end
   end
+end
+
+--[[ A row's detail -- its buffs and its per-ability tables -- is built
+     the first time something asks for it, not with the row.
+
+     Building it means copying every ability of every actor, and the meter
+     rebuilds the view of a pull in progress twice a second. Over a raid
+     fight that was over a megabyte of throwaway tables a second, nearly
+     all of it detail that only a drilldown or the uptime metric ever reads,
+     and 1.12 pays for garbage with stop-the-world collections. The row
+     keeps the actors it was summed from (_src, actor and pull in pairs)
+     and fills the tables in from them on first touch. ]]
+local DETAIL = { auras = true, dmgAbility = true, healAbility = true,
+                 takenAbility = true, consumeItem = true }
+
+lazyDetail.__index = function(row, k)
+  if not DETAIL[k] then return nil end
+  local src = rawget(row, "_src") or {}
+  setmetatable(row, nil)
+  row._src = nil
+  row.auras = {}
+  row.dmgAbility, row.healAbility, row.takenAbility, row.consumeItem = {}, {}, {}, {}
+  for i = 1, table.getn(src), 2 do
+    local a, enc = src[i], src[i + 1]
+    addAuras(row, a.auras, enc)
+    addAbilities(row.dmgAbility, a.dmgAbility)
+    addAbilities(row.healAbility, a.healAbility)
+    addAbilities(row.takenAbility, a.takenAbility)
+    addAbilities(row.consumeItem, a.consumeItem)
+  end
+  return row[k]
+end
+
+local function addDetail(row, a, enc)
+  local src = rawget(row, "_src")
+  if not src then
+    if getmetatable(row) ~= lazyDetail then
+      -- Detail already built (a remote-only row touched early): add now.
+      addAuras(row, a.auras, enc)
+      addAbilities(row.dmgAbility, a.dmgAbility)
+      addAbilities(row.healAbility, a.healAbility)
+      addAbilities(row.takenAbility, a.takenAbility)
+      addAbilities(row.consumeItem, a.consumeItem)
+      return
+    end
+    src = {}
+    row._src = src
+  end
+  local n = table.getn(src)
+  src[n + 1] = a
+  src[n + 2] = enc
 end
 
 --- Build one merged view over a set of encounter records.
@@ -344,12 +397,7 @@ function R:View(encounters, opts)
 
       -- Buff uptime sums across pulls the same way damage does, so "flask
       -- up for 92% of the night" is answerable rather than only per pull.
-      addAuras(row, a.auras, enc)
-
-      addAbilities(row.dmgAbility, a.dmgAbility)
-      addAbilities(row.healAbility, a.healAbility)
-      addAbilities(row.takenAbility, a.takenAbility)
-      addAbilities(row.consumeItem, a.consumeItem)
+      addDetail(row, a, enc)
 
       -- A player row that was created by a pet first has no class yet.
       if row.class == "UNKNOWN" and a.isPlayer and a.class ~= "UNKNOWN" then
