@@ -135,6 +135,7 @@ local RULES = {
     { pattern = "table%.maxn",     msg = "table.maxn is Lua 5.1+ - not available in vanilla 1.12" },
     { pattern = "select%(",        msg = "select() is Lua 5.1+ - in 5.0 varargs arrive as the `arg` table" },
     { pattern = "os%.exit",        msg = "os.exit is not exposed to WoW addons" },
+    { pattern = "coroutine%.",     msg = "the coroutine library is not exposed in 1.12 (it arrived with 2.0) - keep an explicit stack and do a slice per frame" },
     -- WoW API that postdates 1.12.
     { pattern = "hooksecurefunc",     msg = "hooksecurefunc() does not exist in 1.12 - save the old function and call it yourself" },
     { pattern = ":SetShown%(",        msg = "SetShown() does not exist in 1.12 - use :Show()/:Hide()" },

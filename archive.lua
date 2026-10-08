@@ -48,7 +48,7 @@ A.loaded = nil
 local function num(n)
   if n ~= n or n == math.huge or n == -math.huge then return "0" end
   if n == math.floor(n) and n > -1e15 and n < 1e15 then
-    return string.format("%d", n)
+    return string.format("%.0f", n)   -- the client's %d is 32-bit
   end
   return string.format("%.10g", n)
 end
@@ -62,7 +62,10 @@ local function str(s)
   end) .. '"'
 end
 
-local function ser(v, out, depth, tick)
+local MAXDEPTH = 24
+
+-- A scalar, or "nil" for anything else (a table past MAXDEPTH included).
+local function scalar(v, out)
   local t = type(v)
   if t == "number" then
     table.insert(out, num(v))
@@ -70,33 +73,78 @@ local function ser(v, out, depth, tick)
     table.insert(out, str(v))
   elseif t == "boolean" then
     table.insert(out, v and "true" or "false")
-  elseif t == "table" and depth < 24 then
-    table.insert(out, "{")
-    for k, x in pairs(v) do
-      local kt, xt = type(k), type(x)
-      local keep = (kt == "number" or kt == "string")
-        and (xt == "number" or xt == "string" or xt == "boolean" or xt == "table")
-        -- Scratch fields some views write onto what they read.
-        and not (kt == "string" and string.sub(k, 1, 1) == "_")
-      if keep then
-        table.insert(out, "[")
-        if kt == "number" then table.insert(out, num(k)) else table.insert(out, str(k)) end
-        table.insert(out, "]=")
-        ser(x, out, depth + 1, tick)
-        table.insert(out, ",")
-        if tick then tick() end
-      end
-    end
-    table.insert(out, "}")
   else
     table.insert(out, "nil")
   end
 end
 
+local function keep(k, x)
+  local kt, xt = type(k), type(x)
+  return (kt == "number" or kt == "string")
+    and (xt == "number" or xt == "string" or xt == "boolean" or xt == "table")
+    -- Scratch fields some views write onto what they read.
+    and not (kt == "string" and string.sub(k, 1, 1) == "_")
+end
+
+--[[ A table as text, in pieces that can stop and pick up again.
+
+     The 1.12 client has no coroutine library (it came with 2.0), so the
+     walk keeps its own stack instead of recursing. Each table's keys are
+     taken when it is opened: next() over a table that gains a key between
+     frames is undefined, and views do write scratch fields onto a pull. ]]
+local function open(w, t, depth)
+  table.insert(w.out, "{")
+  local keys = {}
+  for k, x in pairs(t) do
+    if keep(k, x) then table.insert(keys, k) end
+  end
+  table.insert(w.stack, { t = t, keys = keys, i = 0, depth = depth })
+end
+
+local function writer(v)
+  local w = { out = {}, stack = {} }
+  if type(v) == "table" then open(w, v, 0) else scalar(v, w.out) end
+  return w
+end
+
+-- Write up to `budget` entries (all of them when nil). True once done.
+local function advance(w, budget)
+  local out, stack = w.out, w.stack
+  while true do
+    local n = table.getn(stack)
+    local f = stack[n]
+    if not f then return true end
+    f.i = f.i + 1
+    local k = f.keys[f.i]
+    if k == nil then
+      table.insert(out, "}")
+      table.remove(stack)
+      if n > 1 then table.insert(out, ",") end
+    else
+      local x = f.t[k]
+      if keep(k, x) then
+        table.insert(out, "[")
+        if type(k) == "number" then table.insert(out, num(k)) else table.insert(out, str(k)) end
+        table.insert(out, "]=")
+        if type(x) == "table" and f.depth + 1 < MAXDEPTH then
+          open(w, x, f.depth + 1)
+        else
+          scalar(x, out)
+          table.insert(out, ",")
+        end
+        if budget then
+          budget = budget - 1
+          if budget <= 0 then return false end
+        end
+      end
+    end
+  end
+end
+
 function A.Serialize(rec)
-  local out = {}
-  ser(rec, out, 0)
-  return table.concat(out)
+  local w = writer(rec)
+  advance(w)
+  return table.concat(w.out)
 end
 
 -- Text back into a table, in an empty environment: the file holds data,
@@ -278,8 +326,8 @@ end
 --[[ Add a finished pull to its file, a little each frame.
 
      Turning a forty-player pull into text is tens of milliseconds in one
-     go -- a hitch at the end of every fight. So it is done by a coroutine
-     that does a slice per frame, and the file is written when it is done.
+     go -- a hitch at the end of every fight. So the writer above does a
+     slice per frame, and the file is written when it is done.
      Until then the pull is simply still in SavedVariables (unmarked), which
      is also what happens if the session ends first: the next login writes
      it. ]]
@@ -307,23 +355,15 @@ local function step()
       W.After(0.01, function() W.Guard("archive", step) end, "archivePump")
       return
     end
-    local co = coroutine.create(function()
-      local out, n = {}, 0
-      ser(rec, out, 0, function()
-        n = n + 1
-        if n >= SLICE then n = 0 coroutine.yield() end
-      end)
-      return table.concat(out)
-    end)
-    job = { rec = rec, co = co }
+    job = { rec = rec, w = writer(rec) }
     A.job = job
   end
-  local ok, body = coroutine.resume(job.co)
+  local ok, done = pcall(advance, job.w, SLICE)
   if not ok then
     A.job = nil                       -- leave it unmarked: the next login retries
-  elseif coroutine.status(job.co) == "dead" then
+  elseif done then
     A.job = nil
-    if A:Active() then commit(job.rec, body) end
+    if A:Active() then commit(job.rec, table.concat(job.w.out)) end
   end
   if A.job or table.getn(A.queue) > 0 then
     W.After(0.01, function() W.Guard("archive", step) end, "archivePump")
