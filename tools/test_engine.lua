@@ -3332,6 +3332,57 @@ Wrekkit.db.archives = {}
 end)()
 
 ----------------------------------------------------------------------
+print("\n-- a pull lasts while the group fights --")
+----------------------------------------------------------------------
+do
+-- You leave combat (dead, or done) while the raid fights on. The pull has
+-- to keep going: ending it on your own REGEN_ENABLED cut the rest of the
+-- fight into sub-6-second scraps, and every one of them was dropped.
+local realUAC, realRaid = UnitAffectingCombat, GetNumRaidMembers
+local fighting = { player = true, raid2 = true }
+UnitAffectingCombat = function(unit) return fighting[unit] end
+GetNumRaidMembers = function() return 2 end
+local E = Wrekkit.encounter
+local ticker = function() E:HealStuckCombat() end
+
+advance(10)
+local before = table.getn(Wrekkit.db.encounters)
+fire("PLAYER_REGEN_DISABLED")
+for _ = 1, 10 do E:Damage("0xP1", "0xBoss", 11267, 100, {}) advance(1) ticker() end
+
+fighting.player = nil
+E:LeftCombat()
+check("you leaving combat does not end the pull", E.inCombat, true)
+for _ = 1, 20 do E:Damage("0xP1", "0xBoss", 11267, 100, {}) advance(1) ticker() end
+check("  nor does the ticker, while the raid fights", E.live ~= nil and E.inCombat, true)
+check("  and combat time keeps counting", E:CombatTime(E.live), 30, 0.01)
+
+fighting.raid2 = nil
+advance(1)
+ticker()
+check("the pull ends once nobody is fighting", E.inCombat, false)
+advance(6)
+E:Finish()
+check("  one pull, not scraps", table.getn(Wrekkit.db.encounters), before + 1)
+local rec = Wrekkit.db.encounters[table.getn(Wrekkit.db.encounters)]
+check("  with all of the damage", rec and rec.totals.damage, 3000)
+
+-- Solo, leaving combat still ends it straight away.
+GetNumRaidMembers = function() return 0 end
+fighting.player = true
+advance(10)
+fire("PLAYER_REGEN_DISABLED")
+for _ = 1, 8 do E:Damage("0xP1", "0xBoss", 11267, 100, {}) advance(1) end
+fighting.player = nil
+E:LeftCombat()
+check("solo, leaving combat ends the pull", E.inCombat, false)
+E:Finish()
+
+UnitAffectingCombat, GetNumRaidMembers = realUAC, realRaid
+IN_COMBAT = true
+end
+
+----------------------------------------------------------------------
 print("\n-- saved settings --")
 ----------------------------------------------------------------------
 do

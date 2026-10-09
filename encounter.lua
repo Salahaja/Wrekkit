@@ -1118,6 +1118,45 @@ function E:ReallyInCombat()
   return self.inCombat
 end
 
+--[[ Is anyone in the group fighting -- you, a member, or a pet?
+
+     This, not your own combat, is what bounds a pull. Ending a pull when YOU
+     left combat lost everything the raid did while you were dead or out of
+     it: each event after that opened a pull of its own, the next frame
+     closed it, and at under minTrashDuration it was dropped -- every few
+     seconds, until you were back in. Damage meters bound a fight the same
+     way this does, which is how the two came to disagree.
+
+     Your own state is asked every time, which costs nothing. The rest of the
+     group is a walk over up to 40 units, so that answer is kept for half a
+     second. Members too far away for the client to know about read as out
+     of combat, which keeps someone fighting in another zone from holding a
+     pull open. ]]
+local GROUP_SCAN = 0.5
+local groupAt, groupFighting = nil, false
+
+function E:GroupInCombat()
+  if not UnitAffectingCombat then return self.inCombat end
+  if UnitAffectingCombat("player") or UnitAffectingCombat("pet") then return true end
+  local now = GetTime()
+  if groupAt and now >= groupAt and now - groupAt < GROUP_SCAN then return groupFighting end
+  groupAt = now
+  groupFighting = false
+  local n = GetNumRaidMembers and GetNumRaidMembers() or 0
+  local unit, pet = "raid", "raidpet"
+  if n == 0 then
+    n = GetNumPartyMembers and GetNumPartyMembers() or 0
+    unit, pet = "party", "partypet"
+  end
+  for i = 1, n do
+    if UnitAffectingCombat(unit .. i) or UnitAffectingCombat(pet .. i) then
+      groupFighting = true
+      break
+    end
+  end
+  return groupFighting
+end
+
 function E:CombatTime(enc)
   if not enc then return 0 end
   local c = enc.combat or 0
@@ -1127,19 +1166,19 @@ function E:CombatTime(enc)
        missed REGEN_ENABLED left this extrapolating from combatMark forever,
        so the meter sat in a city counting combat time upward. ]]
   if self.live == enc and self.inCombat and self.combatMark
-      and self:ReallyInCombat() then
+      and self:GroupInCombat() then
     c = c + (GetTime() - self.combatMark)
   end
   return c
 end
 
---- Close a combat segment the client says has ended but we never saw end.
---- Called from the capture ticker; cheap, and it stops a stuck flag from
---- inflating every per-second figure for the rest of the session.
+--- Close a combat segment once nobody in the group is fighting any more.
+--- Called from the capture ticker. This is where a pull normally ends now
+--- that your own REGEN_ENABLED no longer does it while the group fights on,
+--- and it also stops a missed REGEN_ENABLED from leaving the flag stuck.
 function E:HealStuckCombat()
   if not self.inCombat then return end
-  if self:ReallyInCombat() then return end
-  W.Debug("combat flag was stuck; closing the segment")
+  if self:GroupInCombat() then return end
   self:CombatEnd()
 end
 
@@ -1186,6 +1225,13 @@ function E:CombatStart()
   -- Only from here, when a pull is really being recorded: reporting into
   -- a raid while nothing is happening is traffic nobody asked for.
   if W.sync then W.sync:StartLive() end
+end
+
+--- PLAYER_REGEN_ENABLED: YOU are out of combat. The pull ends only if the
+--- rest of the group is too; otherwise HealStuckCombat ends it when they are.
+function E:LeftCombat()
+  if self:GroupInCombat() then return end
+  self:CombatEnd()
 end
 
 function E:CombatEnd()
