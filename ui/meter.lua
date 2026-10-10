@@ -26,9 +26,9 @@ M.defaults = {
   -- every session would be worse, so the choice is remembered.
   shown = true,
   metric = "damage",
-  -- Two metrics at once: the window splits into two lists, `metric` on top
-  -- and `metric2` underneath, each with its own drilldown.
-  split = false,
+  -- Two metrics at once: "off" (one), "stacked" (`metric` on top, `metric2`
+  -- underneath) or "side" (in columns), each list with its own drilldown.
+  splitMode = "off",
   metric2 = "healing",
   segment = "current",
   petMode = "merge",
@@ -197,14 +197,14 @@ function M:Create()
   splitBtn.label:SetText("1+2")
   splitBtn:SetPoint("RIGHT", cogBtn, "LEFT", -2, 0)
   splitBtn:SetScript("OnClick", function()
-    W.Guard("meter split", function() M:SetSplit(not M:Settings().split) end)
+    W.Guard("meter split", function() M:CycleSplit() end)
   end)
   splitBtn:SetScript("OnEnter", function()
     if not GameTooltip then return end
     GameTooltip:SetOwner(splitBtn, "ANCHOR_TOPLEFT")
-    GameTooltip:AddLine("Two metrics")
-    GameTooltip:AddLine("Splits the meter: this metric on top, a second", 0.72, 0.75, 0.8)
-    GameTooltip:AddLine("underneath. Click the lower header to pick it.", 0.72, 0.75, 0.8)
+    GameTooltip:AddLine("Two metrics: " .. (M.SPLIT_LABEL[M:SplitMode()] or ""))
+    GameTooltip:AddLine("Click: one, over and under, side by side.", 0.72, 0.75, 0.8)
+    GameTooltip:AddLine("Click a half's header to pick its metric.", 0.72, 0.75, 0.8)
     GameTooltip:Show()
   end)
   splitBtn:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
@@ -417,6 +417,34 @@ function M:Create()
   head2:Hide()
   self.head2 = head2
 
+  -- Side by side, the first column gets a header of its own, so the two
+  -- columns line up and either metric is a click away.
+  local head1 = CreateFrame("Button", nil, f.body)
+  head1:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+  head1.bg = UI.Fill(head1, W.color.panel, 0.8)
+  head1.label = UI.Text(head1, 10, W.color.text)
+  head1.label:SetPoint("LEFT", head1, "LEFT", 6, 0)
+  head1.right = UI.Text(head1, 10, W.color.textFaint, "RIGHT")
+  head1.right:SetPoint("RIGHT", head1, "RIGHT", -6, 0)
+  head1:SetScript("OnClick", function()
+    if arg1 == "RightButton" then
+      M.drill, M.drillAbility = nil, nil
+      M:Refresh()
+    else
+      W.Guard("metric menu", function() M:MetricMenu(head1) end)
+    end
+  end)
+  head1:Hide()
+  self.head1 = head1
+
+  -- The line between the columns.
+  local divider = f.body:CreateTexture(nil, "ARTWORK")
+  divider:SetTexture(UI.media.white)
+  divider:SetVertexColor(W.color.border[1], W.color.border[2], W.color.border[3], 1)
+  divider:SetWidth(1)
+  divider:Hide()
+  self.divider = divider
+
   local list2 = UI.ScrollList(f.body, s.rowHeight)
   list2:Hide()
   self.list2 = list2
@@ -554,9 +582,17 @@ function M:ApplyLayout()
                  + (showToolbar and px(22) or 0)
                  + footerH
                  + 8                                   -- borders and insets
-    -- Split: two rows in each half, and the second half's header.
-    if self:Split() then chrome = chrome + rowH * 2 + px(16) end
-    f:SetMinResize(px(260), chrome + rowH * 2)
+    -- Over and under: two rows in each half, and the second half's header.
+    -- Side by side: the headers, and room for two columns.
+    local minW = px(260)
+    local mode = self:SplitMode()
+    if mode == "stacked" then
+      chrome = chrome + rowH * 2 + px(16)
+    elseif mode == "side" then
+      chrome = chrome + px(16)
+      minW = px(M.SIDE_MIN_W)
+    end
+    f:SetMinResize(minW, chrome + rowH * 2)
   end
 
   self:Refresh()
@@ -571,64 +607,131 @@ end
 -- two metrics
 ----------------------------------------------------------------------
 
---- Is the meter showing two metrics?
-function M:Split()
-  return self:Settings().split == true and self.list2 ~= nil
+--[[ How many metrics, and how. "off": one. "stacked": two, the second
+     under the first. "side": two in columns, each under its own header.
+     A boolean `split` from before the third option means "stacked". ]]
+local SPLIT_MODES = { off = true, stacked = true, side = true }
+local SPLIT_NEXT = { off = "stacked", stacked = "side", side = "off" }
+local SPLIT_LABEL = { off = "One metric", stacked = "Two: over and under", side = "Two: side by side" }
+M.SPLIT_LABEL = SPLIT_LABEL
+
+-- Columns need room for a name and a number each.
+local SIDE_MIN_W = 400
+M.SIDE_MIN_W = SIDE_MIN_W
+
+function M:SplitMode()
+  local s = self:Settings()
+  -- Checked before splitMode: the defaults have filled that in as "off" by
+  -- now, and an old "on" must not be lost to it.
+  if s.split == true then s.splitMode = "stacked" end
+  s.split = nil
+  if not SPLIT_MODES[s.splitMode or ""] then s.splitMode = "off" end
+  return s.splitMode
 end
 
---- Split the meter into two metrics, or go back to one.
-function M:SetSplit(on)
+--- Is the meter showing two metrics?
+function M:Split()
+  return self.list2 ~= nil and self:SplitMode() ~= "off"
+end
+
+--- One metric, two over and under, or two side by side. `true` and `false`
+--- mean "stacked" and "off", for callers from before the third option.
+function M:SetSplit(mode)
+  if mode == true then mode = "stacked" elseif mode == false or mode == nil then mode = "off" end
+  if not SPLIT_MODES[mode] then mode = "off" end
   local s = self:Settings()
-  s.split = on and true or false
+  s.splitMode, s.split = mode, nil
   -- The second metric starts as something other than the first.
-  if s.split and s.metric2 == s.metric then
+  if mode ~= "off" and s.metric2 == s.metric then
     s.metric2 = (s.metric == "healing") and "damage" or "healing"
   end
   self.drill2, self.drillAbility2 = nil, nil
+  -- Side by side, widen a window too narrow for two columns.
+  local f = self.frame
+  if mode == "side" and f then
+    local want = math.floor(SIDE_MIN_W * UI.FontScale() + 0.5)
+    if (f:GetWidth() or 0) < want then
+      f:SetWidth(want)
+      if f.SavePosition then f:SavePosition() end
+    end
+  end
   self:ApplyLayout()
   if UI.settings and UI.settings.Refresh then UI.settings:Refresh() end
+end
+
+--- The title-bar button: one, over and under, side by side, in turn.
+function M:CycleSplit()
+  self:SetSplit(SPLIT_NEXT[self:SplitMode()] or "off")
 end
 
 function M:UpdateSplitButton()
   local b = self.splitBtn
   if not b then return end
-  local on = self:Split()
+  local mode = self:SplitMode()
+  local on = (mode ~= "off")
   local c = on and W.color.accent or W.color.textFaint
+  b.label:SetText(mode == "side" and "1||2" or (mode == "stacked" and "1/2" or "1+2"))
   b.label:SetTextColor(c[1], c[2], c[3], 1)
   b.bg:SetVertexColor(W.color.accent[1], W.color.accent[2], W.color.accent[3], on and 0.18 or 0)
 end
 
---[[ Share the space between the lists. Split, each gets half of what is
-     between the toolbar and the footer, the second under its header; not
-     split, the one list has all of it. Heights are worked out here rather
-     than with anchors, because 1.12 cannot anchor to the middle of a span.
-     Run on every layout change and every resize. ]]
+--[[ Share the space between the lists. Stacked, each gets half of the
+     height between the toolbar and the footer, the second under its header.
+     Side by side, each gets half the width, both under a header. One metric,
+     the one list has all of it. Worked out here rather than with anchors,
+     because 1.12 cannot anchor to the middle of a span. Run on every layout
+     change and every resize, and again once the body has its real size. ]]
 function M:LayoutPanes()
   local f = self.frame
   if not f or not self.list2 then return end
   local top, bottom = self.paneTop or 2, self.paneBottom or 16
+  local mode = self:SplitMode()
 
-  if not self:Split() then
+  if mode == "off" then
+    self.head1:Hide()
     self.head2:Hide()
     self.list2:Hide()
+    self.divider:Hide()
     self.list:SetPoint("BOTTOMRIGHT", f.body, "BOTTOMRIGHT", -2, bottom)
     return
   end
 
   local headH = self.headH or 16
   local bodyH = f.body:GetHeight() or 0
+  local bodyW = f.body:GetWidth() or 0
   -- Remembered, so a refresh can tell the window has its real size now:
-  -- laid out before it was first drawn, the body can read as 0 tall.
-  self.layoutBodyH = bodyH
-  local half = math.floor((bodyH - top - bottom - headH) / 2)
-  if half < 1 then half = 1 end
-
-  self.list:SetPoint("BOTTOMRIGHT", f.body, "TOPRIGHT", -2, -(top + half))
+  -- laid out before it was first drawn, the body can read as 0.
+  self.layoutBodyH, self.layoutBodyW = bodyH, bodyW
   self.head2:ClearAllPoints()
   self.head2:SetHeight(headH)
-  self.head2:SetPoint("TOPLEFT", f.body, "TOPLEFT", 0, -(top + half + 1))
-  self.head2:SetPoint("TOPRIGHT", f.body, "TOPRIGHT", 0, -(top + half + 1))
   self.list2:ClearAllPoints()
+
+  if mode == "side" then
+    local half = math.floor((bodyW - 1) / 2)
+    if half < 1 then half = 1 end
+    self.head1:ClearAllPoints()
+    self.head1:SetHeight(headH)
+    self.head1:SetPoint("TOPLEFT", f.body, "TOPLEFT", 0, -top)
+    self.head1:SetPoint("TOPRIGHT", f.body, "TOPLEFT", half, -top)
+    self.list:SetPoint("TOPLEFT", self.head1, "BOTTOMLEFT", 2, -1)
+    self.list:SetPoint("BOTTOMRIGHT", f.body, "BOTTOMLEFT", half - 2, bottom)
+    self.head2:SetPoint("TOPLEFT", f.body, "TOPLEFT", half + 1, -top)
+    self.head2:SetPoint("TOPRIGHT", f.body, "TOPRIGHT", 0, -top)
+    self.divider:ClearAllPoints()
+    self.divider:SetPoint("TOPLEFT", f.body, "TOPLEFT", half, -top)
+    self.divider:SetPoint("BOTTOMLEFT", f.body, "BOTTOMLEFT", half, bottom)
+    self.head1:Show()
+    self.divider:Show()
+  else
+    local half = math.floor((bodyH - top - bottom - headH) / 2)
+    if half < 1 then half = 1 end
+    self.head1:Hide()
+    self.divider:Hide()
+    self.list:SetPoint("BOTTOMRIGHT", f.body, "TOPRIGHT", -2, -(top + half))
+    self.head2:SetPoint("TOPLEFT", f.body, "TOPLEFT", 0, -(top + half + 1))
+    self.head2:SetPoint("TOPRIGHT", f.body, "TOPRIGHT", 0, -(top + half + 1))
+  end
+
   self.list2:SetPoint("TOPLEFT", self.head2, "BOTTOMLEFT", 2, -1)
   self.list2:SetPoint("BOTTOMRIGHT", f.body, "BOTTOMRIGHT", -2, bottom)
   self.head2:Show()
@@ -769,10 +872,13 @@ function M:WindowMenu(anchor)
     { text = "Threat window", value = "threat", checked = threatShown },
     { text = "Announce to chat...", value = "announce" },
     { text = "Meter", header = true },
-    { text = "Two metrics (split)", value = "split", checked = s.split == true },
     { text = "Compact", value = "compact", checked = s.compact == true },
     { text = "Toolbar", value = "toolbar", checked = s.showToolbar ~= false },
     { text = "Lock position", value = "lock", checked = s.locked == true },
+    { text = "Metrics shown", header = true },
+    { text = M.SPLIT_LABEL.off, value = "split:off", checked = M:SplitMode() == "off" },
+    { text = M.SPLIT_LABEL.stacked, value = "split:stacked", checked = M:SplitMode() == "stacked" },
+    { text = M.SPLIT_LABEL.side, value = "split:side", checked = M:SplitMode() == "side" },
     { text = "Log", header = true },
     { text = "Start a new log", value = "reset" },
     { text = "", header = true },
@@ -801,8 +907,8 @@ function M:WindowMenu(anchor)
       W.Print("meter hidden. |cffe0a22c/wrek|r or the minimap button brings it back.")
     elseif value == "report" then
       if UI.report then UI.report:Toggle() end
-    elseif value == "split" then
-      self:SetSplit(not s.split)
+    elseif value and string.sub(value, 1, 6) == "split:" then
+      self:SetSplit(string.sub(value, 7))
     elseif value == "compact" then
       s.compact = not s.compact
       self:ApplyLayout()
@@ -1105,19 +1211,37 @@ function M:RefreshInner()
   -- The second half: its metric and, when drilled in, whose detail it is,
   -- on its header, with its total where the footer would put it.
   if split then
-    if (f.body:GetHeight() or 0) ~= self.layoutBodyH then self:LayoutPanes() end
+    if (f.body:GetHeight() or 0) ~= self.layoutBodyH
+       or (f.body:GetWidth() or 0) ~= self.layoutBodyW then
+      self:LayoutPanes()
+    end
     local o = self:RenderPane(PANES[2], view, segLabel)
     local where = (o.seg ~= segLabel) and ("  |cff9d9d9d" .. o.seg .. "|r") or ""
     self.head2.label:SetText(o.title .. where)
     self.head2.right:SetText(o.footR or "")
   end
 
-  if s.metric == "threat" then return self:RefreshThreat() end
+  local side = split and self:SplitMode() == "side"
+  if s.metric == "threat" then
+    self:RefreshThreat()
+    if side then
+      self.head1.label:SetText("Threat")
+      self.head1.right:SetText("")
+    end
+    return
+  end
   local o = self:RenderPane(PANES[1], view, segLabel)
   f.title:SetText(o.title)
   self:SetSegmentLabel(o.seg)
   self.footL:SetText(o.footL or "")
   self.footR:SetText(o.footR or "")
+  -- Side by side, the first column's header says the same, so the two
+  -- columns read alike; the footer keeps the combat time.
+  if side then
+    local where = (o.seg ~= segLabel) and ("  |cff9d9d9d" .. o.seg .. "|r") or ""
+    self.head1.label:SetText(o.title .. where)
+    self.head1.right:SetText(o.footR or "")
+  end
 end
 
 --[[ The meter as a threat meter: the same rows the threat window draws,

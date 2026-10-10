@@ -610,7 +610,7 @@ step("meter split: two metrics, each with its own drilldown", function()
   local M = UI.meter
   local s = M:Settings()
   s.metric, s.segment = "damage", "overall"
-  M:SetSplit(true)
+  M:SetSplit("stacked")
   if not M:Split() then error("split did not turn on") end
   if not M.head2:IsShown() or not M.list2:IsShown() then error("the second half is not shown") end
   M:Refresh()
@@ -649,11 +649,53 @@ step("meter split: two metrics, each with its own drilldown", function()
   M:ApplyLayout()
   s.compact = false
   M:ApplyLayout()
-  -- The title-bar button turns it off again.
+  -- The title-bar button goes on to side by side: both columns under a
+  -- header each, the window widened to fit them.
+  M.frame:SetWidth(260)
   M.splitBtn:GetScript("OnClick")()
-  if M:Split() or M.head2:IsShown() or M.list2:IsShown() then error("split did not turn off") end
-  s.metric2, s.segment = "healing", "current"
+  if M:SplitMode() ~= "side" then error("the button went to " .. M:SplitMode() .. ", not side by side") end
+  if not M.head1:IsShown() or not M.head2:IsShown() or not M.divider:IsShown() then
+    error("side by side is missing a header or the divider")
+  end
+  if (M.frame:GetWidth() or 0) < M.SIDE_MIN_W then error("the window was not widened for two columns") end
   M:Refresh()
+  if not string.find(M.head1.label:GetText() or "", "Damage", 1, true) then
+    error("the first column's header reads " .. tostring(M.head1.label:GetText()))
+  end
+  -- The first column's header opens its metric menu and backs out of its drilldown.
+  M.drill = M.list.data[1] and M.list.data[1].key
+  M:Refresh()
+  arg1 = "RightButton"
+  M.head1:GetScript("OnClick")()
+  arg1 = nil
+  if M.drill then error("right-click on the first column's header did not back out") end
+  M.head1:GetScript("OnClick")()
+  UI.CloseMenu()
+  M.frame:SetWidth(520)
+  M.frame.OnResize()
+  -- Then back to one metric.
+  M.splitBtn:GetScript("OnClick")()
+  if M:Split() or M.head1:IsShown() or M.head2:IsShown() or M.list2:IsShown() or M.divider:IsShown() then
+    error("the button did not go back to one metric")
+  end
+  -- A saved on/off from before the third option reads as over and under.
+  s.splitMode, s.split = "off", true
+  if M:SplitMode() ~= "stacked" or s.split ~= nil then error("an old split=true was not carried over") end
+  M:SetSplit("off")
+  -- The window menu offers all three.
+  local items
+  local realMenu = UI.Menu
+  UI.Menu = function(_, _, its) items = its end
+  M:WindowMenu(M.frame.bar)
+  UI.Menu = realMenu
+  local modes = 0
+  for _, it in ipairs(items or {}) do
+    if it.value and string.sub(it.value, 1, 6) == "split:" then modes = modes + 1 end
+  end
+  if modes ~= 3 then error("the window menu offers " .. modes .. " layouts, not 3") end
+  M.frame:SetWidth(260)
+  s.metric2, s.segment = "healing", "current"
+  M:ApplyLayout()
 end)
 
 step("meter menus open", function()
