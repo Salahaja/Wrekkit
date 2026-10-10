@@ -304,28 +304,31 @@ function S:Create()
     20, 100, 5,
     function(v) return v .. "%" end)
 
-  check(self, "Class icons",
-    function() return W.db.classIcons == true end,
-    function(v)
-      W.db.classIcons = v and true or false
-      meter:Refresh()
-      if UI.threat and UI.threat.Refresh then UI.threat:Refresh() end
-      if UI.report and UI.report.frame and UI.report.frame:IsShown() then UI.report:Refresh() end
-    end,
-    { "Each player's class icon beside their name,", "in the meter, the report and the threat",
-      "window." })
+  local function redrawAll()
+    meter:Refresh()
+    if UI.threat and UI.threat.Refresh then UI.threat:Refresh() end
+    if UI.report and UI.report.frame and UI.report.frame:IsShown() then UI.report:Refresh() end
+  end
 
-  check(self, "Spec icons where known",
-    function() return W.db.specIcons ~= false end,
+  choice(self, "Icons", UI.ICON_MODES,
+    function() return UI.IconMode() end,
     function(v)
-      W.db.specIcons = v and true or false
-      meter:Refresh()
-      if UI.threat and UI.threat.Refresh then UI.threat:Refresh() end
-      if UI.report and UI.report.frame and UI.report.frame:IsShown() then UI.report:Refresh() end
+      W.db.iconMode = v
+      redrawAll()
     end,
-    { "With class icons on: a player's spec -- Holy,", "Protection, Retribution -- instead of their",
-      "class, where it is known. Specs come from the", "server's talent inspect (ChronicleCompanion's,",
-      "or Wrekkit's own), or a guess from a deep", "talent they cast. Hover a row to see which." })
+    { "Beside each player's name, in the meter, the", "report and the threat window:",
+      "class: their class.  spec: their spec's tree", "(Holy, Protection, Retribution) where it is",
+      "known, else their class.  class + spec: both.", "Specs come from the server's talent inspect,",
+      "or a guess from a deep talent they cast." })
+
+  check(self, "Spec after name",
+    function() return W.db.specNames == true end,
+    function(v)
+      W.db.specNames = v and true or false
+      redrawAll()
+    end,
+    { "The spec as text after each player's name:", "\"Salahaja (Ret)\". A guessed one ends in ?.",
+      "With or without icons." })
 
   check(self, "Fit meter to its rows",
     function() return meter:Settings().fitRows == true end,

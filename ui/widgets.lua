@@ -914,15 +914,57 @@ local CLASS_COORDS = {
 }
 UI.CLASS_COORDS = CLASS_COORDS
 
---- Are class icons on? A setting, off unless asked for.
-function UI.ClassIcons()
-  return W.db and W.db.classIcons == true
+--[[ Which icons a player's row shows, beside the name:
+       off    none
+       class  the class
+       spec   the spec's tree where it is known, else the class
+       both   the class, and the spec's tree beside it where known
+     Saved as iconMode. Before it there were two switches -- classIcons, and
+     specIcons on top of it -- and those are read once into the mode. ]]
+UI.ICON_MODES = {
+  { value = "off", label = "off" },
+  { value = "class", label = "class" },
+  { value = "spec", label = "spec" },
+  { value = "both", label = "class + spec" },
+}
+
+function UI.IconMode()
+  local db = W.db
+  if not db then return "off" end
+  if not db.iconMode then
+    if db.classIcons == true then
+      db.iconMode = (db.specIcons == false) and "class" or "spec"
+    else
+      db.iconMode = "off"
+    end
+  end
+  return db.iconMode
 end
 
---- With class icons on, show a player's spec instead where it is known?
---- On unless switched off.
+--- Any icon at all?
+function UI.ClassIcons()
+  return UI.IconMode() ~= "off"
+end
+
+--- A spec's icon, in place of or beside the class?
 function UI.SpecIcons()
-  return W.db and W.db.specIcons ~= false
+  local m = UI.IconMode()
+  return m == "spec" or m == "both"
+end
+
+--- Show the spec after a player's name, as "Salahaja (Ret)"?
+function UI.SpecNames()
+  return W.db and W.db.specNames == true
+end
+
+--- A player's name with their spec after it, when that is on and known.
+--- A guessed spec carries a "?".
+function UI.WithSpec(name, display)
+  display = display or name
+  if not UI.SpecNames() or not W.talents or not name then return display end
+  local short = W.talents:Short(name)
+  if not short then return display end
+  return display .. " |cff9d9d9d(" .. short .. ")|r"
 end
 
 --- The spec icon for a player, or nil: for SetClass's second argument.
@@ -952,6 +994,10 @@ function UI.Row(parent, height)
   r.icon:SetTexture(CLASS_SHEET)
   r.icon:SetPoint("LEFT", r, "LEFT", 24, 0)
   r.icon:Hide()
+  -- The spec, after the class, when both are shown.
+  r.icon2 = r:CreateTexture(nil, "ARTWORK")
+  r.icon2:SetPoint("LEFT", r.icon, "RIGHT", 2, 0)
+  r.icon2:Hide()
 
   r.name = UI.Text(r, 11, W.color.text, "LEFT")
   r.name:SetPoint("LEFT", r, "LEFT", 26, 0)
@@ -992,21 +1038,24 @@ function UI.Row(parent, height)
     -- it -- or gone, and the name back at the gutter.
     -- A spec's tree icon where the spec is known and spec icons are on;
     -- else the class's.
-    local coords = UI.ClassIcons() and CLASS_COORDS[self._nextClass or ""]
-    local spec = coords and UI.SpecIcons() and self._nextSpec
+    local mode = UI.IconMode()
+    local coords = mode ~= "off" and CLASS_COORDS[self._nextClass or ""]
+    local spec = coords and (mode == "spec" or mode == "both") and self._nextSpec
     self._nextClass, self._nextSpec = nil, nil
     local iconW = 0
+    local size = (self:GetHeight() or 18) - 4
+    if size < 8 then size = 8 end
+    -- The first icon: the spec alone in "spec" mode where known, else the class.
     if coords then
-      local size = (self:GetHeight() or 18) - 4
-      if size < 8 then size = 8 end
+      local alone = (mode == "spec") and spec
+      local tex = alone or CLASS_SHEET
       self.icon:SetWidth(size)
       self.icon:SetHeight(size)
-      local tex = spec or CLASS_SHEET
       if self._iconTex ~= tex then
         self._iconTex = tex
         self.icon:SetTexture(tex)
       end
-      if spec then
+      if alone then
         -- An ability icon, trimmed of its border like the stock buttons.
         self.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
       else
@@ -1016,6 +1065,20 @@ function UI.Row(parent, height)
       iconW = size + 3
     else
       self.icon:Hide()
+    end
+    -- The second: the spec beside the class, in "both" mode where known.
+    if coords and mode == "both" and spec then
+      self.icon2:SetWidth(size)
+      self.icon2:SetHeight(size)
+      if self._icon2Tex ~= spec then
+        self._icon2Tex = spec
+        self.icon2:SetTexture(spec)
+      end
+      self.icon2:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+      self.icon2:Show()
+      iconW = iconW + size + 2
+    else
+      self.icon2:Hide()
     end
     if self._iconW ~= iconW then
       self._iconW = iconW

@@ -76,6 +76,27 @@ function TL:Describe(name)
   return string.format("%s (%d/%d/%d)", sp.tree, sp.points[1], sp.points[2], sp.points[3])
 end
 
+-- Short names, for the spec after a player's name.
+local SHORT = {
+  ["Retribution"] = "Ret", ["Protection"] = "Prot", ["Holy"] = "Holy",
+  ["Arms"] = "Arms", ["Fury"] = "Fury",
+  ["Assassination"] = "Assa", ["Combat"] = "Combat", ["Subtlety"] = "Sub",
+  ["Arcane"] = "Arcane", ["Fire"] = "Fire", ["Frost"] = "Frost",
+  ["Discipline"] = "Disc", ["Shadow"] = "Shadow",
+  ["Balance"] = "Balance", ["Feral Combat"] = "Feral", ["Restoration"] = "Resto",
+  ["Beast Mastery"] = "BM", ["Marksmanship"] = "MM", ["Survival"] = "SV",
+  ["Affliction"] = "Affli", ["Demonology"] = "Demo", ["Destruction"] = "Destro",
+  ["Elemental"] = "Ele", ["Enhancement"] = "Enh",
+}
+
+--- "Ret", or "Ret?" when only guessed; nil when unknown.
+function TL:Short(name)
+  local sp = self:Spec(name)
+  if not sp then return nil end
+  local s = SHORT[sp.tree] or sp.tree
+  return sp.guessed and (s .. "?") or s
+end
+
 --[[ The talent tree icons, by tree name, as the talent frame shows them.
      The server's answer names a tree but sends no icon. ]]
 local TREE_ICONS = {

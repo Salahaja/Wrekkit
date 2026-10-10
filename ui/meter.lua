@@ -1483,6 +1483,7 @@ UI.PICK_TIP = {
 --- marked * when filled from that player's own report, not measured here.
 function UI.RowName(item, pickedOnly)
   local name = item.name or "?"
+  if item.isPlayer then name = UI.WithSpec(item.name, name) end
   if not pickedOnly and (item.isPlayer or item.class == "PET")
      and W.report:IsPicked(item.ownerName or item.name) then
     name = "|cffe0a22c>|r " .. name
