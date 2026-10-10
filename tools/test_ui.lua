@@ -1015,6 +1015,17 @@ step("sizes come from edges: a list that says 194.4 but spans 216 gets 216 bars"
   end
 end)
 
+step("a name with spaces stays on one line", function()
+  local row = UI.Row(UIParent, 22)
+  row:SetWidth(200)
+  row:SetData(1, "Expert Training Dummy (Wolf)", "1.0k", "", 1, { 1, 1, 1 }, 58)
+  -- Given a height as well as a width, the client cuts a long name short
+  -- instead of wrapping it over the rows below.
+  if (row.name:GetHeight() or 0) ~= 22 then
+    error("the name has no one-line height: " .. tostring(row.name:GetHeight()))
+  end
+end)
+
 step("a narrow row never draws its name over its value", function()
   local realScale = Wrekkit.db.fontScale
   Wrekkit.db.fontScale = 0.7
