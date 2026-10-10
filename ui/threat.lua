@@ -227,6 +227,7 @@ function TW.Paint(row, item, index)
   if not r.tank and not r.isMe and T:IsCoTank(r.name) then
     name = name .. " |cff5a9bff(tank)|r"
   end
+  name = UI.WithSpec(r.name, name)
   if r.isMe then name = "|cffe0a22c>|r " .. name end
 
   -- Left-click a player to whisper them their threat; right-click to mark
@@ -267,7 +268,7 @@ function TW.Paint(row, item, index)
   local color = W.ClassColor(r.class)
   if r.isMe and not r.tank then color = T:Color(item.shown) end
 
-  row:SetClass(r.class)
+  row:SetClass(r.class, UI.SpecIconFor(r.name, r.class))
   row:SetData(item._rank, name, value, r.tank and "tank" or T.PctText(item.shown),
     item._frac, color, 40)
 end

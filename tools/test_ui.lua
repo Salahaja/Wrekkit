@@ -378,6 +378,7 @@ dofile("archive.lua")
 dofile("sync.lua")
 dofile("announce.lua")
 dofile("threat.lua")
+dofile("talents.lua")
 dofile("ui/widgets.lua")
 dofile("ui/chart.lua")
 dofile("ui/meter.lua")
@@ -697,11 +698,70 @@ step("font: changes text at once, leaves the numbers, offers pfUI's only with pf
   pfUI = hadPf
 end)
 
+step("icons: off, class, spec, or class + spec", function()
+  local RET = "Interface\\Icons\\Spell_Holy_AuraOfLight"
+  local row = UI.Row(UIParent, 18)
+  row:SetWidth(240)
+  local function paint(spec)
+    row:SetClass("PALADIN", spec)
+    row:SetData(1, "Pempuk", "1.0k", "", 1, { 1, 1, 1 }, 58)
+  end
+  local function nameX() local p = row.name._points[1] return p and p[4] end
+  -- off: nothing.
+  Wrekkit.db.iconMode = "off"
+  paint(RET)
+  if row.icon:IsShown() or row.icon2:IsShown() then error("icons showed with icons off") end
+  -- class: the class, even with the spec known.
+  Wrekkit.db.iconMode = "class"
+  paint(RET)
+  if not row.icon:IsShown() or row.icon:GetTexture() == RET or row.icon2:IsShown() then error("class mode did not show just the class") end
+  -- spec: the spec alone where known...
+  Wrekkit.db.iconMode = "spec"
+  paint(RET)
+  if row.icon:GetTexture() ~= RET or row.icon2:IsShown() then error("spec mode did not show the spec alone") end
+  -- ...the class where not.
+  paint(nil)
+  if not row.icon:IsShown() or row.icon:GetTexture() == RET then error("spec mode with no spec known did not fall back to the class") end
+  -- both: the class, and the spec beside it; the name moves over for both.
+  Wrekkit.db.iconMode = "both"
+  paint(nil)
+  local oneIcon = nameX()
+  paint(RET)
+  if row.icon:GetTexture() == RET or not row.icon2:IsShown() or row.icon2:GetTexture() ~= RET then
+    error("class + spec did not show both")
+  end
+  if not (nameX() > oneIcon) then error("the name did not move over for the second icon") end
+  -- The old switches are read once into the mode.
+  Wrekkit.db.iconMode, Wrekkit.db.classIcons, Wrekkit.db.specIcons = nil, true, false
+  if UI.IconMode() ~= "class" then error("class icons without spec icons did not become class") end
+  Wrekkit.db.iconMode, Wrekkit.db.specIcons = nil, nil
+  if UI.IconMode() ~= "spec" then error("class icons with spec icons did not become spec") end
+  Wrekkit.db.iconMode, Wrekkit.db.classIcons, Wrekkit.db.specIcons = "off", nil, nil
+end)
+
+step("spec after name: as text, guessed ones marked", function()
+  local TL = Wrekkit.talents
+  TL.specs["Pempuk"] = { trees = { { name = "Holy", points = 5 }, { name = "Protection", points = 11 },
+                                   { name = "Retribution", points = 35 } }, at = 1 }
+  TL.specs["Rogue"] = { guess = "Arms", from = "Mortal Strike", at = 1 }
+  Wrekkit.db.specNames = true
+  if UI.WithSpec("Pempuk") ~= "Pempuk |cff9d9d9d(Ret)|r" then error("spec after name read " .. UI.WithSpec("Pempuk")) end
+  if UI.WithSpec("Rogue") ~= "Rogue |cff9d9d9d(Arms?)|r" then error("a guess was not marked: " .. UI.WithSpec("Rogue")) end
+  if UI.WithSpec("Nobody") ~= "Nobody" then error("an unknown spec added text") end
+  -- In the meter's row name, through UI.RowName.
+  if not string.find(UI.RowName({ name = "Pempuk", isPlayer = true }, true), "(Ret)", 1, true) then
+    error("the meter's row name has no spec")
+  end
+  Wrekkit.db.specNames = false
+  if UI.WithSpec("Pempuk") ~= "Pempuk" then error("spec after name stayed on when switched off") end
+  TL.specs = {}
+end)
+
 step("class icons: on player rows when asked for, never stale on a reused row", function()
   local M = UI.meter
   M:Settings().metric, M:Settings().segment = "damage", "overall"
   M.drill, M.drillAbility = nil, nil
-  Wrekkit.db.classIcons = true
+  Wrekkit.db.iconMode = "class"
   M:Refresh()
   local item = M.list.data[1]
   if not item then error("the meter has no rows") end
@@ -722,7 +782,7 @@ step("class icons: on player rows when asked for, never stale on a reused row", 
   if M.list.rows[1].icon:IsShown() then error("an ability row kept a class icon") end
   M.drill = nil
   -- Off: gone, and the name back at the gutter.
-  Wrekkit.db.classIcons = false
+  Wrekkit.db.iconMode = "off"
   M:Refresh()
   if M.list.rows[1].icon:IsShown() then error("class icons stayed after being switched off") end
   local p = M.list.rows[1].name._points[1]

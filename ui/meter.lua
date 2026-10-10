@@ -996,6 +996,9 @@ local function actorTooltip(row, item, metricKey)
 
   GameTooltip:SetOwner(row, "ANCHOR_RIGHT")
   GameTooltip:AddLine(item.name or "?", c[1], c[2], c[3])
+  -- Their spec, inspected or guessed (see talents.lua).
+  local spec = item.isPlayer and W.talents and W.talents:Describe(item.name)
+  if spec then GameTooltip:AddLine(spec, 0.62, 0.65, 0.72) end
   GameTooltip:AddDoubleLine(W.metrics.Label(metric), item._text or "",
     0.78, 0.80, 0.85, 1, 1, 1)
   if item._sub and item._sub ~= "" then
@@ -1060,7 +1063,7 @@ local function makePainters(pane)
 
   local function paintActor(row, item, index)
     local color = item._color or W.ClassColor(item.class)
-    if item.isPlayer then row:SetClass(item.class) end
+    if item.isPlayer then row:SetClass(item.class, UI.SpecIconFor(item.name, item.class)) end
     row:SetData(item._rank, UI.RowName(item, M:Settings().pickedOnly),
       item._text, item._sub, item._frac, color, 58)
     row.tip = function(self) actorTooltip(self, item, metricKey()) end
@@ -1480,6 +1483,7 @@ UI.PICK_TIP = {
 --- marked * when filled from that player's own report, not measured here.
 function UI.RowName(item, pickedOnly)
   local name = item.name or "?"
+  if item.isPlayer then name = UI.WithSpec(item.name, name) end
   if not pickedOnly and (item.isPlayer or item.class == "PET")
      and W.report:IsPicked(item.ownerName or item.name) then
     name = "|cffe0a22c>|r " .. name

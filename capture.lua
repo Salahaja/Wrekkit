@@ -813,6 +813,8 @@ end
      would need constant maintenance and would miss anything this server added
      itself; "did a cast come from an item" is true by construction. ]]
 function C:SPELL_GO(itemId, spellId, casterGuid, targetGuid)
+  -- Every cast: a deep-talent ability says what the caster is specced.
+  if W.talents then W.talents:OnCast(casterGuid, spellId) end
   itemId = num(itemId)
   if itemId == 0 then return end
   W.encounter:Consumable(casterGuid, itemId, num(spellId))

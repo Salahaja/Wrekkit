@@ -736,7 +736,7 @@ local function paintRow(row, item, index)
   local color = item._color or W.ClassColor(item.class)
   -- Marks for picked players and reported numbers; see UI.RowName. The
   -- pane's total line says what the * means.
-  if item.isPlayer then row:SetClass(item.class) end
+  if item.isPlayer then row:SetClass(item.class, UI.SpecIconFor(item.name, item.class)) end
   row:SetData(item._rank, UI.RowName(item, R.state.pickedOnly),
     item._text, item._sub, item._frac, color, 72)
   row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
