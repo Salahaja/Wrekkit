@@ -629,6 +629,39 @@ step("bar style: changes every bar at once, and back to the skin's", function()
   UI.SetBarTexture("skin")
 end)
 
+step("colours apart from the look, and bar opacity", function()
+  local C = Wrekkit.color
+  local keep = {}
+  for _, k in ipairs({ "accent", "accentHi", "text", "textDim" }) do
+    keep[k] = { C[k][1], C[k][2], C[k][3] }
+  end
+  local function near(c, r, g, b) return math.abs(c[1] - r) + math.abs(c[2] - g) + math.abs(c[3] - b) < 0.01 end
+  UI.ApplyColorTheme("pfui")
+  if not near(C.accent, 0.20, 1.00, 0.80) then error("pfUI colours did not give the teal accent") end
+  UI.ApplyColorTheme("blizzard")
+  if not near(C.accent, 1.00, 0.82, 0.00) or not near(C.text, 1, 1, 1) then error("Blizzard colours did not apply") end
+  UI.ApplyColorTheme("modern")
+  if not near(C.accent, 0.878, 0.635, 0.173) then error("modern did not bring the amber back") end
+  UI.ApplyColorTheme("skin")   -- a no-op: the look's own stay
+  for k, c in pairs(keep) do C[k][1], C[k][2], C[k][3] = c[1], c[2], c[3] end
+
+  -- Bar opacity: live, and held to 20-100%.
+  local M = UI.meter
+  Wrekkit.db.barAlpha = 0.9
+  M:Refresh()
+  local row = M.list.rows[1]
+  if row and row:IsShown() and math.abs((row.bar._a or 0) - 0.9) > 0.001 then
+    error("bar opacity did not reach the bars: " .. tostring(row.bar._a))
+  end
+  Wrekkit.db.barAlpha = 5
+  if UI.BarAlpha() ~= 1 then error("bar opacity is not held to 100%") end
+  Wrekkit.db.barAlpha = 0
+  if UI.BarAlpha() ~= 0.2 then error("bar opacity is not held to 20%") end
+  Wrekkit.db.barAlpha = nil
+  if UI.BarAlpha() ~= 0.55 then error("unset, bars are not the looks' 55%") end
+  M:Refresh()
+end)
+
 step("class icons: on player rows when asked for, never stale on a reused row", function()
   local M = UI.meter
   M:Settings().metric, M:Settings().segment = "damage", "overall"
@@ -2629,8 +2662,8 @@ step("dragging the opacity bar changes the setting", function()
   UI.settings:Create()
   local bar
   for _, c in ipairs(UI.settings.controls) do
-    -- The first is the meter's; the threat tab has one of its own.
-    if c.slider and not bar then bar = c end
+    -- The meter's, by name: other tabs have sliders of their own.
+    if c.slider and c.label == "Meter opacity" and not bar then bar = c end
   end
   if not bar then error("no slider was built in the settings window") end
 
@@ -2647,8 +2680,8 @@ end)
 step("the bar refreshes from the setting without writing back", function()
   local bar
   for _, c in ipairs(UI.settings.controls) do
-    -- The first is the meter's; the threat tab has one of its own.
-    if c.slider and not bar then bar = c end
+    -- The meter's, by name: other tabs have sliders of their own.
+    if c.slider and c.label == "Meter opacity" and not bar then bar = c end
   end
 
   UI.meter:Settings().opacity = 0.7
@@ -2672,8 +2705,8 @@ end)
 step("the bar clamps and quantises like the client", function()
   local bar
   for _, c in ipairs(UI.settings.controls) do
-    -- The first is the meter's; the threat tab has one of its own.
-    if c.slider and not bar then bar = c end
+    -- The meter's, by name: other tabs have sliders of their own.
+    if c.slider and c.label == "Meter opacity" and not bar then bar = c end
   end
   bar.slider:SetValue(500)
   if UI.meter:Settings().opacity > 1.0 then error("not clamped high") end

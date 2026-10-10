@@ -102,6 +102,47 @@ function UI.ApplySkin()
   UI.skinBar = UI.media.bar
   local chosen = UI.BarTexturePath(W.db and W.db.barTexture)
   if chosen then UI.media.bar = chosen end
+  UI.ApplyColorTheme(W.db and W.db.colorTheme)
+end
+
+--[[ Colours, apart from the look: Blizzard's gold, pfUI's teal, or the
+     modern amber, with any chrome. Each theme is the accent and the text a
+     look would set; everything else (panels, bars, class colours) is
+     shared. "skin" (or nothing) keeps what the look chose. The modern
+     values are the ones W.color starts with, kept before any look runs. ]]
+local MODERN = {
+  accent = { W.color.accent[1], W.color.accent[2], W.color.accent[3] },
+  accentHi = { W.color.accentHi[1], W.color.accentHi[2], W.color.accentHi[3] },
+  text = { W.color.text[1], W.color.text[2], W.color.text[3] },
+  textDim = { W.color.textDim[1], W.color.textDim[2], W.color.textDim[3] },
+}
+local THEMES = {
+  modern = MODERN,
+  blizzard = { accent = BLIZZ_GOLD, accentHi = { 1, 1, 1 }, text = { 1, 1, 1 },
+               textDim = { 0.82, 0.82, 0.82 } },
+  pfui = { accent = PFUI_ACCENT, accentHi = { 1, 1, 1 }, text = MODERN.text,
+           textDim = MODERN.textDim },
+}
+UI.COLOR_THEMES = {
+  { value = "skin", label = "skin" },
+  { value = "blizzard", label = "Blizzard" },
+  { value = "pfui", label = "pfUI" },
+  { value = "modern", label = "modern" },
+}
+
+function UI.ApplyColorTheme(key)
+  local t = THEMES[key or ""]
+  if not t then return end
+  for name, c in pairs(t) do setColor(W.color[name], c) end
+end
+
+--- How strongly bars are drawn, 0.2-1. The looks all use 0.55; higher is
+--- the solid, flat-colour bar of the pfUI style.
+function UI.BarAlpha()
+  local a = W.db and tonumber(W.db.barAlpha)
+  if not a then return 0.55 end
+  if a < 0.2 then a = 0.2 elseif a > 1 then a = 1 end
+  return a
 end
 
 --[[ The bars' texture, apart from the skin: the flat colour of the pfUI and
@@ -886,7 +927,7 @@ function UI.Row(parent, height)
     local barW = w * (frac or 0)
     if barW < 1 then barW = 1 end
     self.bar:SetWidth(barW)
-    self.bar:SetVertexColor(color[1], color[2], color[3], 0.55)
+    self.bar:SetVertexColor(color[1], color[2], color[3], UI.BarAlpha())
 
     --[[ Give the name every pixel the numbers do not need.
 
@@ -1467,6 +1508,7 @@ function UI.Slider(parent, label, get, set, min, max, step, format)
   step = step or 1
   local f = CreateFrame("Frame", nil, parent)
   f:SetHeight(30)
+  f.label = label
 
   local text = UI.Text(f, 11, W.color.text)
   text:SetPoint("TOPLEFT", f, "TOPLEFT", 0, 0)

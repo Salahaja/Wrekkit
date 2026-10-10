@@ -261,6 +261,32 @@ function S:Create()
     { "The bars' texture, whatever the look: flat", "colour, a smooth shade, or Blizzard's status",
       "bar. skin: whatever the look uses." })
 
+  choice(self, "Colours", UI.COLOR_THEMES,
+    function() return W.db.colorTheme or "skin" end,
+    function(v)
+      if (W.db.colorTheme or "skin") == v then return end
+      W.db.colorTheme = v
+      if StaticPopup_Show and StaticPopupDialogs then
+        StaticPopup_Show("WREKKIT_RELOAD_SKIN")
+      else
+        W.Print("the new colours apply after /reload.")
+      end
+    end,
+    { "The accent and text colours, whatever the", "look: Blizzard gold, pfUI teal or modern",
+      "amber -- pfUI's colours with Blizzard's", "frames, say. skin: the look's own.",
+      "Applies after a /reload." })
+
+  slider(self, "Bar opacity",
+    function() return math.floor(UI.BarAlpha() * 100 + 0.5) end,
+    function(v)
+      W.db.barAlpha = v / 100
+      meter:Refresh()
+      if UI.threat and UI.threat.Refresh then UI.threat:Refresh() end
+      if UI.report and UI.report.frame and UI.report.frame:IsShown() then UI.report:Refresh() end
+    end,
+    20, 100, 5,
+    function(v) return v .. "%" end)
+
   check(self, "Class icons",
     function() return W.db.classIcons == true end,
     function(v)
