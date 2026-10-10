@@ -137,6 +137,11 @@ T.defaults = {
   mobFramesMin = 2,        -- shown from this many mobs
   mobFramesMax = 8,        -- at most this many rows
   mobFramesWidth = 220,    -- pixels; the name column takes what is left
+  -- Clicking the player a mob is hitting, on its row: a spell to cast on
+  -- them, by name, or empty to target them.
+  mobWhoLeft = "",
+  mobWhoRight = "",
+  mobWhoShift = "",
   -- Collapsed, mobs that are fine share one line ("All 10 on you") and
   -- only the ones in trouble get a row.
   mobFramesCollapse = "auto",  -- "auto" | "always" | "never"
@@ -224,6 +229,9 @@ function T:Sanitize(s)
   if type(s.coTanks) ~= "string" then s.coTanks = "" end
   if type(s.coTanksOff) ~= "string" then s.coTanksOff = "" end
   if type(s.tauntSpell) ~= "string" then s.tauntSpell = "" end
+  for _, k in ipairs({ "mobWhoLeft", "mobWhoRight", "mobWhoShift" }) do
+    if type(s[k]) ~= "string" then s[k] = "" end
+  end
   s.tauntX, s.tauntY = tonumber(s.tauntX), tonumber(s.tauntY)
   s.mobsX, s.mobsY = tonumber(s.mobsX), tonumber(s.mobsY)
   s.mobFramesFor = oneOf(s.mobFramesFor, { "tank", "everyone" }, d.mobFramesFor)
@@ -2116,6 +2124,55 @@ function T:Taunt(t)
     self:DismissTaunt(t)
   end
   return cast
+end
+
+--- The unit token for a group member or their pet, by name: you, your pet,
+--- then the raid or party. Nil when they are not in the group.
+function T:UnitFor(name)
+  if not name or name == "" then return nil end
+  if UnitName("player") == name then return "player" end
+  if UnitExists("pet") and UnitName("pet") == name then return "pet" end
+  local n = GetNumRaidMembers and GetNumRaidMembers() or 0
+  local unit, pet = "raid", "raidpet"
+  if n == 0 then
+    n = GetNumPartyMembers and GetNumPartyMembers() or 0
+    unit, pet = "party", "partypet"
+  end
+  for i = 1, n do
+    if UnitName(unit .. i) == name then return unit .. i end
+    if UnitExists(pet .. i) and UnitName(pet .. i) == name then return pet .. i end
+  end
+  return nil
+end
+
+--[[ Act on the player a mob is hitting, from a click on their name in the
+     mob frames: cast `spell` on them, or target them when no spell is set.
+     A healer's way to answer "who has it" with the heal or the bubble.
+
+     With SuperWoW the spell goes straight at them and your target stays.
+     Without, they are targeted, the spell is cast, and your previous target
+     comes back -- a heal cast with a mob targeted would otherwise land on
+     you. Returns whether a cast or a target change went out. ]]
+function T:CastOn(name, spell)
+  local unit = self:UnitFor(name)
+  if not unit then
+    W.Print(tostring(name) .. " is not in your group.")
+    return false
+  end
+  if not spell or spell == "" then
+    return TargetUnit and pcall(TargetUnit, unit) or false
+  end
+  if SpellInfo and CastSpellByName then
+    local ok = pcall(CastSpellByName, spell, unit)
+    if ok then return true end
+  end
+  if not (TargetUnit and CastSpellByName) then return false end
+  local had = UnitExists("target")
+  pcall(TargetUnit, unit)
+  local ok = pcall(CastSpellByName, spell)
+  if had and TargetLastTarget then pcall(TargetLastTarget)
+  elseif not had and ClearTarget then pcall(ClearTarget) end
+  return ok
 end
 
 --- For the keybinding and /wrek taunt.

@@ -39,9 +39,6 @@ local T = W.threat
 
 local ROW_H = 18
 local WIDTH = 220      -- default; the setting is mobFramesWidth
--- Everything on a row but the name: its left inset, the "who" column, the
--- % column and the gaps. The name gets the rest of the row.
-local ROW_FIXED = 112
 local MIN_W, MAX_W = 160, 420
 local UPDATE = 0.2
 
@@ -288,6 +285,31 @@ local function makeRow(parent, i)
   b.pct:SetPoint("RIGHT", b, "RIGHT", -4, 0)
   b.pct:SetWidth(34)
 
+  --[[ The player the mob is hitting is a button of its own, over their
+       name: a healer clicks it to heal, shield or bubble them (the spells
+       are set under Mob frames), or to target them when none is. The rest
+       of the row still targets the mob, and right-click still taunts. ]]
+  b.whoBtn = CreateFrame("Button", nil, b)
+  b.whoBtn:SetFrameLevel(b:GetFrameLevel() + 2)
+  b.whoBtn:SetPoint("TOPRIGHT", b, "TOPRIGHT", -38, 0)
+  b.whoBtn:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", -38, 0)
+  b.whoBtn:SetWidth(66)
+  b.whoBtn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+  -- A faint wash under the mouse says the name is a button of its own.
+  b.whoBtn.hl = UI.Fill(b.whoBtn, W.color.text, 0.1, "HIGHLIGHT")
+  b.whoBtn:SetScript("OnClick", function()
+    local button = arg1
+    W.Guard("mob frame player click", function() MF:ClickWho(b, button) end)
+  end)
+  b.whoBtn:SetScript("OnEnter", function()
+    b.hl:SetVertexColor(1, 1, 1, 0.06)
+    MF:WhoTooltip(b)
+  end)
+  b.whoBtn:SetScript("OnLeave", function()
+    b.hl:SetVertexColor(1, 1, 1, 0)
+    if GameTooltip then GameTooltip:Hide() end
+  end)
+
   b:SetScript("OnEnter", function() b.hl:SetVertexColor(1, 1, 1, 0.06) end)
   b:SetScript("OnLeave", function() b.hl:SetVertexColor(1, 1, 1, 0) end)
   b:SetScript("OnClick", function()
@@ -313,6 +335,9 @@ local function makeRow(parent, i)
       end
     end)
   end)
+  -- Columns at the current width (see MF:Columns).
+  local split, nameW, whoW = MF:Columns()
+  MF.LayoutRow(b, split, nameW, whoW)
   b:Hide()
   return b
 end
@@ -386,18 +411,101 @@ function MF:Create()
   return f
 end
 
+--- Who a row's player button acts on: the player the mob is hitting, you
+--- included, or nil when it is on nobody (or this is a sample).
+local function whoOf(b)
+  local m = b.mob
+  if not m or m.sample or b.summary then return nil end
+  if m.onMe then return UnitName("player") end
+  return m.who
+end
+
+--- What each click on the player does, from the settings.
+local function whoAction(button)
+  local s = T:Settings()
+  if button == "RightButton" then return s.mobWhoRight end
+  if IsShiftKeyDown and IsShiftKeyDown() then return s.mobWhoShift end
+  return s.mobWhoLeft
+end
+
+function MF:ClickWho(b, button)
+  local name = whoOf(b)
+  if not name then
+    -- On nobody: the click means what it means on the rest of the row.
+    local click = b:GetScript("OnClick")
+    if click then
+      local was = arg1
+      arg1 = button
+      click()
+      arg1 = was
+    end
+    return
+  end
+  T:CastOn(name, whoAction(button))
+end
+
+function MF:WhoTooltip(b)
+  local name = whoOf(b)
+  if not name or not GameTooltip then return end
+  local s = T:Settings()
+  local function say(spell) return (spell and spell ~= "") and spell or "target them" end
+  GameTooltip:SetOwner(b.whoBtn, "ANCHOR_TOP")
+  GameTooltip:AddLine(name)
+  GameTooltip:AddDoubleLine("Click", say(s.mobWhoLeft), 0.72, 0.75, 0.8, 1, 1, 1)
+  GameTooltip:AddDoubleLine("Right-click", say(s.mobWhoRight), 0.72, 0.75, 0.8, 1, 1, 1)
+  GameTooltip:AddDoubleLine("Shift-click", say(s.mobWhoShift), 0.72, 0.75, 0.8, 1, 1, 1)
+  GameTooltip:AddLine("Spells: Frames & plates -> Mob frames.", 0.55, 0.58, 0.64)
+  GameTooltip:Show()
+end
+
 --- The stack's width, from the setting.
 function MF:Width()
   return T:Settings().mobFramesWidth or WIDTH
 end
 
---- What a row leaves for the mob's name: the row less its insets and the
---- fixed columns. 104 at the default width.
-function MF:NameWidth()
-  local w = self:Width() - 4 - 2 * (self.pad or 0) - ROW_FIXED
-  if w < 40 then w = 40 end
-  return w
+--[[ A row's columns at frame width `w`: the mob on the left 60% -- its
+     name, then its threat % at the right of that -- and the player it is
+     hitting on the right 40%, the part that is clicked to heal them.
+     Returns the split (from the row's left), the name's width and the
+     player column's width. ]]
+local SPLIT = 0.6
+local PCT_W = 34
+
+function MF:Columns(w)
+  local rowW = (w or self:Width()) - 4 - 2 * (self.pad or 0)
+  local split = math.floor(rowW * SPLIT)
+  local nameW = split - 6 - PCT_W - 6
+  if nameW < 30 then nameW = 30 end
+  local whoW = rowW - split - 4
+  if whoW < 30 then whoW = 30 end
+  return split, nameW, whoW
 end
+
+--- What a row leaves for the mob's name, at the saved width.
+function MF:NameWidth()
+  local _, nameW = self:Columns()
+  return nameW
+end
+
+--- Put one row's columns where `w` puts them.
+local function layoutRow(b, split, nameW, whoW)
+  b.split = split
+  b.nameW = nameW
+  b.pct:ClearAllPoints()
+  b.pct:SetPoint("RIGHT", b, "LEFT", split - 4, 0)
+  -- The player, right up against the row's right edge.
+  b.who:ClearAllPoints()
+  b.who:SetPoint("RIGHT", b, "RIGHT", -4, 0)
+  b.who:SetWidth(whoW)
+  b.whoBtn:ClearAllPoints()
+  b.whoBtn:SetPoint("TOPLEFT", b, "TOPLEFT", split, 0)
+  b.whoBtn:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", 0, 0)
+  -- Re-lay the name, with or without a marker beside it.
+  local mark = b.markShown
+  b.markShown = -1
+  b:SetMark(mark)
+end
+MF.LayoutRow = layoutRow
 
 --- Set the width (dragged, or from settings), within its limits.
 function MF:SetWidth(w)
@@ -423,16 +531,9 @@ function MF:ApplyWidth()
   elseif math.abs((f:GetWidth() or 0) - w) >= 1 then
     f:SetWidth(w)
   end
-  local nameW = w - 4 - 2 * (self.pad or 0) - ROW_FIXED
-  if nameW < 40 then nameW = 40 end
+  local split, nameW, whoW = self:Columns(w)
   for _, b in ipairs(self.rows or {}) do
-    if b.nameW ~= nameW then
-      b.nameW = nameW
-      -- Re-lay the name, with or without a marker beside it.
-      local mark = b.markShown
-      b.markShown = -1
-      b:SetMark(mark)
-    end
+    if b.split ~= split or b.nameW ~= nameW then layoutRow(b, split, nameW, whoW) end
   end
 end
 
