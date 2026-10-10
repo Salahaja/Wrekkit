@@ -1,19 +1,15 @@
-**Show two metrics at once, like damage and healing, over and under or side by side.**
+**Raid markers in the mob window, and a mob window that works for DPS and healers too.**
 
 ## New
-- **Two metrics in the meter.** The **1+2** button on the meter's title bar steps through the layouts:
-  - **1+2:** one metric, as before.
-  - **1/2:** two metrics, one over the other.
-  - **1|2:** two metrics, side by side.
-
-  The second metric starts as Healing. Click a half's header to pick its metric, and right-click it to back out of a drilldown. Each half drills into players and abilities on its own. The layouts are also in the meter's right-click title menu, and under Settings → Metrics in the meter.
-
-## Fixed
-- **Narrow rows no longer draw names over numbers.** A row that's too narrow now drops its per-second column first, then shortens the name.
+- **Raid markers.** A marked mob (skull, cross, star and so on) shows its marker at the left of its row in the mob window.
+- **Mob window for DPS and healers.** Under **Settings → Frames & plates → Mob frames**, set **Show them** to **DPS and healing too** (it was called "always").
+  - With a tank running Wrekkit 0.9.4 or later, a mob you're closest to pulling gets its own row with your %, and turns red once you're past your warning line.
+  - A mob attacking you is red as before.
+  - The rest share the "on others" line when the window is collapsed.
 
 ## Install
 
-Download `Wrekkit-0.9.7.zip` and extract it into `<your client>\Interface\AddOns\`. You should end up with `Interface\AddOns\Wrekkit\Wrekkit.toc`. Do **not** use the "Source code" links. **Fully restart the client** after installing. `/wrek status` should then report **v0.9.7**.
+Download `Wrekkit-0.9.8.zip` and extract it into `<your client>\Interface\AddOns\`. You should end up with `Interface\AddOns\Wrekkit\Wrekkit.toc`. Do **not** use the "Source code" links. **Fully restart the client** after installing. `/wrek status` should then report **v0.9.8**.
 
 ## Requirements
 
