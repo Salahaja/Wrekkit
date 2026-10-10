@@ -99,6 +99,44 @@ function UI.ApplySkin()
     setColor(W.color.accent, PFUI_ACCENT)
     setColor(W.color.accentHi, { 1, 1, 1 })
   end
+  UI.skinBar = UI.media.bar
+  local chosen = UI.BarTexturePath(W.db and W.db.barTexture)
+  if chosen then UI.media.bar = chosen end
+end
+
+--[[ The bars' texture, apart from the skin: the flat colour of the pfUI and
+     modern looks with the Blizzard chrome, or the other way round. "skin"
+     (or nothing) keeps whatever the skin uses. ]]
+UI.BAR_TEXTURES = {
+  { value = "skin", label = "skin" },
+  { value = "flat", label = "flat" },
+  { value = "smooth", label = "smooth" },
+  { value = "blizzard", label = "Blizzard" },
+}
+
+--- The file for a bar style, or nil for "use the skin's".
+function UI.BarTexturePath(key)
+  if key == "flat" then return UI.media.white end
+  if key == "smooth" then return MEDIA .. "bar-fill" end
+  if key == "blizzard" then return "Interface\\TargetingFrame\\UI-StatusBar" end
+  return nil
+end
+
+--[[ Every bar texture, so a new style shows at once rather than after a
+     /reload. Weak keys: a pooled row is never freed in 1.12 anyway, but the
+     registry should not be what keeps anything alive. ]]
+local bars = setmetatable({}, { __mode = "k" })
+
+function UI.RegisterBar(tex)
+  if tex then bars[tex] = true end
+  return tex
+end
+
+--- Change the bar style everywhere, and remember it.
+function UI.SetBarTexture(key)
+  if W.db then W.db.barTexture = key end
+  UI.media.bar = UI.BarTexturePath(key) or UI.skinBar or UI.media.bar
+  for tex in pairs(bars) do tex:SetTexture(UI.media.bar) end
 end
 
 local BLIZZ_TOOLTIP = {
@@ -742,6 +780,7 @@ function UI.Row(parent, height)
 
   r.bar = r:CreateTexture(nil, "BORDER")
   r.bar:SetTexture(UI.media.bar)
+  UI.RegisterBar(r.bar)
   r.bar:SetPoint("TOPLEFT", r, "TOPLEFT", 0, 0)
   r.bar:SetPoint("BOTTOMLEFT", r, "BOTTOMLEFT", 0, 0)
 

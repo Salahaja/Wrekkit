@@ -106,7 +106,8 @@ local function region(kind)
     GetValue = function(self) return self._value or self._min or 0 end,
     SetAlpha = function(self, a) self._alpha = a end,
     GetAlpha = function(self) return self._alpha or 1 end,
-    SetTexture = function() end,
+    SetTexture = function(self, t) self._texture = t end,
+    GetTexture = function(self) return self._texture end,
     -- Recorded, not discarded: opacity is expressed through the alpha
     -- channel here, so a stub that throws it away cannot tell a working
     -- opacity setting from one that does nothing.
@@ -605,6 +606,26 @@ step("meter toolbar toggles", function()
 end)
 
 step("meter scrolls", function() UI.meter.list:Scroll(-1) UI.meter.list:Scroll(1) end)
+
+step("bar style: changes every bar at once, and back to the skin's", function()
+  local M = UI.meter
+  M:Refresh()
+  local row = M.list.rows[1]
+  if not row then error("the meter has no rows to look at") end
+  local skinBar = UI.skinBar
+  UI.SetBarTexture("flat")
+  if row.bar:GetTexture() ~= UI.media.white then error("flat did not reach an existing bar: " .. tostring(row.bar:GetTexture())) end
+  if Wrekkit.db.barTexture ~= "flat" then error("the bar style was not saved") end
+  UI.SetBarTexture("blizzard")
+  if row.bar:GetTexture() ~= "Interface\\TargetingFrame\\UI-StatusBar" then error("Blizzard bars did not apply") end
+  UI.SetBarTexture("skin")
+  if row.bar:GetTexture() ~= skinBar then error("skin did not bring the look's own bar back") end
+  -- A row made after the change gets the new style too.
+  UI.SetBarTexture("flat")
+  local fresh = UI.Row(UIParent, 18)
+  if fresh.bar:GetTexture() ~= UI.media.white then error("a new row did not get the chosen style") end
+  UI.SetBarTexture("skin")
+end)
 
 step("a narrow row never draws its name over its value", function()
   local realScale = Wrekkit.db.fontScale

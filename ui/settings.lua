@@ -255,6 +255,12 @@ function S:Create()
       "font when pfUI is loaded. auto: pfUI with", "pfUI or ShaguPlates, else Blizzard.",
       "Applies after a /reload." })
 
+  choice(self, "Bars", UI.BAR_TEXTURES,
+    function() return W.db.barTexture or "skin" end,
+    function(v) UI.SetBarTexture(v) end,
+    { "The bars' texture, whatever the look: flat", "colour, a smooth shade, or Blizzard's status",
+      "bar. skin: whatever the look uses." })
+
   check(self, "Compact meter",
     function() return meter:Settings().compact == true end,
     function(v)
