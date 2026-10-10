@@ -116,6 +116,9 @@ T.defaults = {
   watchMobs = true,        -- read each mob's own target (needs SuperWoW)
   mobSummary = true,       -- "4 held - 1 slipping - 1 loose" under the %
   coTanks = "",            -- names whose mobs are not loose, comma-separated
+  coTanksOff = "",         -- names unmarked by hand: never taken for tanks
+  coTankAuto = true,       -- group members in a tank stance are co-tanks
+  coTankShare = true,      -- share marks and roles with the group
 
   -- taunting
   tauntPopup = true,       -- a button to click when a mob gets away
@@ -215,6 +218,7 @@ function T:Sanitize(s)
   s.opacity = clamp(s.opacity, 0.2, 1, d.opacity)
   if type(s.frameName) ~= "string" then s.frameName = "" end
   if type(s.coTanks) ~= "string" then s.coTanks = "" end
+  if type(s.coTanksOff) ~= "string" then s.coTanksOff = "" end
   if type(s.tauntSpell) ~= "string" then s.tauntSpell = "" end
   s.tauntX, s.tauntY = tonumber(s.tauntX), tonumber(s.tauntY)
   s.mobsX, s.mobsY = tonumber(s.mobsX), tonumber(s.mobsY)
@@ -611,33 +615,339 @@ end
      being set up, and a mob that turns to one is not a taunt you owe. So
      wherever a warning, the taunt bar or a mob frame asks "who is it on"
      or "who is next", a co-tank's name is passed over. ]]
-local coTankList, coTankFor = {}, nil
+--[[ Three sources, the first that knows decides:
+
+       1. not a tank, said by hand (coTanksOff) -- beats detection, so a
+          warrior who stays in Defensive Stance to DPS can be unmarked;
+       2. a tank, said by hand (coTanks);
+       3. detected (coTankAuto): a group member seen in Defensive Stance,
+          Bear or Dire Bear Form, or with Righteous Fury, or whose own
+          Wrekkit says they are tanking.
+
+     Marks made by hand are shared with the group (coTankShare), so one
+     person marking the tanks marks them for everyone running Wrekkit. ]]
+
+-- A comma-separated settings string as a lowercase set, re-read only when
+-- the string itself changes.
+local nameSets, nameSetCount = {}, 0
+local function nameSet(raw)
+  raw = raw or ""
+  local c = nameSets[raw]
+  if not c then
+    -- Two lists are asked about, alternately; old spellings of them are
+    -- all this ever holds, so emptying it now and then is enough.
+    if nameSetCount >= 8 then nameSets, nameSetCount = {}, 0 end
+    c = {}
+    for n in string.gfind(raw, "[^,%s]+") do c[string.lower(n)] = true end
+    nameSets[raw] = c
+    nameSetCount = nameSetCount + 1
+  end
+  return c
+end
+
+local function without(raw, low)
+  local keep = {}
+  for n in string.gfind(raw or "", "[^,%s]+") do
+    if string.lower(n) ~= low then table.insert(keep, n) end
+  end
+  return keep
+end
+
 function T:IsCoTank(name)
   if not name then return false end
-  local raw = self:Settings().coTanks or ""
-  if raw ~= coTankFor then
-    coTankFor = raw
-    coTankList = {}
-    for n in string.gfind(raw, "[^,%s]+") do coTankList[string.lower(n)] = true end
-  end
-  return coTankList[string.lower(name)] or false
+  local s = self:Settings()
+  local low = string.lower(name)
+  if nameSet(s.coTanksOff)[low] then return false end
+  if nameSet(s.coTanks)[low] then return true end
+  if s.coTankAuto and self:DetectedTanks()[low] then return true end
+  return false
 end
 
 --- Add or remove a co-tank by name. Returns whether they are one now.
-function T:SetCoTank(name, on)
+--- `quiet` is for a mark that came from someone else: applied, not re-sent.
+function T:SetCoTank(name, on, quiet)
   if not name or name == "" then return false end
   local s = self:Settings()
-  local keep, low = {}, string.lower(name)
-  for n in string.gfind(s.coTanks or "", "[^,%s]+") do
-    if string.lower(n) ~= low then table.insert(keep, n) end
+  local low = string.lower(name)
+  local keep = without(s.coTanks, low)
+  local off = without(s.coTanksOff, low)
+  if on then
+    table.insert(keep, name)
+  elseif self:DetectedTanks()[low] then
+    -- Unmarking someone detection would mark again has to stick.
+    table.insert(off, name)
   end
-  if on then table.insert(keep, name) end
   s.coTanks = table.concat(keep, ", ")
+  s.coTanksOff = table.concat(off, ", ")
+  if not quiet then self:ShareMark(name, on) end
   return on and true or false
 end
 
 function T:ToggleCoTank(name)
   return self:SetCoTank(name, not self:IsCoTank(name))
+end
+
+----------------------------------------------------------------------
+-- finding the other tanks
+----------------------------------------------------------------------
+
+-- What a tank fights in, seen on someone else. By id (SuperWoW's UnitBuff
+-- third return) or by icon, so it works with or without SuperWoW and in
+-- every client language. Righteous Fury's icon is FURY_ICON, above.
+local TANK_AURA_IDS = {
+  [71] = true,                    -- Defensive Stance
+  [5487] = true, [9634] = true,   -- Bear Form, Dire Bear Form
+  [25780] = true, [25781] = true, -- Righteous Fury
+}
+local TANK_AURA_ICONS = { "defensivestance", "bearform", FURY_ICON }
+
+local function tankAura(icon, id)
+  if id and TANK_AURA_IDS[id] then return true end
+  if icon then
+    local lower = string.lower(icon)
+    for _, want in ipairs(TANK_AURA_ICONS) do
+      if string.find(lower, want, 1, true) then return true end
+    end
+  end
+  return false
+end
+
+-- Seconds between looks at the group's buffs. A stance does not change
+-- faster, and IsCoTank is asked many times a second.
+local DETECT_EVERY = 2
+
+T.peerRoles = {}   -- name -> { tank = bool, at = GetTime() }, from their Wrekkit
+T.seenTank = {}    -- name -> what showed it, kept while they are out of sight
+
+--[[ The group members who are tanking, lowercase name -> why. Anyone in
+     sight is looked at directly; someone out of sight keeps what they were
+     last seen as, since a tank across the room is still a tank. Their own
+     Wrekkit, when they run it, answers for them wherever they are. ]]
+function T:DetectedTanks()
+  local now = GetTime()
+  if self.detected and self.detectedAt and now - self.detectedAt < DETECT_EVERY
+      and now >= self.detectedAt then
+    return self.detected
+  end
+  self.detectedAt = now
+
+  local me = UnitName("player")
+  local inGroup = {}
+  local n = GetNumRaidMembers and GetNumRaidMembers() or 0
+  local prefix = "raid"
+  if n == 0 then
+    n = GetNumPartyMembers and GetNumPartyMembers() or 0
+    prefix = "party"
+  end
+  for i = 1, n do
+    local unit = prefix .. i
+    local name = UnitName(unit)
+    if name and name ~= me then
+      inGroup[name] = true
+      local visible = not UnitIsVisible or UnitIsVisible(unit)
+      if visible and UnitBuff then
+        local why = nil
+        for b = 1, 32 do
+          local icon, _, id = UnitBuff(unit, b)
+          if not icon then break end
+          if tankAura(icon, tonumber(id)) then
+            why = (id and SpellInfo and SpellInfo(tonumber(id))) or "tank stance"
+            break
+          end
+        end
+        self.seenTank[name] = why
+      end
+    end
+  end
+
+  local out = {}
+  for name, why in pairs(self.seenTank) do
+    if inGroup[name] then out[string.lower(name)] = why else self.seenTank[name] = nil end
+  end
+  for name, p in pairs(self.peerRoles) do
+    if not inGroup[name] then
+      self.peerRoles[name] = nil
+    elseif p.tank then
+      out[string.lower(name)] = out[string.lower(name)] or "their Wrekkit"
+    end
+  end
+  self.detected = out
+  return out
+end
+
+----------------------------------------------------------------------
+-- sharing marks and roles with the group
+----------------------------------------------------------------------
+
+--[[ Wire format, prefix WRKTANK, to the raid (or party). Short and rare --
+     a message when something changes, never on a timer -- and nothing
+     here is about a pull, so it is separate from log sharing.
+
+       R:1 / R:0        I am / am not tanking (my stance, or my setting)
+       K:<name>:1 / :0  I marked / unmarked <name> as a tank
+       Q                I just arrived: tell me your role and your marks
+       C:<a>,<b>,...    my marks, in answer to Q
+
+     Accepted only from someone in the group. A K applies as sent, an
+     unmark included. A C only adds, and never over a name this player has
+     unmarked by hand: a list cannot say what was taken off it. ]]
+T.TANK_PREFIX = "WRKTANK"
+
+function T:GroupChannel()
+  if (GetNumRaidMembers and GetNumRaidMembers() or 0) > 0 then return "RAID" end
+  if (GetNumPartyMembers and GetNumPartyMembers() or 0) > 0 then return "PARTY" end
+  return nil
+end
+
+function T:SendTank(msg)
+  if not self:Settings().coTankShare or not SendAddonMessage then return false end
+  local channel = self:GroupChannel()
+  if not channel then return false end
+  -- Never "WHISPER": this client crashes on it rather than erroring.
+  pcall(SendAddonMessage, self.TANK_PREFIX, msg, channel)
+  return true
+end
+
+function T:ShareMark(name, on)
+  return self:SendTank("K:" .. name .. ":" .. (on and "1" or "0"))
+end
+
+function T:ShareRole()
+  local tank = self:IsTank() and true or false
+  if self:SendTank(tank and "R:1" or "R:0") then self.sentRole = tank end
+end
+
+function T:ShareMarks()
+  local s = self:Settings()
+  if (s.coTanks or "") == "" then return end
+  local names = {}
+  for n in string.gfind(s.coTanks, "[^,%s]+") do table.insert(names, n) end
+  -- 12-character names and commas: forty of them would not fit, five will.
+  local msg = "C:" .. table.concat(names, ",")
+  if string.len(msg) <= 250 then self:SendTank(msg) end
+end
+
+local function properName(n)
+  return string.upper(string.sub(n, 1, 1)) .. string.lower(string.sub(n, 2))
+end
+
+function T:OnTankMessage(msg, sender)
+  if not msg or not sender or sender == UnitName("player") then return end
+  local s = self:Settings()
+  if not s.coTankShare then return end
+  if W.capture and W.capture.InGroup and not W.capture:InGroup(sender) then return end
+
+  local kind = string.sub(msg, 1, 1)
+  if kind == "R" then
+    self.peerRoles[sender] = { tank = (msg == "R:1"), at = GetTime() }
+    self.detectedAt = nil
+  elseif kind == "K" then
+    local _, _, name, on = string.find(msg, "^K:([^:]+):([01])$")
+    if not name then return end
+    name = properName(name)
+    on = (on == "1")
+    if self:IsCoTank(name) ~= on then
+      self:SetCoTank(name, on, true)
+      W.Print(sender .. (on and " marked " or " unmarked ") .. name ..
+        (on and " as a tank." or ": no longer a tank."))
+    end
+  elseif kind == "C" then
+    local off = nameSet(s.coTanksOff)
+    for n in string.gfind(string.sub(msg, 3), "[^,]+") do
+      n = properName(n)
+      if not off[string.lower(n)] and not nameSet(s.coTanks)[string.lower(n)] then
+        self:SetCoTank(n, true, true)
+      end
+    end
+  elseif kind == "Q" then
+    -- Answered a moment later, so a raid answering at once is spread out.
+    W.After(0.5 + math.random() * 2, function()
+      T:ShareRole()
+      T:ShareMarks()
+    end, "tankAnswer")
+  end
+end
+
+--- Forget every tank: marks, unmarks, and what was found. They describe
+--- one group, and the next group is other people.
+function T:ClearTanks(why)
+  local s = self:Settings()
+  local had = (s.coTanks or "") ~= "" or (s.coTanksOff or "") ~= ""
+  s.coTanks, s.coTanksOff = "", ""
+  self.peerRoles, self.seenTank, self.detectedAt = {}, {}, nil
+  if had and why then W.Print("tank marks cleared: " .. why .. ".") end
+end
+
+-- How long the group must stay gone before its marks are cleared. The
+-- roster can read empty for a moment around a loading screen.
+local GONE_FOR = 2.5
+
+--[[ Joining a group asks it once; a role change is said once; a group
+     that is gone -- left, disbanded, or never there at login -- takes its
+     marks with it. Checked on a slow timer: a few comparisons, and none of
+     this changes often. ]]
+function T:TankWatch()
+  local channel = self:GroupChannel()
+  local now = GetTime()
+
+  if not channel then
+    self.sentRole = nil
+    if self.lastChannel == nil then return end
+    if not self.goneAt or now < self.goneAt then self.goneAt = now return end
+    if now - self.goneAt < GONE_FOR then return end
+    local wasLogin = (self.lastChannel == "LOGIN")
+    self.goneAt, self.lastChannel = nil, nil
+    self:ClearTanks(wasLogin and "not in a group" or "left the group")
+    return
+  end
+  self.goneAt = nil
+
+  if channel ~= self.lastChannel then
+    self.lastChannel = channel
+    self.sentRole = nil
+    self:SendTank("Q")
+  end
+  local tank = self:IsTank() and true or false
+  if tank ~= self.sentRole then self:ShareRole() end
+end
+
+--[[ The group's players who could be tanking, for the threat window's tank
+     button: warriors, druids and paladins, or everyone when `all`. Each as
+     { name, class, marked, found }. ]]
+local TANK_CLASSES = { WARRIOR = true, DRUID = true, PALADIN = true }
+
+function T:TankCandidates(all)
+  local out = {}
+  local me = UnitName("player")
+  local function add(name, class)
+    if not name or name == me then return end
+    class = class and string.upper(class) or ""
+    if all or TANK_CLASSES[class] or self:IsCoTank(name) then
+      local low = string.lower(name)
+      table.insert(out, {
+        name = name, class = class,
+        marked = self:IsCoTank(name),
+        found = self:Settings().coTankAuto and self:DetectedTanks()[low] or nil,
+      })
+    end
+  end
+  local n = GetNumRaidMembers and GetNumRaidMembers() or 0
+  if n > 0 then
+    for i = 1, n do
+      local name, _, _, _, _, class = GetRaidRosterInfo(i)
+      add(name, class)
+    end
+  else
+    for i = 1, (GetNumPartyMembers and GetNumPartyMembers() or 0) do
+      local _, class = UnitClass("party" .. i)
+      add(UnitName("party" .. i), class)
+    end
+  end
+  table.sort(out, function(a, b)
+    if a.marked ~= b.marked then return a.marked end
+    return a.name < b.name
+  end)
+  return out
 end
 
 --- Parse tank mode's "TMTv1=creature:lowGuid:runnerUp:perc;..." into the
@@ -1699,7 +2009,9 @@ function T:Start()
   f:SetScript("OnEvent", function()
     if event == "CHAT_MSG_ADDON" then
       -- Cheap test first: every addon's traffic comes through here.
-      if arg2 and string.find(arg2, "TWTv4=", 1, true) then
+      if arg1 == T.TANK_PREFIX then
+        W.Guard("tank share", function() T:OnTankMessage(arg2, arg4) end)
+      elseif arg2 and string.find(arg2, "TWTv4=", 1, true) then
         W.Guard("threat packet", function() T:OnMessage(arg2) end)
       end
     elseif event == "PLAYER_TARGET_CHANGED" then
@@ -1712,6 +2024,15 @@ function T:Start()
   f:RegisterEvent("CHAT_MSG_ADDON")
   f:RegisterEvent("PLAYER_TARGET_CHANGED")
   f:RegisterEvent("PLAYER_REGEN_ENABLED")
+
+  -- "LOGIN": whatever the first look finds is a change. In a group, the
+  -- group is asked; alone, marks saved from some earlier group are cleared.
+  self.lastChannel = "LOGIN"
+  local function watch()
+    W.Guard("tank watch", function() T:TankWatch() end)
+    W.After(3, watch, "tankWatch")
+  end
+  W.After(5, watch, "tankWatch")
 end
 
 --- One line for /wrek status.

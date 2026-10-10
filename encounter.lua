@@ -23,6 +23,13 @@ local E = W.encounter
 -- half-second drop out of combat between waves doesn't shard the report.
 local MERGE_GAP = 5
 
+-- Out of combat yourself, with nobody in the group hitting or being hit for
+-- this long, the pull is over even if the client still has someone in the
+-- group flagged as fighting. That flag can linger a minute or more (a pet,
+-- a mob walking home), and holding the pull open for it swallowed the next
+-- pack into it.
+local IDLE_END = 15
+
 -- Read-only stand-in for an event that carried no details, so a missing
 -- table costs nothing rather than a new empty one per event.
 local NO_INFO = {}
@@ -747,6 +754,7 @@ function E:Damage(sourceGuid, targetGuid, spellId, amount, info)
     noteResist(row, amount, info.resisted)
 
     if src.isPlayer or src.class == "PET" then
+      self.lastGroupHit = now
       enc.totals.damage = enc.totals.damage + amount
       b.dd = b.dd + amount
       contribute(b, "d", sourceGuid, targetGuid, spellId, amount)
@@ -769,6 +777,7 @@ function E:Damage(sourceGuid, targetGuid, spellId, amount, info)
     noteAmount(row, amount, info.crit)
 
     if dst.isPlayer or dst.class == "PET" then
+      self.lastGroupHit = now
       enc.totals.taken = enc.totals.taken + amount
       b.dt = b.dt + amount
       -- Recorded from the victim's side: the source is whatever hit them,
@@ -1118,6 +1127,45 @@ function E:ReallyInCombat()
   return self.inCombat
 end
 
+--[[ Is anyone in the group fighting -- you, a member, or a pet?
+
+     This, not your own combat, is what bounds a pull. Ending a pull when YOU
+     left combat lost everything the raid did while you were dead or out of
+     it: each event after that opened a pull of its own, the next frame
+     closed it, and at under minTrashDuration it was dropped -- every few
+     seconds, until you were back in. Damage meters bound a fight the same
+     way this does, which is how the two came to disagree.
+
+     Your own state is asked every time, which costs nothing. The rest of the
+     group is a walk over up to 40 units, so that answer is kept for half a
+     second. Members too far away for the client to know about read as out
+     of combat, which keeps someone fighting in another zone from holding a
+     pull open. ]]
+local GROUP_SCAN = 0.5
+local groupAt, groupFighting = nil, false
+
+function E:GroupInCombat()
+  if not UnitAffectingCombat then return self.inCombat end
+  if UnitAffectingCombat("player") or UnitAffectingCombat("pet") then return true end
+  local now = GetTime()
+  if groupAt and now >= groupAt and now - groupAt < GROUP_SCAN then return groupFighting end
+  groupAt = now
+  groupFighting = false
+  local n = GetNumRaidMembers and GetNumRaidMembers() or 0
+  local unit, pet = "raid", "raidpet"
+  if n == 0 then
+    n = GetNumPartyMembers and GetNumPartyMembers() or 0
+    unit, pet = "party", "partypet"
+  end
+  for i = 1, n do
+    if UnitAffectingCombat(unit .. i) or UnitAffectingCombat(pet .. i) then
+      groupFighting = true
+      break
+    end
+  end
+  return groupFighting
+end
+
 function E:CombatTime(enc)
   if not enc then return 0 end
   local c = enc.combat or 0
@@ -1127,20 +1175,23 @@ function E:CombatTime(enc)
        missed REGEN_ENABLED left this extrapolating from combatMark forever,
        so the meter sat in a city counting combat time upward. ]]
   if self.live == enc and self.inCombat and self.combatMark
-      and self:ReallyInCombat() then
+      and self:GroupInCombat() then
     c = c + (GetTime() - self.combatMark)
   end
   return c
 end
 
---- Close a combat segment the client says has ended but we never saw end.
---- Called from the capture ticker; cheap, and it stops a stuck flag from
---- inflating every per-second figure for the rest of the session.
+--- Close a combat segment once nobody in the group is fighting any more.
+--- Called from the capture ticker. This is where a pull normally ends now
+--- that your own REGEN_ENABLED no longer does it while the group fights on,
+--- and it also stops a missed REGEN_ENABLED from leaving the flag stuck.
 function E:HealStuckCombat()
   if not self.inCombat then return end
   if self:ReallyInCombat() then return end
-  W.Debug("combat flag was stuck; closing the segment")
-  self:CombatEnd()
+  if not self:GroupInCombat() then return self:CombatEnd() end
+  -- The group is flagged, but nothing has happened to it for a while.
+  local last = self.lastGroupHit or 0
+  if GetTime() - last >= IDLE_END then self:CombatEnd(last) end
 end
 
 function E:CombatStart()
@@ -1169,6 +1220,12 @@ function E:CombatStart()
     self.session = self:ResumeOrNew(zone, now, instanceType, instanceId)
   end
 
+  --[[ Already running: the group's damage opened this pull before you were
+       in combat (the tank pulled), and now you have joined it. Taking it
+       for a stale pull finished it at length 0 -- it is not stopped yet,
+       so stopT is still its start -- and dropped everything before you. ]]
+  if self.live and self.inCombat then return end
+
   -- Resume the previous encounter if we only briefly dropped combat.
   if self.live and self.lastCombatEnd and (now - self.lastCombatEnd) <= MERGE_GAP then
     self.inCombat = true
@@ -1180,6 +1237,7 @@ function E:CombatStart()
   if self.live then self:Finish() end
 
   self.live = newEncounter(self.session, now)
+  self.lastGroupHit = now
   self.inCombat = true
   self.combatMark = now
   -- Report our own totals while this pull runs; W.sync decides whether.
@@ -1188,9 +1246,20 @@ function E:CombatStart()
   if W.sync then W.sync:StartLive() end
 end
 
-function E:CombatEnd()
+--- PLAYER_REGEN_ENABLED: YOU are out of combat. The pull ends only if the
+--- rest of the group is too; otherwise HealStuckCombat ends it when they are.
+function E:LeftCombat()
+  if self:GroupInCombat() then return end
+  self:CombatEnd()
+end
+
+--- `at` backdates the end to when the fighting actually stopped, so the
+--- idle wait that proved it had stopped is not counted as fighting.
+function E:CombatEnd(at)
   if not self.inCombat then return end
   local now = GetTime()
+  if at and self.combatMark and at < self.combatMark then at = self.combatMark end
+  now = math.min(at or now, now)
   self.inCombat = false
   self.lastCombatEnd = now
   if self.live then

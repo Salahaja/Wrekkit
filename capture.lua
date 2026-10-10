@@ -1044,7 +1044,7 @@ function C:Start()
     if event == "PLAYER_REGEN_DISABLED" then
       W.encounter:CombatStart()
     elseif event == "PLAYER_REGEN_ENABLED" then
-      W.encounter:CombatEnd()
+      W.encounter:LeftCombat()
       -- Leaving combat is the moment we can tell whether anything works.
       C:WarnIfSilent()
     elseif event == "RAID_ROSTER_UPDATE" or event == "PARTY_MEMBERS_CHANGED"

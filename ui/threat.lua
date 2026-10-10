@@ -290,9 +290,18 @@ function TW:Create()
   cogBtn:SetPoint("RIGHT", f.closeButton, "LEFT", -1, 0)
   self.cogBtn = cogBtn
 
+  local tankBtn
+  tankBtn = UI.IconButton(f.bar, "Interface\\Icons\\INV_Shield_06", 14, function()
+    W.Guard("tank menu", function() TW:TankMenu(tankBtn) end)
+  end, { title = "Tanks", lines = { "Mark who else is tanking: their threat",
+                                    "and the mobs they hold raise no warnings.",
+                                    "Shared with the group's Wrekkit." } })
+  tankBtn:SetPoint("RIGHT", cogBtn, "LEFT", -1, 0)
+  self.tankBtn = tankBtn
+
   local titleHit = CreateFrame("Button", nil, f.bar)
   titleHit:SetPoint("TOPLEFT", f.bar, "TOPLEFT", 0, 0)
-  titleHit:SetPoint("BOTTOMRIGHT", cogBtn, "BOTTOMLEFT", -2, 0)
+  titleHit:SetPoint("BOTTOMRIGHT", tankBtn, "BOTTOMLEFT", -2, 0)
   titleHit:RegisterForClicks("LeftButtonUp", "RightButtonUp")
   titleHit:SetScript("OnClick", function()
     W.Guard("threat menu", function() TW:Menu(titleHit) end)
@@ -405,6 +414,48 @@ function TW:SetOpacity(a)
 end
 
 local ROLE_LABEL = { auto = "auto (stance/form)", on = "always", off = "never" }
+
+--[[ The tank button's menu: the group's warriors, druids and paladins, a
+     check beside each one counted as a tank, and a click to change it.
+     "Mark my target" covers anyone of another class. ]]
+function TW:TankMenu(anchor)
+  local items = { { text = "Other tanks", header = true } }
+  local list = T:TankCandidates()
+  for _, c in ipairs(list) do
+    local label = c.name
+    -- Found rather than marked: say what showed it.
+    if c.found then
+      label = label .. "  |cff8a8f98(" .. tostring(c.found) .. ")|r"
+    end
+    table.insert(items, { text = label, value = "t:" .. c.name, checked = c.marked })
+  end
+  if table.getn(list) == 0 then
+    table.insert(items, { text = "No warriors, druids or paladins", disabled = true })
+    table.insert(items, { text = "in your group", disabled = true })
+  end
+  table.insert(items, { text = "", header = true })
+  local target = UnitExists("target") and UnitIsPlayer("target") and UnitName("target")
+  if target and target ~= UnitName("player") then
+    table.insert(items, { text = (T:IsCoTank(target) and "Unmark " or "Mark ") .. target .. " (target)",
+      value = "t:" .. target })
+  end
+  table.insert(items, { text = "Clear all", value = "clear" })
+
+  UI.Menu(self.frame, anchor, items, function(value)
+    if not value then return end
+    if value == "clear" then
+      T:ClearTanks()
+      W.Print("tank marks cleared.")
+    else
+      local _, _, name = string.find(value, "^t:(.+)$")
+      if name then
+        local on = T:ToggleCoTank(name)
+        W.Print(name .. (on and " is marked as a tank." or " is no longer a tank."))
+      end
+    end
+    TW:Refresh()
+  end)
+end
 
 function TW:Menu(anchor)
   local s = T:Settings()
