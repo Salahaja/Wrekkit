@@ -19,6 +19,9 @@ UI.meter = {}
 local M = UI.meter
 
 local REFRESH = 0.5
+-- The footer's height at text size 100%. It was 15, which with the text
+-- centred left a band of space above the combat time (#15).
+local FOOTER_H = 13
 
 M.defaults = {
   -- Visible on login unless the user closed it last time. A meter you have
@@ -462,14 +465,15 @@ function M:Create()
 
   local footer = CreateFrame("Frame", nil, f.body)
   self.footer = footer
-  footer:SetHeight(15)
+  footer:SetHeight(FOOTER_H)
   footer:SetPoint("BOTTOMLEFT", f.body, "BOTTOMLEFT", 0, 0)
   footer:SetPoint("BOTTOMRIGHT", f.body, "BOTTOMRIGHT", 0, 0)
 
   self.footL = UI.Text(footer, 10, W.color.textFaint)
-  self.footL:SetPoint("LEFT", footer, "LEFT", 6, 0)
+  -- Low in the footer: the space a footer needs is under its text, not over it.
+  self.footL:SetPoint("BOTTOMLEFT", footer, "BOTTOMLEFT", 6, 2)
   self.footR = UI.Text(footer, 10, W.color.textFaint, "RIGHT")
-  self.footR:SetPoint("RIGHT", footer, "RIGHT", -6, 0)
+  self.footR:SetPoint("BOTTOMRIGHT", footer, "BOTTOMRIGHT", -6, 2)
 
   ------------------------------------------------------------------
 
@@ -489,6 +493,7 @@ function M:Create()
     M:LayoutPanes()
     M:Refresh()
   end
+  f.OnResizeEnd = function() M:SnapToRows() end
   f:SetScript("OnShow", function() M:StartTicker() end)
 
   self:UpdatePetButton()
@@ -557,7 +562,7 @@ function M:ApplyLayout()
   end
 
   -- footer
-  local footerH = compact and 0 or px(15)
+  local footerH = compact and 0 or px(FOOTER_H)
   if compact then self.footer:Hide() else self.footer:Show() end
   self.footer:SetHeight(footerH > 0 and footerH or 1)
   self.list:SetPoint("BOTTOMRIGHT", f.body, "BOTTOMRIGHT", -2, footerH + 1)
@@ -1146,6 +1151,29 @@ function M:Refresh()
     M:RefreshInner()
     M:Fit()
   end)
+end
+
+--[[ After a resize, take off the part of a row the list cannot use.
+
+     The list draws whole rows only, so whatever height is left under the
+     last one is blank -- up to a row of it, right above the footer (#15).
+     Trimmed a moment after the grip is let go, once the client reports the
+     list's new height. Not when fitting to rows (that sizes to whole rows
+     already), nor over and under, where the halves share the height. ]]
+function M:SnapToRows()
+  W.After(0.05, function()
+    W.Guard("meter snap", function()
+      local f = M.frame
+      if not f or f._sizing or M:Settings().fitRows or M:SplitMode() == "stacked" then return end
+      local rowH = M.list.rowHeight or 18
+      local listH = M.list:GetHeight() or 0
+      if listH <= rowH then return end
+      local extra = math.mod(listH, rowH)
+      if extra < 1 then return end
+      f:SetHeight(f:GetHeight() - extra)
+      if f.SavePosition then f:SavePosition() end
+    end)
+  end, "meterSnap")
 end
 
 --[[ Fit the window to its rows, when asked to (#15). Side by side, to the

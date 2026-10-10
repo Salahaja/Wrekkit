@@ -1314,6 +1314,9 @@ function UI.Window(name, width, height, title, opts)
     if f._maxH then f._maxH = f:GetHeight() end
     if f.SavePosition then f:SavePosition() end
     if f.OnResize then f:OnResize() end
+    -- Done resizing: a window may tidy its size now (the meter snaps to
+    -- whole rows), which it must not do while the grip is held.
+    if f.OnResizeEnd then f:OnResizeEnd() end
   end)
   f.grip = grip
 

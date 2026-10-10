@@ -775,6 +775,31 @@ step("fit to rows: no empty space under the last row, never taller than sized", 
   M:Refresh()
 end)
 
+step("after a resize, the meter loses the part of a row it cannot use", function()
+  local M = UI.meter
+  local f = M.frame
+  local s = M:Settings()
+  s.fitRows = false
+  M:SetSplit("off")
+  local rowH = M.list.rowHeight
+  -- A list 3.5 rows tall: half a row of blank above the footer.
+  f:SetHeight(300)
+  local realGetH, realAfter = M.list.GetHeight, Wrekkit.After
+  M.list.GetHeight = function() return f:GetHeight() - 300 + rowH * 3.5 end
+  Wrekkit.After = function(_, fn) fn() end   -- the snap waits a moment; not here
+  f.OnResizeEnd()
+  Wrekkit.After = realAfter
+  local left = M.list:GetHeight()
+  M.list.GetHeight = realGetH
+  if math.abs(left - rowH * 3) > 0.5 then
+    error(string.format("the list is %.1f tall, not 3 whole rows (%d)", left, rowH * 3))
+  end
+  if math.abs((s.window.h or 0) - f:GetHeight()) > 0.5 then error("the snapped height was not saved") end
+  -- The footer's text sits low, not centred over a band of space.
+  local p = M.footL._points[1]
+  if not p or p[1] ~= "BOTTOMLEFT" then error("the footer text is not seated low") end
+end)
+
 step("a narrow row never draws its name over its value", function()
   local realScale = Wrekkit.db.fontScale
   Wrekkit.db.fontScale = 0.7
