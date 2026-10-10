@@ -95,6 +95,7 @@ T.defaults = {
   warnText = true,
   warnFlash = true,
   warnSound = true,
+  raidWarning = true,      -- danger warnings also as a raid warning, on this screen only
   warnPulled = true,       -- you took aggro off the tank
   textSize = 26,
 
@@ -119,6 +120,8 @@ T.defaults = {
   coTanksOff = "",         -- names unmarked by hand: never taken for tanks
   coTankAuto = true,       -- group members in a tank stance are co-tanks
   coTankShare = true,      -- share marks and roles with the group
+  relayThreat = true,      -- tanking: send your mobs' runner-ups to the group;
+                           -- otherwise: be warned by a tank's relay
 
   -- taunting
   tauntPopup = true,       -- a button to click when a mob gets away
@@ -787,6 +790,8 @@ end
        K:<name>:1 / :0  I marked / unmarked <name> as a tank
        Q                I just arrived: tell me your role and your marks
        C:<a>,<b>,...    my marks, in answer to Q
+       T:<mobs>         a tank's mobs and their runner-ups (see RelayTankMobs);
+                        under relayThreat rather than coTankShare
 
      Accepted only from someone in the group. A K applies as sent, an
      unmark included. A C only adds, and never over a name this player has
@@ -834,10 +839,16 @@ end
 function T:OnTankMessage(msg, sender)
   if not msg or not sender or sender == UnitName("player") then return end
   local s = self:Settings()
-  if not s.coTankShare then return end
   if W.capture and W.capture.InGroup and not W.capture:InGroup(sender) then return end
 
   local kind = string.sub(msg, 1, 1)
+  -- A tank's mobs: their own switch, apart from sharing tank marks.
+  if kind == "T" then
+    self:OnRelay(string.sub(msg, 3), sender, GetTime())
+    return
+  end
+  if not s.coTankShare then return end
+
   if kind == "R" then
     self.peerRoles[sender] = { tank = (msg == "R:1"), at = GetTime() }
     self.detectedAt = nil
@@ -966,6 +977,8 @@ function T:ParseTankMode(text, now)
         self.tankMobs[low] = m
       end
       m.creature, m.name, m.perc, m.at = creature, name, tonumber(perc) or 0, now
+      -- As the server said it, before a co-tank zeroes it: what the relay sends.
+      m.rawPerc = m.perc
       -- The server gives the runner-up's share of YOUR threat, not whether
       -- they are in melee range. Melee is the closer line, so it is the one
       -- assumed: a warning a little early beats one a little late.
@@ -1282,6 +1295,109 @@ function T:TankModeReply(seen, now)
       end
     end
   end
+
+  self:RelayTankMobs(now)
+end
+
+----------------------------------------------------------------------
+-- the tank's mobs, relayed to the group
+----------------------------------------------------------------------
+
+--[[ The server answers a damage dealer about one mob: their target. A tank
+     in tank mode hears about every mob they hold, each with the player
+     closest to pulling it. Relayed, that tells a mage AoEing five mobs
+     which of the five they are about to pull, targeted or not.
+
+     The tank sends, at most once a second while tank mode is answering,
+
+       T:<low>,<runner>,<perc>,<creature>;...
+
+     closest first, as many as fit one message. <perc> is the runner-up's
+     threat as a share of the tank's, as the server gave it. The receiver
+     acts only on mobs where IT is the runner-up -- on the others it only
+     knows someone is ahead of it, not by how much -- and never on its own
+     target, which its own reply covers better.
+
+     Pull is measured against the melee line, as tank mode already does: the
+     message does not say who is in melee range, and early beats late. ]]
+local RELAY_EVERY = 1
+T.relayMobs = {}     -- low guid -> { creature, runner, perc, pull, at, from }
+
+function T:RelayTankMobs(now)
+  local s = self:Settings()
+  if not s.relayThreat or not SendAddonMessage then return end
+  if not self:IsTank() then return end
+  local channel = self:GroupChannel()
+  if not channel then return end
+  if self.lastRelay and now >= self.lastRelay and now - self.lastRelay < RELAY_EVERY then return end
+
+  local list = {}
+  for low, m in pairs(self.tankMobs) do
+    if now - (m.at or 0) <= STALE and m.name and m.name ~= "" then
+      table.insert(list, { low = low, m = m })
+    end
+  end
+  if table.getn(list) == 0 then return end
+  table.sort(list, function(a, b) return (a.m.rawPerc or 0) > (b.m.rawPerc or 0) end)
+
+  local parts, size = {}, 2
+  for _, e in ipairs(list) do
+    -- gsub's second return is a count; the parentheses keep it out of sub.
+    local creature = string.sub((string.gsub(e.m.creature or "", "[,;:]", "")), 1, 24)
+    local part = e.low .. "," .. e.m.name .. "," ..
+      math.floor((e.m.rawPerc or 0) + 0.5) .. "," .. creature
+    if size + string.len(part) + 1 > 250 then break end
+    table.insert(parts, part)
+    size = size + string.len(part) + 1
+  end
+  self.lastRelay = now
+  -- Never "WHISPER": this client crashes on it rather than erroring.
+  pcall(SendAddonMessage, self.TANK_PREFIX, "T:" .. table.concat(parts, ";"), channel)
+end
+
+--- Is a relayed entry about a mob the player is the runner-up on, fresh,
+--- and not their own target (whose live reply says more)?
+function T:RelayMine(low, r, now)
+  if not r or r.runner ~= myName() or now - r.at > STALE then return false end
+  local live = self.current
+  if live and live.low == low and now - (live.at or 0) <= STALE then return false end
+  return true
+end
+
+function T:OnRelay(body, sender, now)
+  if not self:Settings().relayThreat or self.demoUntil then return end
+  for low, runner, perc, creature in string.gfind(body, "(%d+),([^,;]+),(%d+),([^;]*)") do
+    low = tonumber(low)
+    perc = tonumber(perc) or 0
+    if low then
+      local r = self.relayMobs[low]
+      if not r then
+        r = {}
+        self.relayMobs[low] = r
+      end
+      r.runner, r.perc, r.creature, r.at, r.from = runner, perc, creature, now, sender
+      r.pull = perc / T.PULL_MELEE * 100
+    end
+  end
+  self:RelayWarnings(now)
+  self:Changed()
+end
+
+--- Warn on the relayed mobs this player is closest to pulling, exactly as
+--- for their own target -- and under the same key, so one mob never warns
+--- twice through the two routes.
+function T:RelayWarnings(now)
+  if self:IsTank() then return end
+  local s = self:Settings()
+  for low, r in pairs(self.relayMobs) do
+    if self:RelayMine(low, r, now) then
+      local pct = self:Shown(r)
+      local hit = edge(self.fired, "me:" .. tostring(low), pct, s.warnAt, s.dangerAt)
+      if hit then
+        self:Alert("THREAT " .. T.PctText(pct) .. " on " .. (r.creature ~= "" and r.creature or "a mob"), hit)
+      end
+    end
+  end
 end
 
 --- Raise a warning through whichever channels are switched on.
@@ -1299,6 +1415,21 @@ function T:Alert(text, level)
       pcall(PlaySound, level == "danger" and "RaidWarning" or "igQuestFailed")
     end
   end
+  if level == "danger" and s.raidWarning then self:RaidWarning(text) end
+end
+
+--[[ The danger warnings, also as a raid warning: the stock RaidWarningFrame,
+     big at the top of the screen in the font a raid leader's /rw uses.
+     Shown on this screen only -- nothing is sent to the raid. The sound is
+     the Alert's, so it is not played twice. The same text inside two
+     seconds is shown once: the frame stacks lines, and a repeat only pushes
+     the first one up. ]]
+function T:RaidWarning(text)
+  if not RaidWarningFrame or not RaidWarningFrame.AddMessage then return end
+  local now = GetTime()
+  if self.lastRW == text and self.lastRWAt and now - self.lastRWAt < 2 then return end
+  self.lastRW, self.lastRWAt = text, now
+  pcall(RaidWarningFrame.AddMessage, RaidWarningFrame, "WARNING: " .. text, 1.0, 0.25, 0.2, 1.0)
 end
 
 ----------------------------------------------------------------------
@@ -1346,6 +1477,13 @@ function T:ForMob(key, guid)
     return tm.pull, self:TankColor(tm.pull), true, T.PctText(tm.pull)
   end
 
+  -- A tank's relay says you are the one closest to pulling it.
+  local r = low and self.relayMobs[low]
+  if r and not self:IsTank() and self:RelayMine(low, r, now) then
+    local pct = self:Shown(r)
+    return pct, self:Color(pct), true, T.PctText(pct)
+  end
+
   local m = key and self.memory[key]
   if m and m.pct and now - m.at <= s.plateMemory then
     return m.pct, m.color, false, m.text
@@ -1381,19 +1519,27 @@ function T:Alarm()
     return nil
   end
   if self:CountWatch("onme") > 0 then return 100, RED end
-  if not me then return nil end
-  if me.tank then return 100, RED end
+  if me and me.tank then return 100, RED end
   -- Always the distance to pulling, whatever the display shows: that is
   -- what the limit is set in.
-  local pull = me.pull or T.PullPercent(me)
-  if pull >= s.flashAt then return pull, self:Color(self:Shown(me)) end
+  local pull = me and (me.pull or T.PullPercent(me)) or 0
+  local color = me and self:Color(self:Shown(me))
+  -- Any mob a tank's relay says you are about to pull, targeted or not.
+  local now = GetTime()
+  for low, r in pairs(self.relayMobs) do
+    if r.pull > pull and self:RelayMine(low, r, now) then
+      pull, color = r.pull, self:Color(self:Shown(r))
+    end
+  end
+  if pull >= s.flashAt then return pull, color end
   return nil
 end
 
 --- Anything a nameplate could show? Lets the plate pass skip its work.
 function T:AnythingForPlates()
   if self.current ~= nil or next(self.memory) ~= nil
-     or next(self.tankMobs) ~= nil or next(self.lost) ~= nil then
+     or next(self.tankMobs) ~= nil or next(self.lost) ~= nil
+     or next(self.relayMobs) ~= nil then
     return true
   end
   -- In a fight the plates are where loose mobs are found, data or not.
@@ -1960,6 +2106,9 @@ function T:Prune()
       if now - m.at > STALE then self.tankMobs[low] = nil end
     end
   end
+  for low, r in pairs(self.relayMobs) do
+    if now - r.at > STALE then self.relayMobs[low] = nil end
+  end
 end
 
 --[[ The fight is over: drop everything that belonged to it, including the
@@ -1974,6 +2123,8 @@ function T:OnCombatEnd()
   if W.ui and W.ui.mobs then W.ui.mobs:Reset() end
   self.heldKey = nil
   self.lastTM = nil
+  self.relayMobs = {}
+  self.lastRelay = nil
   if not self.demoUntil then
     self.tankMobs = {}
     self.current = nil
