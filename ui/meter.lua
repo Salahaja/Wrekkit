@@ -590,9 +590,15 @@ function M:ApplyLayout()
       chrome = chrome + rowH * 2 + px(16)
     elseif mode == "side" then
       chrome = chrome + px(16)
-      minW = px(M.SIDE_MIN_W)
+      minW = M.SideMinWidth()
     end
     f:SetMinResize(minW, chrome + rowH * 2)
+    -- Already narrower than that -- saved before the minimum was raised, or
+    -- side by side switched on elsewhere: widen it now, not on the next drag.
+    if (f:GetWidth() or minW) < minW then
+      f:SetWidth(minW)
+      if f.SavePosition then f:SavePosition() end
+    end
   end
 
   self:Refresh()
@@ -618,6 +624,16 @@ M.SPLIT_LABEL = SPLIT_LABEL
 -- Columns need room for a name and a number each.
 local SIDE_MIN_W = 400
 M.SIDE_MIN_W = SIDE_MIN_W
+
+--[[ How narrow side by side may go. Larger text needs more, but smaller
+     text does not make do with less: the rank gutter and the gaps do not
+     shrink with it, and at 70% two 140-pixel columns left a name no room
+     at all. ]]
+function M.SideMinWidth()
+  local scaled = math.floor(SIDE_MIN_W * UI.FontScale() + 0.5)
+  if scaled < SIDE_MIN_W then return SIDE_MIN_W end
+  return scaled
+end
 
 function M:SplitMode()
   local s = self:Settings()
@@ -649,7 +665,7 @@ function M:SetSplit(mode)
   -- Side by side, widen a window too narrow for two columns.
   local f = self.frame
   if mode == "side" and f then
-    local want = math.floor(SIDE_MIN_W * UI.FontScale() + 0.5)
+    local want = M.SideMinWidth()
     if (f:GetWidth() or 0) < want then
       f:SetWidth(want)
       if f.SavePosition then f:SavePosition() end

@@ -606,6 +606,30 @@ end)
 
 step("meter scrolls", function() UI.meter.list:Scroll(-1) UI.meter.list:Scroll(1) end)
 
+step("a narrow row never draws its name over its value", function()
+  local realScale = Wrekkit.db.fontScale
+  Wrekkit.db.fontScale = 0.7
+  local list = UI.ScrollList(UIParent, 18)
+  local row = UI.Row(list, 18)
+  local function check(w)
+    row:SetWidth(w)
+    row:SetData(1, "Shieldbarbie", "31.0k", "965 dps", 0.5, { 1, 1, 1 }, 58)
+    local valueW = row.value:GetStringWidth()
+    local subW = row.sub:GetWidth() or 0
+    -- Rank gutter, the name, the value, the secondary column and the gaps
+    -- must fit in the row: anything over is the name drawn on the value.
+    local used = 26 + row.name:GetWidth() + valueW + subW + 14
+    if used > w + 12 then
+      error(string.format("at %dpx the name runs %dpx into the value", w, used - w))
+    end
+    return row.sub._text or ""
+  end
+  if check(320) ~= "965 dps" then error("a wide row lost its per-second column") end
+  if check(145) ~= "" then error("a narrow row kept its per-second column instead of the name") end
+  check(90)
+  Wrekkit.db.fontScale = realScale
+end)
+
 step("meter split: two metrics, each with its own drilldown", function()
   local M = UI.meter
   local s = M:Settings()
@@ -1467,9 +1491,15 @@ step("a full name fits at the minimum window width", function()
   assert_(r.name:GetWidth() >= 72, "name got " .. r.name:GetWidth() .. "px")
 end)
 
-step("name never collapses below its floor", function()
+--[[ A row too narrow for everything gives up its per-second column before
+     the name, and never holds the name at a floor it has no room for: that
+     drew the name over the value, two columns side by side at 70% text. ]]
+step("a narrow row makes room for the name, never over the value", function()
   local r = measureRow(120, "110k", "179 dps", 58)
-  assert_(r.name:GetWidth() >= 60, "name got " .. r.name:GetWidth() .. "px")
+  assert_((r.sub._text or "") == "", "kept the per-second column at 120px")
+  assert_(r.name:GetWidth() >= 50, "name got " .. r.name:GetWidth() .. "px")
+  local used = 26 + r.name:GetWidth() + r.value:GetStringWidth() + r.sub:GetWidth() + 14
+  assert_(used <= 120 + 12, "name runs " .. (used - 120) .. "px into the value")
 end)
 
 step("columns fit inside the row without overlapping", function()
