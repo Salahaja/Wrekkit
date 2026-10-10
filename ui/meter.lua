@@ -621,14 +621,16 @@ local SPLIT_NEXT = { off = "stacked", stacked = "side", side = "off" }
 local SPLIT_LABEL = { off = "One metric", stacked = "Two: over and under", side = "Two: side by side" }
 M.SPLIT_LABEL = SPLIT_LABEL
 
--- Columns need room for a name and a number each.
-local SIDE_MIN_W = 400
+--[[ Columns need room for a name and a number each. 300 is two 150-pixel
+     columns: a short name and its number, once a narrow row has dropped its
+     per-second column (see UI.Row). 400 was roomier than people wanted. ]]
+local SIDE_MIN_W = 300
 M.SIDE_MIN_W = SIDE_MIN_W
 
 --[[ How narrow side by side may go. Larger text needs more, but smaller
      text does not make do with less: the rank gutter and the gaps do not
-     shrink with it, and at 70% two 140-pixel columns left a name no room
-     at all. ]]
+     shrink with it, and at 70% a minimum scaled down to 280 left two
+     140-pixel columns with no room for a name. ]]
 function M.SideMinWidth()
   local scaled = math.floor(SIDE_MIN_W * UI.FontScale() + 0.5)
   if scaled < SIDE_MIN_W then return SIDE_MIN_W end
