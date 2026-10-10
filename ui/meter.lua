@@ -1217,7 +1217,7 @@ function M:TrimPartialRow()
   -- Stretched rows fill the window already; there is no part-row to trim.
   if (self:Settings().rowMode or "fixed") ~= "fixed" then return end
   local rowH = self.list.rowHeight or 18
-  local listH = self.list:GetHeight() or 0
+  local listH = UI.FrameHeight(self.list)
   if listH <= rowH then return end
   local extra = math.mod(listH, rowH)
   if extra < 1 then return end
@@ -1251,7 +1251,7 @@ function M:SizeRows()
   for _, list in ipairs(lists) do
     local h = base
     if mode ~= "fixed" and not s.fitRows then
-      local listH = list:GetHeight() or 0
+      local listH = UI.FrameHeight(list)
       local n
       if mode == "count" then
         n = tonumber(s.rowCount) or 8
