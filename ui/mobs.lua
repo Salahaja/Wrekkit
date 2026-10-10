@@ -366,9 +366,13 @@ function MF:Create()
   grip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
   grip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
   grip:RegisterForDrag("LeftButton")
-  grip:SetScript("OnDragStart", function() f:StartSizing("RIGHT") end)
+  grip:SetScript("OnDragStart", function()
+    MF.sizing = true
+    f:StartSizing("RIGHT")
+  end)
   grip:SetScript("OnDragStop", function()
     f:StopMovingOrSizing()
+    MF.sizing = nil
     W.Guard("mob frames width", function()
       MF:SetWidth(f:GetWidth())
       MF:SavePosition()
@@ -408,9 +412,19 @@ end
 function MF:ApplyWidth()
   local f = self.frame
   if not f then return end
+  --[[ While the grip is held, the width is the mouse's: the frames keep
+       redrawing during placement (the samples pulse), and putting the saved
+       width back on each pass snapped the frame back under the cursor, so
+       dragging looked broken. The rows follow the live width meanwhile, and
+       letting go saves it. ]]
   local w = self:Width()
-  if math.abs((f:GetWidth() or 0) - w) >= 1 then f:SetWidth(w) end
-  local nameW = self:NameWidth()
+  if self.sizing then
+    w = math.floor((f:GetWidth() or w) + 0.5)
+  elseif math.abs((f:GetWidth() or 0) - w) >= 1 then
+    f:SetWidth(w)
+  end
+  local nameW = w - 4 - 2 * (self.pad or 0) - ROW_FIXED
+  if nameW < 40 then nameW = 40 end
   for _, b in ipairs(self.rows or {}) do
     if b.nameW ~= nameW then
       b.nameW = nameW

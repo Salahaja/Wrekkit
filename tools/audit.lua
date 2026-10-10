@@ -1257,9 +1257,22 @@ step("threat meter", function()
     MF.lastUpdate = nil
     MF:Update()
     if not MF.grip:IsShown() then error("no width grip while placing the frames") end
-    MF.frame:SetWidth(260)
+    -- Mid-drag the frames keep redrawing (the samples pulse). A redraw must
+    -- not put the saved width back under the cursor.
+    MF.grip:GetScript("OnDragStart")()
+    MF.frame:SetWidth(340)
+    NOW = NOW + 0.3
+    MF.lastUpdate = nil
+    MF:Update()
+    if math.floor(MF.frame:GetWidth() + 0.5) ~= 340 then
+      error("a redraw mid-drag snapped the frames back to " .. MF.frame:GetWidth())
+    end
+    for _, row in ipairs(MF.rows) do
+      if row.nameW ~= 340 - 4 - 2 * (MF.pad or 0) - 112 then error("mid-drag, a row's name column did not follow") end
+    end
     MF.grip:GetScript("OnDragStop")()
-    if T:Settings().mobFramesWidth ~= 260 then error("dragging the grip did not save the width") end
+    if T:Settings().mobFramesWidth ~= 340 then error("letting go of the grip did not save the width") end
+    if MF.sizing then error("still sizing after letting go") end
     UI.threatFrames.moving = nil
     MF.lastUpdate = nil
     MF:Update()
