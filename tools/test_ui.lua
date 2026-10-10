@@ -682,6 +682,19 @@ step("meter split: two metrics, each with its own drilldown", function()
     error("side by side is missing a header or the divider")
   end
   if (M.frame:GetWidth() or 0) < M.SIDE_MIN_W then error("the window was not widened for two columns") end
+  -- Equal columns by construction: both meet at a line held to the middle
+  -- of the area by its TOP and BOTTOM, never at a width measured once.
+  local function anchoredTo(frame, point, target)
+    for _, p in ipairs(frame._points or {}) do
+      if p[1] == point and p[2] == target then return true end
+    end
+    return false
+  end
+  if not anchoredTo(M.paneMid, "TOP", M.paneArea) or not anchoredTo(M.paneMid, "BOTTOM", M.paneArea) then
+    error("the middle line is not held to the middle of the area")
+  end
+  if not anchoredTo(M.list, "BOTTOMRIGHT", M.paneMid) then error("the first column does not end at the middle line") end
+  if not anchoredTo(M.head2, "TOPLEFT", M.paneMid) then error("the second column does not start at the middle line") end
   M:Refresh()
   if not string.find(M.head1.label:GetText() or "", "Damage", 1, true) then
     error("the first column's header reads " .. tostring(M.head1.label:GetText()))

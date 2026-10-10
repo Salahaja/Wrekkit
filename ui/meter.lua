@@ -445,6 +445,11 @@ function M:Create()
   divider:Hide()
   self.divider = divider
 
+  -- What the halves are laid out against (see LayoutPanes): the space
+  -- between the toolbar and the footer, and a line across its middle.
+  self.paneArea = CreateFrame("Frame", nil, f.body)
+  self.paneMid = CreateFrame("Frame", nil, self.paneArea)
+
   local list2 = UI.ScrollList(f.body, s.rowHeight)
   list2:Hide()
   self.list2 = list2
@@ -696,9 +701,14 @@ end
 --[[ Share the space between the lists. Stacked, each gets half of the
      height between the toolbar and the footer, the second under its header.
      Side by side, each gets half the width, both under a header. One metric,
-     the one list has all of it. Worked out here rather than with anchors,
-     because 1.12 cannot anchor to the middle of a span. Run on every layout
-     change and every resize, and again once the body has its real size. ]]
+     the one list has all of it.
+
+     Entirely by anchors, through an invisible area spanning the space and a
+     1-pixel line across its middle: a frame anchored by its TOP to another's
+     TOP sits at that one's horizontal centre, so the client keeps the halves
+     equal at every size. This used to be worked out from the body's width,
+     and right after a resize the client can still report the old one: the
+     columns came out unequal, the first one narrower, until the next relayout. ]]
 function M:LayoutPanes()
   local f = self.frame
   if not f or not self.list2 then return end
@@ -715,43 +725,48 @@ function M:LayoutPanes()
   end
 
   local headH = self.headH or 16
-  local bodyH = f.body:GetHeight() or 0
-  local bodyW = f.body:GetWidth() or 0
-  -- Remembered, so a refresh can tell the window has its real size now:
-  -- laid out before it was first drawn, the body can read as 0.
-  self.layoutBodyH, self.layoutBodyW = bodyH, bodyW
+  local area, mid = self.paneArea, self.paneMid
+  area:ClearAllPoints()
+  area:SetPoint("TOPLEFT", f.body, "TOPLEFT", 0, -top)
+  area:SetPoint("BOTTOMRIGHT", f.body, "BOTTOMRIGHT", 0, bottom)
+  mid:ClearAllPoints()
   self.head2:ClearAllPoints()
   self.head2:SetHeight(headH)
   self.list2:ClearAllPoints()
 
   if mode == "side" then
-    local half = math.floor((bodyW - 1) / 2)
-    if half < 1 then half = 1 end
+    -- A vertical line down the middle of the area.
+    mid:SetWidth(1)
+    mid:SetPoint("TOP", area, "TOP", 0, 0)
+    mid:SetPoint("BOTTOM", area, "BOTTOM", 0, 0)
     self.head1:ClearAllPoints()
     self.head1:SetHeight(headH)
-    self.head1:SetPoint("TOPLEFT", f.body, "TOPLEFT", 0, -top)
-    self.head1:SetPoint("TOPRIGHT", f.body, "TOPLEFT", half, -top)
+    self.head1:SetPoint("TOPLEFT", area, "TOPLEFT", 0, 0)
+    self.head1:SetPoint("TOPRIGHT", mid, "TOPLEFT", 0, 0)
     self.list:SetPoint("TOPLEFT", self.head1, "BOTTOMLEFT", 2, -1)
-    self.list:SetPoint("BOTTOMRIGHT", f.body, "BOTTOMLEFT", half - 2, bottom)
-    self.head2:SetPoint("TOPLEFT", f.body, "TOPLEFT", half + 1, -top)
-    self.head2:SetPoint("TOPRIGHT", f.body, "TOPRIGHT", 0, -top)
+    self.list:SetPoint("BOTTOMRIGHT", mid, "BOTTOMLEFT", -2, 0)
+    self.head2:SetPoint("TOPLEFT", mid, "TOPRIGHT", 0, 0)
+    self.head2:SetPoint("TOPRIGHT", area, "TOPRIGHT", 0, 0)
     self.divider:ClearAllPoints()
-    self.divider:SetPoint("TOPLEFT", f.body, "TOPLEFT", half, -top)
-    self.divider:SetPoint("BOTTOMLEFT", f.body, "BOTTOMLEFT", half, bottom)
+    self.divider:SetAllPoints(mid)
     self.head1:Show()
     self.divider:Show()
   else
-    local half = math.floor((bodyH - top - bottom - headH) / 2)
-    if half < 1 then half = 1 end
+    -- A horizontal line across the middle, raised by half a header so the
+    -- second list, under its header, ends up the same height as the first.
+    local lift = math.floor(headH / 2)
+    mid:SetHeight(1)
+    mid:SetPoint("LEFT", area, "LEFT", 0, lift)
+    mid:SetPoint("RIGHT", area, "RIGHT", 0, lift)
     self.head1:Hide()
     self.divider:Hide()
-    self.list:SetPoint("BOTTOMRIGHT", f.body, "TOPRIGHT", -2, -(top + half))
-    self.head2:SetPoint("TOPLEFT", f.body, "TOPLEFT", 0, -(top + half + 1))
-    self.head2:SetPoint("TOPRIGHT", f.body, "TOPRIGHT", 0, -(top + half + 1))
+    self.list:SetPoint("BOTTOMRIGHT", mid, "TOPRIGHT", -2, 0)
+    self.head2:SetPoint("TOPLEFT", mid, "BOTTOMLEFT", 0, 0)
+    self.head2:SetPoint("TOPRIGHT", mid, "BOTTOMRIGHT", 0, 0)
   end
 
   self.list2:SetPoint("TOPLEFT", self.head2, "BOTTOMLEFT", 2, -1)
-  self.list2:SetPoint("BOTTOMRIGHT", f.body, "BOTTOMRIGHT", -2, bottom)
+  self.list2:SetPoint("BOTTOMRIGHT", area, "BOTTOMRIGHT", -2, 0)
   self.head2:Show()
   self.list2:Show()
 end
@@ -1229,10 +1244,6 @@ function M:RefreshInner()
   -- The second half: its metric and, when drilled in, whose detail it is,
   -- on its header, with its total where the footer would put it.
   if split then
-    if (f.body:GetHeight() or 0) ~= self.layoutBodyH
-       or (f.body:GetWidth() or 0) ~= self.layoutBodyW then
-      self:LayoutPanes()
-    end
     local o = self:RenderPane(PANES[2], view, segLabel)
     local where = (o.seg ~= segLabel) and ("  |cff9d9d9d" .. o.seg .. "|r") or ""
     self.head2.label:SetText(o.title .. where)
