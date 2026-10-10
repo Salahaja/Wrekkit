@@ -2452,6 +2452,51 @@ step("a tank's mobs relayed: warned on every mob you are about to pull", functio
   if not ok then error(err) end
 end)
 
+step("the TANK button: say you are the tank, whatever your stance", function()
+  local T, TW = W.threat, W.ui.threat
+  local s = T:Settings()
+  local real = { raid = STUB.GetNumRaidMembers, send = STUB.SendAddonMessage }
+  local sent = {}
+  STUB.GetNumRaidMembers = function() return 3 end
+  STUB.SendAddonMessage = function(p, m, c)
+    if p == T.TANK_PREFIX then table.insert(sent, m) end
+  end
+  s.tankMode, s.coTankShare = "auto", true
+  T.roleAt = nil
+
+  local ok, err = pcall(function()
+    TW:Create()
+    local b = TW.roleBtn
+    if not b then error("the threat window has no TANK button") end
+    local click = b:GetScript("OnClick")
+    TW:PaintRole()
+    -- The audit plays a warrior in no stance: AUTO, not tanking.
+    if b.label:GetText() ~= "AUTO" or T:IsTank() then error("auto, not tanking, reads " .. tostring(b.label:GetText())) end
+
+    arg1 = "LeftButton" click()
+    if s.tankMode ~= "on" or not T:IsTank() then error("left-click did not make you the tank") end
+    if b.label:GetText() ~= "TANK" then error("the button reads " .. tostring(b.label:GetText())) end
+    if sent[table.getn(sent)] ~= "R:1" then error("the group was not told: " .. tostring(sent[table.getn(sent)])) end
+
+    arg1 = "LeftButton" click()
+    if s.tankMode ~= "auto" then error("left-click again did not go back to auto") end
+
+    arg1 = "RightButton" click()
+    if s.tankMode ~= "off" or b.label:GetText() ~= "DPS" then error("right-click did not pick never") end
+    if sent[table.getn(sent)] ~= "R:0" then error("never was not sent as not tanking") end
+
+    arg1 = "LeftButton" click()
+    if s.tankMode ~= "on" then error("left-click from never did not make you the tank") end
+    arg1 = nil
+  end)
+
+  arg1 = nil
+  STUB.GetNumRaidMembers, STUB.SendAddonMessage = real.raid, real.send
+  s.tankMode = "auto"
+  T.roleAt = nil
+  if not ok then error(err) end
+end)
+
 step("raids saved to their own files: open, keep, delete from the report", function()
   local A = W.archive
   if not A:Active() then error("the file API stubs should make per-raid files active") end
