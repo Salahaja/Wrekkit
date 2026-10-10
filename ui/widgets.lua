@@ -1189,6 +1189,27 @@ function UI.Window(name, width, height, title, opts)
   local inset = f._skinned and UI.SkinInset(kind) or 1
   f:SetWidth(width) f:SetHeight(height)
   f:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+
+  --[[ Know when the window is being dragged, by anyone.
+
+       Re-anchoring or resizing a frame the client is moving takes the
+       process down -- ERROR #132, an access violation, no Lua error to
+       catch. The fit and the part-row trim do both, twice a second, so
+       they have to hold off for the length of a drag; this flag is how
+       they know. Set here, around the client's own calls, so every way a
+       window is moved (its title, the docked threat window dragging the
+       meter) is covered without each remembering to. ]]
+  local startMoving, stopMoving = f.StartMoving, f.StopMovingOrSizing
+  f.StartMoving = function(self)
+    self._moving = true
+    return startMoving(self)
+  end
+  f.StopMovingOrSizing = function(self)
+    local r = stopMoving(self)
+    self._moving = nil
+    return r
+  end
+
   -- Strata decides which window wins when they overlap. The report has to
   -- sit above the meter, or the meter's bars draw straight through it.
   f:SetFrameStrata(opts.strata or "MEDIUM")
@@ -1461,7 +1482,8 @@ end
      held -- the drag is the user's. `n` is the rows wanted; `list` is the
      ScrollList they go in, everything else in the window being chrome. ]]
 function UI.FitHeight(f, list, n)
-  if not f or not list or f._sizing then return end
+  -- Never mid-drag: see the note on _moving in UI.Window.
+  if not f or not list or f._sizing or f._moving then return end
   if not f._maxH then f._maxH = f:GetHeight() end
   UI.AnchorTop(f)
   local rowH = list.rowHeight or 18
@@ -1474,7 +1496,7 @@ end
 --- Hold a window by its top-left, so a change of height moves only its
 --- bottom edge. Done once until the window is next moved or resized.
 function UI.AnchorTop(f)
-  if f._topAnchored then return end
+  if f._topAnchored or f._moving or f._sizing then return end
   local left, top = f:GetLeft(), f:GetTop()
   local ptop = UIParent and UIParent:GetTop()
   if left and top and ptop then
@@ -1486,7 +1508,7 @@ end
 
 --- Back to the height the window was sized to, fitting switched off.
 function UI.UnfitHeight(f)
-  if not f or not f._maxH then return end
+  if not f or not f._maxH or f._moving or f._sizing then return end
   f:SetHeight(f._maxH)
   f._maxH = nil
 end

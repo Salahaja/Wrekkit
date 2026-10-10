@@ -870,6 +870,36 @@ step("rows: fixed, stretched to fill, or a set number filling the window", funct
   end)
   M.list.GetHeight = realGetH
   s.rowMode, s.rowCount, s.fitRows = "fixed", 8, false
+step("a window being moved is never re-anchored or resized (that crashes 1.12)", function()
+  local M = UI.meter
+  local f = M.frame
+  local s = M:Settings()
+  M:SetSplit("off")
+  s.fitRows = false
+  local rowH = M.list.rowHeight
+  f:SetHeight(300)
+  f._topAnchored = nil
+  local realGetH = M.list.GetHeight
+  -- A part-row left over, so the trim would act.
+  M.list.GetHeight = function() return f:GetHeight() - 300 + rowH * 3.5 end
+  local ok, err = pcall(function()
+    f:StartMoving()
+    if not f._moving then error("moving the window did not mark it as moving") end
+    local points = table.getn(f._points or {})
+    local before = f._points[1]
+    M:Refresh()
+    if f:GetHeight() ~= 300 then error("the window was resized while being moved") end
+    if f._points[1] ~= before or table.getn(f._points) ~= points then
+      error("the window was re-anchored while being moved")
+    end
+    -- Let go: now the trim may run.
+    f:StopMovingOrSizing()
+    if f._moving then error("still marked as moving after letting go") end
+    M:Refresh()
+    if math.abs(M.list:GetHeight() - rowH * 3) > 0.5 then error("after the move the part-row was not trimmed") end
+  end)
+  if f._moving then f:StopMovingOrSizing() end
+  M.list.GetHeight = realGetH
   M:Refresh()
   if not ok then error(err) end
 end)

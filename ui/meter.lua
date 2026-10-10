@@ -1181,7 +1181,8 @@ end
 --- Once trimmed there is nothing left over, so it settles at once.
 function M:TrimPartialRow()
   local f = self.frame
-  if not f or f._sizing or self:Settings().fitRows or self:SplitMode() == "stacked" then return end
+  -- Never mid-drag: re-anchoring or resizing a moving frame crashes the client.
+  if not f or f._sizing or f._moving or self:Settings().fitRows or self:SplitMode() == "stacked" then return end
   -- Stretched rows fill the window already; there is no part-row to trim.
   if (self:Settings().rowMode or "fixed") ~= "fixed" then return end
   local rowH = self.list.rowHeight or 18
@@ -1208,6 +1209,9 @@ end
 local PLAYERS_MAX = 3
 
 function M:SizeRows()
+  -- Not mid-drag: the rows are laid out again once the window is let go.
+  local f = self.frame
+  if f and (f._moving or f._sizing) then return end
   local s = self:Settings()
   local mode = s.rowMode or "fixed"
   local base = math.floor((s.rowHeight or 18) * UI.FontScale() + 0.5)
