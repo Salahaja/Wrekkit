@@ -16,8 +16,10 @@ each as an addon message from the inspected player under the prefix
 TW_CHAT_MSG_WHISPER, its text led by a tab. A tree's points are its
 talents' ranks added up; the three totals are the spec.
 
-Wrekkit asks one player at a time, never in combat, each again after
-fifteen minutes. ChronicleCompanion asks the same way, and its answers
+Wrekkit asks whoever you target, at once: on this server most players
+only answer while they are your target. Besides that it goes round the
+group, one player at a time, never in combat, each again after fifteen
+minutes, for the few who answer anyway. ChronicleCompanion asks the same way, and its answers
 arrive here too, so whoever it inspected lately is not asked again.
 
 The player's own spec comes straight from GetTalentTabInfo.
@@ -291,15 +293,42 @@ function TL:Step()
   if UnitAffectingCombat and UnitAffectingCombat("player") then return end
   if table.getn(self.queue) == 0 then self:QueueGroup() end
   local name = table.remove(self.queue, 1)
+  if name then self:Ask(name) end
+end
+
+--- Send the ask, and wait on its answer.
+function TL:Ask(name, why)
   if not name or not SendAddonMessage then return end
+  local now = GetTime()
   self.asking, self.askedAt = name, now
   self.lastAsk = self.lastAsk or {}
   self.lastAsk[name] = now
   self.pending[name] = nil
-  self:Note("asked " .. name)
+  self:Note("asked " .. name .. (why and (" (" .. why .. ")") or ""))
   -- The addressee is in the prefix: this channel reaches that one player.
   -- No ">" may appear in the text, and none does.
   pcall(SendAddonMessage, CHANNEL .. "<" .. name .. ">", "INSTalentShow", "GUILD")
+end
+
+--[[ A player targeted: ask them now. On this server an ask goes through
+     while its player is your target -- asked untargeted, most never answer
+     (tried in game, 2026-10-10) -- so targeting is the moment. In combat
+     too: it is one message, and a healer targets the whole raid. Not
+     again for someone known within the refresh, nor within the wait for
+     an answer; an unfinished ask from the round gives way. ]]
+function TL:OnTarget()
+  if not UnitExists or not UnitExists("target") then return end
+  if not UnitIsPlayer or not UnitIsPlayer("target") then return end
+  local name = UnitName("target")
+  if not name or name == UnitName("player") then return end
+  if UnitIsConnected and not UnitIsConnected("target") then return end
+  local now = GetTime()
+  local s = self.specs[name]
+  if s and not s.guess and now - (s.at or 0) < REFRESH then return end
+  if self.asking == name then return end
+  if self.lastAsk and self.lastAsk[name] and now - self.lastAsk[name] < TIMEOUT then return end
+  if self.asking then self.pending[self.asking] = nil end
+  self:Ask(name, "targeted")
 end
 
 ----------------------------------------------------------------------
@@ -400,7 +429,8 @@ function TL:Inspect(name)
   table.insert(self.queue, 1, name)
   if self.lastAsk then self.lastAsk[name] = nil end
   if self.misses then self.misses[name] = nil end
-  W.Print("asking " .. name .. " for their talents -- /wrek specs in a moment for the answer.")
+  W.Print("asking " .. name .. " for their talents -- /wrek specs in a moment for the answer." ..
+    ((UnitName("target") ~= name) and " Most only answer while they are your target." or ""))
 end
 
 ----------------------------------------------------------------------
@@ -414,8 +444,11 @@ function TL:Start()
   f:RegisterEvent("CHAT_MSG_ADDON")
   f:RegisterEvent("CHARACTER_POINTS_CHANGED")
   f:RegisterEvent("PLAYER_ENTERING_WORLD")
+  f:RegisterEvent("PLAYER_TARGET_CHANGED")
   f:SetScript("OnEvent", function()
-    if event == "CHAT_MSG_ADDON" then
+    if event == "PLAYER_TARGET_CHANGED" then
+      W.Guard("talents target", function() TL:OnTarget() end)
+    elseif event == "CHAT_MSG_ADDON" then
       if arg1 == CHANNEL then
         W.Guard("talents", function() TL:OnMessage(arg1, arg2, arg4) end)
       end

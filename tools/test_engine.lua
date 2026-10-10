@@ -3642,8 +3642,27 @@ check("/wrek inspect %t asks the target", sent[5], "TW_CHAT_MSG_WHISPER<Khtalla>
 TL.asking = nil
 TL:Inspect()
 check("  as does no name at all", TL.queue[1], "Khtalla")
+-- Targeting a player asks them at once -- the server passes an ask on
+-- while its player is your target -- even mid-fight, ahead of the round.
+TL.specs, TL.asking = {}, "Shejian"
+UnitAffectingCombat = function() return true end
+TL:OnTarget()
+check("targeting a player asks them", sent[table.getn(sent)], "TW_CHAT_MSG_WHISPER<Khtalla>|INSTalentShow|GUILD")
+check("  taking over from the round's ask", TL.asking, "Khtalla")
+local n = table.getn(sent)
+TL:OnTarget()
+check("  not again while waiting on them", table.getn(sent), n)
+answer("Khtalla", 0, 5, 46)
+advance(30)
+TL:OnTarget()
+check("  nor once known", table.getn(sent), n)
+UnitIsPlayer = function() return false end
+TL.specs = {}
+TL:OnTarget()
+check("  and never a mob", table.getn(sent), n)
+UnitAffectingCombat = function() return false end
 UnitExists, UnitIsPlayer = realExists, realIsPlayer
-TL.queue, TL.misses, TL.lastAsk = {}, {}, {}
+TL.queue, TL.misses, TL.lastAsk, TL.asking = {}, {}, {}, nil
 SendAddonMessage, GetNumRaidMembers, UnitName, UnitAffectingCombat = realSend, realRaid, realName, realUAC
 
 -- Your own, from the talent API.
