@@ -45,8 +45,12 @@ A.loaded = nil
 -- writing a pull as text
 ----------------------------------------------------------------------
 
+local INF = 1 / 0
+
 local function num(n)
-  if n ~= n or n == math.huge or n == -math.huge then return "0" end
+  -- 1/0, not math.huge: that is Lua 5.1, and only some other addon's
+  -- polyfill ever made it work here.
+  if n ~= n or n == INF or n == -INF then return "0" end
   if n == math.floor(n) and n > -1e15 and n < 1e15 then
     return string.format("%.0f", n)   -- the client's %d is 32-bit
   end
