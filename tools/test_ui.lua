@@ -200,6 +200,8 @@ CreateFrame = function(kind, name, parent)
     GetCenter = function() return 400, 300 end,
     GetLeft = function() return 300 end,
     GetTop = function() return 600 end,
+    GetRight = function(self) return 300 + (self._w or 0) end,
+    GetBottom = function(self) return 600 - (self._h or 0) end,
     GetEffectiveScale = function() return 1 end,
     SetScale = function() end,
     Raise = function() end,
@@ -952,6 +954,32 @@ step("settings: no control runs past the border, on any tab", function()
     end
   end
   S:SetTab("meter")
+end)
+
+step("settings: tall enough that its border clips nothing, on any tab", function()
+  local S = UI.settings
+  local f = S:Create()
+  for _, t in ipairs(S.TABS) do
+    S:SetTab(t[1])
+    local need = S.y + 14 + (f.bar:GetHeight() or 26) + 2 * (f.inset or 1)
+    if f:GetHeight() + 0.5 < need then
+      error(string.format("on %s the window is %d tall, the controls and border need %d", t[1], f:GetHeight(), need))
+    end
+  end
+  S:SetTab("meter")
+end)
+
+step("/wrek layout reports the meter's sizes", function()
+  local said = {}
+  local realPrint = Wrekkit.Print
+  Wrekkit.Print = function(m) table.insert(said, m) end
+  local ok, err = pcall(function() SlashCmdList["WREKKIT"]("layout") end)
+  Wrekkit.Print = realPrint
+  if not ok then error(err) end
+  local all = table.concat(said, "\n")
+  if not string.find(all, "meter ", 1, true) or not string.find(all, "list ", 1, true) then
+    error("layout said: " .. all)
+  end
 end)
 
 step("the top bar spans its row, though the row reports a stale width", function()

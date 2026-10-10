@@ -1173,7 +1173,9 @@ function S:Layout()
   end
 
   endRow(self)
-  f:SetHeight(self.y + PAD + (f.bar:GetHeight() or 26))
+  -- The body sits inside the border, so the border's inset is height too:
+  -- left out, the last row of every tab was clipped by it.
+  f:SetHeight(self.y + PAD + (f.bar:GetHeight() or 26) + 2 * (f.inset or 1))
 end
 
 ----------------------------------------------------------------------
