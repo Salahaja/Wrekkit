@@ -995,6 +995,10 @@ function UI.Row(parent, height)
       self.name:SetPoint("LEFT", self, "LEFT", 26 + iconW, 0)
     end
     self.rank:SetText(rank and tostring(rank) .. "." or "")
+    -- One line, cut short with an ellipsis: a name with a space in it -- a
+    -- pet's "Wolf (Owner)" -- wrapped otherwise. A row's own height is
+    -- set outright (EnsureRows), so it reads truly.
+    self.name:SetHeight(self:GetHeight() or 18)
     self.name:SetText(name or "")
     self.value:SetText(value or "")
     self.sub:SetText(sub or "")

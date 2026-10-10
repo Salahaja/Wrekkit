@@ -811,7 +811,7 @@ end
      one to W.metrics can never make it unreachable. ]]
 local METRIC_GROUPS = {
   { "Damage", { "damage", "dps", "crit" } },
-  { "Healing", { "healing", "hps", "healingTotal", "overheal" } },
+  { "Healing", { "healing", "hps", "healingTotal", "overheal", "healCrit" } },
   { "Survival", { "taken", "absorbed", "deaths" } },
   { "Utility", { "dispels", "interrupts", "consumes", "uptime" } },
   { "Enemies", { "enemy", "enemyTaken" } },

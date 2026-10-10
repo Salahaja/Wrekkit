@@ -37,20 +37,43 @@ local NULL_GUID = "0x0000000000000000"
      obviously wrong.
 
      Auto attacks carry the raw HitInfo bitfield straight from the
-     attacker-state update, where the critical flag is 0x200:
+     attacker-state update. In 1.12 -- this server -- the critical flag is
+     0x80:
 
        0x0002  AFFECTS_VICTIM   set on essentially every landed swing
        0x0010  MISS
-       0x0020  FULL_ABSORB
-       0x0200  CRITICALHIT      <- the one that matters
+       0x0020  ABSORB
+       0x0040  RESIST
+       0x0080  CRITICALHIT      <- the one that matters
        0x4000  GLANCING
        0x8000  CRUSHING
+
+     It was read as 0x200, which is where later expansions moved it, and no
+     swing here ever sets that bit: every melee crit counted as a plain hit.
+     A paladin's swings in the Chronicle log were 2 (hit), 16386 (0x4002,
+     glancing) and 130 (0x82, a crit) -- 409 crits, all missed.
 
      Spell damage instead carries a small normalised code where 2 means crit.
      Testing 0x02 against a swing therefore matches AFFECTS_VICTIM and reports
      every white hit as a critical -- a 100% crit rate on melee. ]]
-local HITINFO_CRIT = 512        -- 0x200, auto attacks
+local HITINFO_CRIT = 128        -- 0x80, auto attacks (1.12)
 local SPELL_HIT_CRIT = 2        -- normalised code, spell damage
+
+--[[ Damage that cannot crit, so it is no evidence about a crit chance.
+     Periodic ticks -- a DoT, Consecration -- never crit in 1.12, and the
+     Chronicle log had 3709 Consecration ticks against a paladin's few
+     hundred strikes: counted as hits, they drowned the crit rate. The last
+     field of SPELL_DAMAGE_EVENT, effectAuraStr "e1,e2,e3,auraType", names
+     the aura behind a periodic tick: 3 (PERIODIC_DAMAGE) or 89
+     (PERIODIC_DAMAGE_PERCENT). ]]
+local PERIODIC_AURAS = { [3] = true, [89] = true }
+
+local function periodicTick(effectAuraStr)
+  if type(effectAuraStr) ~= "string" then return false end
+  local _, _, aura = string.find(effectAuraStr, ",(%d+)$")
+  return PERIODIC_AURAS[tonumber(aura) or -1] or false
+end
+C.PeriodicTick = periodicTick
 
 --- Is `bit` set in `value`? Lua 5.0 has no bitwise operators.
 local function hasBit(value, bit)
@@ -554,6 +577,7 @@ function C:AUTO_ATTACK(attacker, target, damage, hitInfo, victimState, _, blocke
   self:TakeDamage(target, damage)
   local info = swingInfo
   info.crit = hasBit(num(hitInfo), HITINFO_CRIT)
+  info.canCrit = true
   info.absorbed = num(absorbed)
   info.blocked = num(blocked)
   info.resisted = num(resisted)
@@ -561,13 +585,14 @@ function C:AUTO_ATTACK(attacker, target, damage, hitInfo, victimState, _, blocke
   W.encounter:Damage(attacker, target, 0, damage, info)
 end
 
-function C:SPELL_DAMAGE(target, caster, spellId, amount, mitigationStr, hitInfo, school)
+function C:SPELL_DAMAGE(target, caster, spellId, amount, mitigationStr, hitInfo, school, effectAuraStr)
   amount = num(amount)
   local absorbed, blocked, resisted = mitigation(mitigationStr)
   if amount <= 0 and absorbed <= 0 then return end
   self:TakeDamage(target, amount)
   local info = spellHitInfo
   info.crit = hasBit(num(hitInfo), SPELL_HIT_CRIT)
+  info.canCrit = not periodicTick(effectAuraStr)
   info.absorbed = absorbed
   info.blocked = blocked
   info.resisted = resisted
@@ -768,6 +793,8 @@ function C:DAMAGE_SHIELD(shieldOwner, attacker, damage, school)
   local info = shieldInfo
   info.school = num(school)
   info.shield = true
+  -- A damage shield (Retribution Aura, Thorns) never crits.
+  info.canCrit = false
   W.encounter:Damage(shieldOwner, attacker, 0, damage, info)
 end
 
@@ -802,8 +829,9 @@ dispatch.AUTO_ATTACK_SELF = function(a1, a2, a3, a4, a5, a6, a7, a8, a9)
 end
 dispatch.AUTO_ATTACK_OTHER = dispatch.AUTO_ATTACK_SELF
 
-dispatch.SPELL_DAMAGE_EVENT_SELF = function(a1, a2, a3, a4, a5, a6, a7)
-  C:SPELL_DAMAGE(a1, a2, a3, a4, a5, a6, a7)
+dispatch.SPELL_DAMAGE_EVENT_SELF = function(a1, a2, a3, a4, a5, a6, a7, a8)
+  -- a8, effectAuraStr: whether this is a periodic tick (see periodicTick).
+  C:SPELL_DAMAGE(a1, a2, a3, a4, a5, a6, a7, a8)
 end
 dispatch.SPELL_DAMAGE_EVENT_OTHER = dispatch.SPELL_DAMAGE_EVENT_SELF
 

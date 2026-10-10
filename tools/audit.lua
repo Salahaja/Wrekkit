@@ -1232,6 +1232,12 @@ step("threat meter", function()
       end
     end
   end
+  -- A mob name with spaces stays on one line (it wrapped over the next row).
+  for _, row in ipairs(UI.mobs.rows) do
+    if row:IsShown() and row.mob and (row.name:GetHeight() or 0) <= 0 then
+      error("a mob row's name has no one-line height")
+    end
+  end
   if skulls ~= 1 or plain < 2 then error("markers on " .. skulls .. " rows, plain " .. plain) end
   -- Taken off again, it goes.
   STUB.GetRaidTargetIndex = realMark

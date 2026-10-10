@@ -69,6 +69,9 @@ local function newActor(guid, u)
     damage = 0, taken = 0, healing = 0, overheal = 0,
     absorbed = 0, deaths = 0, dispels = 0, interrupts = 0,
     hits = 0, crits = 0, misses = 0, consumes = 0,
+    -- The hits that could have crit (not a periodic tick or a damage
+    -- shield), so Crit % is crits of those; and heals, kept apart.
+    critHits = 0, healHits = 0, healCrits = 0,
 
     -- Seconds this actor spent acting (see markActive). Recount divides by
     -- this; Skada divides by the whole fight. The two disagree and people
@@ -738,6 +741,7 @@ function E:Damage(sourceGuid, targetGuid, spellId, amount, info)
     src.absorbed = src.absorbed + (info.absorbed or 0)
     src.hits = src.hits + 1
     if info.crit then src.crits = src.crits + 1 end
+    if info.canCrit ~= false then src.critHits = (src.critHits or 0) + 1 end
 
     markActive(enc, src, now)
     local row = abilityRow(src.dmgAbility, spellId, spellName)
@@ -823,7 +827,14 @@ function E:Heal(casterGuid, targetGuid, spellId, effective, over, info)
 
   src.healing = src.healing + effective
   src.overheal = src.overheal + over
-  if info.crit then src.crits = src.crits + 1 end
+  --[[ Heal crits are counted apart. They were added to `crits`, the
+       damage count, with no hit to go with them, so a paladin who healed
+       had their damage Crit % lifted by every heal that crit. A HoT tick
+       cannot crit, so it is not a chance to. ]]
+  if not info.periodic then
+    src.healHits = (src.healHits or 0) + 1
+    if info.crit then src.healCrits = (src.healCrits or 0) + 1 end
+  end
 
   local spellName = W.capture:Spell(spellId)
   local row = abilityRow(src.healAbility, spellId, spellName)
@@ -1695,6 +1706,7 @@ function E:Persist(enc)
       overheal = a.overheal, absorbed = a.absorbed, deaths = a.deaths,
       dispels = a.dispels, interrupts = a.interrupts,
       hits = a.hits, crits = a.crits, misses = a.misses,
+      critHits = a.critHits, healHits = a.healHits, healCrits = a.healCrits,
       consumes = a.consumes,
       active = a.active,
       -- Packed: the live table is keyed by spell id, this is a string.

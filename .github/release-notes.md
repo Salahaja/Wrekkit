@@ -1,19 +1,16 @@
-**Choose how the meter's bars fill a window.**
+**Crit % is right now, and mob names no longer spill over each other.**
 
-## New
-- **Rows** (Settings → Meter) decides how the bars use the window's height:
-  - **Fixed height:** as before. Bars use your Row height, and the window holds as many as fit.
-  - **Stretch to fill:** as many bars as fit at your Row height, stretched evenly to fill the window with no gap.
-  - **Set number:** choose how many bars with **Rows shown**, and they stretch to fill the window.
-  - **Fill with players:** however many players are shown fill the window. Each bar can grow to at most three Row heights, so one player isn't one giant bar.
+## Fixed
+- **Melee crits are counted.** Wrekkit was looking for crits in the wrong place for vanilla, so melee crits were never counted. Crit % from melee was always too low.
+- **Crit % only counts hits that could crit.** Damage-over-time ticks (Consecration, DoTs) and damage shields (Retribution Aura, Thorns) still count as damage, but they can't crit, so they no longer drag the percentage down.
+- **Heal crits are separate.** They were being added to damage crit %. There's now a **Heal Crit %** metric of its own under Healing in the meter's metric menu. HoT ticks are left out, since they can't crit either.
+- **Mob names stay on one line.** Long mob names, like "Expert Training Dummy", wrapped onto several lines in the mob window and covered the row below. They're now cut short with "…". Widen the window to see more of each name.
 
-  "Fit meter to its rows", when it's on, sizes the window to the players instead. With two metrics, each half fills its own space.
-
-Also includes everything in 0.9.12: the fix for the crash when moving the meter, bars reaching the end of their row, and the settings window fitting its border.
+Pulls recorded before this update keep their old crit numbers.
 
 ## Install
 
-Download `Wrekkit-0.9.13.zip` and extract it into `<your client>\Interface\AddOns\`. You should end up with `Interface\AddOns\Wrekkit\Wrekkit.toc`. Do **not** use the "Source code" links. **Fully restart the client** after installing. `/wrek status` should then report **v0.9.13**.
+Download `Wrekkit-0.9.14.zip` and extract it into `<your client>\Interface\AddOns\`. You should end up with `Interface\AddOns\Wrekkit\Wrekkit.toc`. Do **not** use the "Source code" links. **Fully restart the client** after installing. `/wrek status` should then report **v0.9.14**.
 
 ## Requirements
 

@@ -143,6 +143,7 @@ local function blankRow(a, key)
     damage = 0, taken = 0, healing = 0, overheal = 0, absorbed = 0,
     deaths = 0, dispels = 0, interrupts = 0,
     hits = 0, crits = 0, misses = 0, consumes = 0, active = 0,
+    critHits = 0, healHits = 0, healCrits = 0,
     -- auras and the four ability tables are built on first use; see
     -- lazyDetail below.
   }, lazyDetail)
@@ -391,6 +392,10 @@ function R:View(encounters, opts)
       row.interrupts = row.interrupts + (a.interrupts or 0)
       row.hits = row.hits + (a.hits or 0)
       row.crits = row.crits + (a.crits or 0)
+      -- A pull saved before critHits existed counted every hit as one.
+      row.critHits = row.critHits + (a.critHits or a.hits or 0)
+      row.healHits = row.healHits + (a.healHits or 0)
+      row.healCrits = row.healCrits + (a.healCrits or 0)
       row.misses = row.misses + (a.misses or 0)
       row.consumes = row.consumes + (a.consumes or 0)
 

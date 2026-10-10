@@ -262,6 +262,9 @@ local function makeRow(parent, i)
   b.mark:Hide()
 
   b.name = UI.Text(b, 10, W.color.text)
+  -- One line, cut short: given only a width, a name with spaces in it
+  -- ("Expert Training Dummy") wrapped onto three lines over the next row.
+  b.name:SetHeight(ROW_H)
   b.name:SetPoint("LEFT", b, "LEFT", 6, 0)
   b.nameW = MF:NameWidth()
   b.name:SetWidth(b.nameW)
@@ -280,6 +283,7 @@ local function makeRow(parent, i)
     end
   end
   b.who = UI.Text(b, 10, W.color.text, "RIGHT")
+  b.who:SetHeight(ROW_H)
   b.who:SetPoint("RIGHT", b, "RIGHT", -38, 0)
   b.who:SetWidth(66)
   b.pct = UI.Text(b, 10, W.color.textDim, "RIGHT", UI.fontNum)
