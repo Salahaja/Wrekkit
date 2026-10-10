@@ -878,6 +878,27 @@ step("after a resize, the meter loses the part of a row it cannot use", function
   if not p or p[1] ~= "BOTTOMLEFT" then error("the footer text is not seated low") end
 end)
 
+step("settings: no control runs past the border, on any tab", function()
+  local S = UI.settings
+  local f = S:Create()
+  local inner = f:GetWidth() - (f.inset or 1) * 2
+  for _, t in ipairs(S.TABS) do
+    S:SetTab(t[1])
+    for _, item in ipairs(S.items) do
+      if (item.tab or "meter") == t[1] and not item.full then
+        local c = item.control
+        local p = c._points and c._points[1]
+        local right = p and (p[4] + (c:GetWidth() or 0))
+        if right and right > inner - 14 + 0.5 then
+          error(string.format("on %s, %q reaches %d of %d inside the border", t[1],
+            tostring(c.labelText or c.label or "?"), right, inner - 14))
+        end
+      end
+    end
+  end
+  S:SetTab("meter")
+end)
+
 step("a narrow row never draws its name over its value", function()
   local realScale = Wrekkit.db.fontScale
   Wrekkit.db.fontScale = 0.7
