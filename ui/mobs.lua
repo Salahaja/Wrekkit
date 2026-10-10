@@ -38,7 +38,11 @@ local MF = UI.mobs
 local T = W.threat
 
 local ROW_H = 18
-local WIDTH = 220
+local WIDTH = 220      -- default; the setting is mobFramesWidth
+-- Everything on a row but the name: its left inset, the "who" column, the
+-- % column and the gaps. The name gets the rest of the row.
+local ROW_FIXED = 112
+local MIN_W, MAX_W = 160, 420
 local UPDATE = 0.2
 
 -- guid -> { guid, name, order, hp, max, who, onMe, state, seen }
@@ -261,7 +265,8 @@ local function makeRow(parent, i)
 
   b.name = UI.Text(b, 10, W.color.text)
   b.name:SetPoint("LEFT", b, "LEFT", 6, 0)
-  b.name:SetWidth(104)
+  b.nameW = MF:NameWidth()
+  b.name:SetWidth(b.nameW)
   b.SetMark = function(self, i)
     if self.markShown == i then return end
     self.markShown = i
@@ -269,11 +274,11 @@ local function makeRow(parent, i)
     if i then
       showMark(self.mark, i)
       self.name:SetPoint("LEFT", self.mark, "RIGHT", 3, 0)
-      self.name:SetWidth(104 - (ROW_H - 4) - 1)
+      self.name:SetWidth(self.nameW - (ROW_H - 4) - 1)
     else
       self.mark:Hide()
       self.name:SetPoint("LEFT", self, "LEFT", 6, 0)
-      self.name:SetWidth(104)
+      self.name:SetWidth(self.nameW)
     end
   end
   b.who = UI.Text(b, 10, W.color.text, "RIGHT")
@@ -317,7 +322,7 @@ function MF:Create()
   local s = T:Settings()
   local f = CreateFrame("Frame", "WrekkitMobs", UIParent)
   self.frame = f
-  f:SetWidth(WIDTH)
+  f:SetWidth(self:Width())
   f:SetFrameStrata("MEDIUM")
   f:SetMovable(true)
   f:SetClampedToScreen(true)
@@ -346,9 +351,75 @@ function MF:Create()
   f.count:SetPoint("RIGHT", title, "RIGHT", -4, 0)
   f.count:SetText("click title: expand / collapse")
 
+  --[[ The width, by dragging. Only while placing the frames (/wrek threat
+       move), like the rest of their placement: in a fight a grip in the
+       corner is one more thing to click by mistake. Height follows the
+       rows, so only the width is dragged. ]]
+  f:SetResizable(true)
+  if f.SetMinResize then f:SetMinResize(MIN_W, 20) end
+  if f.SetMaxResize then f:SetMaxResize(MAX_W, 2000) end
+  local grip = CreateFrame("Button", nil, f)
+  grip:SetWidth(14)
+  grip:SetHeight(14)
+  grip:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -1, 1)
+  grip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+  grip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+  grip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+  grip:RegisterForDrag("LeftButton")
+  grip:SetScript("OnDragStart", function() f:StartSizing("RIGHT") end)
+  grip:SetScript("OnDragStop", function()
+    f:StopMovingOrSizing()
+    W.Guard("mob frames width", function()
+      MF:SetWidth(f:GetWidth())
+      MF:SavePosition()
+    end)
+  end)
+  grip:Hide()
+  self.grip = grip
+
   self.rows = {}
   self:RestorePosition()
   return f
+end
+
+--- The stack's width, from the setting.
+function MF:Width()
+  return T:Settings().mobFramesWidth or WIDTH
+end
+
+--- What a row leaves for the mob's name: the row less its insets and the
+--- fixed columns. 104 at the default width.
+function MF:NameWidth()
+  local w = self:Width() - 4 - 2 * (self.pad or 0) - ROW_FIXED
+  if w < 40 then w = 40 end
+  return w
+end
+
+--- Set the width (dragged, or from settings), within its limits.
+function MF:SetWidth(w)
+  w = math.floor((tonumber(w) or WIDTH) + 0.5)
+  if w < MIN_W then w = MIN_W elseif w > MAX_W then w = MAX_W end
+  T:Settings().mobFramesWidth = w
+  self:ApplyWidth()
+end
+
+--- Bring the frame and every row's name column to the current width.
+--- Cheap when nothing changed, so Update can call it every pass.
+function MF:ApplyWidth()
+  local f = self.frame
+  if not f then return end
+  local w = self:Width()
+  if math.abs((f:GetWidth() or 0) - w) >= 1 then f:SetWidth(w) end
+  local nameW = self:NameWidth()
+  for _, b in ipairs(self.rows or {}) do
+    if b.nameW ~= nameW then
+      b.nameW = nameW
+      -- Re-lay the name, with or without a marker beside it.
+      local mark = b.markShown
+      b.markShown = -1
+      b:SetMark(mark)
+    end
+  end
 end
 
 --- Saved by its top edge, so the stack grows downward from where it was put.
@@ -461,7 +532,7 @@ local function paintMob(b, m, tank, s, blink, targetGuid)
   local frac = (m.max and m.max > 0) and (m.hp / m.max) or 1
   if frac > 1 then frac = 1 elseif frac < 0.01 then frac = 0.01 end
   local w = b:GetWidth()
-  if not w or w <= 0 then w = WIDTH - 4 end
+  if not w or w <= 0 then w = MF:Width() - 4 end
   b.hp:SetWidth(w * frac)
 
   local trouble = classify(m, tank, s) == "trouble"
@@ -533,6 +604,9 @@ function MF:Update()
   end
 
   local f = self:Create()
+  self:ApplyWidth()
+  -- The width grip, only while the frames are being placed.
+  if moving then self.grip:Show() else self.grip:Hide() end
   local tank = moving or T:IsTank()
   local blink = 0.25 + 0.3 * math.abs(math.sin(now * math.pi * (s.flashSpeed or 3)))
   local collapsed = self:Collapsed(total)

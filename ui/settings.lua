@@ -933,6 +933,13 @@ function S:BuildThreat()
     { "In every fight, tanking or not. Not tanking,", "a mob on you is red, and with a tank running",
       "Wrekkit a mob you are close to pulling gets", "a row with your %, red past your warning line." })
 
+  -- Also by dragging its corner while the frames are being placed.
+  stepper(self, "Width",
+    function() return ts().mobFramesWidth end,
+    function(v) if UI.mobs then UI.mobs:SetWidth(v) else ts().mobFramesWidth = v end end,
+    160, 420, 10,
+    function(v) return v .. "px" end)
+
   stepper(self, "From",
     function() return ts().mobFramesMin end,
     function(v) ts().mobFramesMin = v; redraw() end,

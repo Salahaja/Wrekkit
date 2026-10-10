@@ -1237,6 +1237,35 @@ step("threat meter", function()
     if row:IsShown() and row.mark:IsShown() then error("a marker stayed after it was cleared") end
   end
   NOW = markNow
+  -- The width: set it, and the frame and every row's name column follow;
+  -- outside its limits it is held to them.
+  do
+    local MF = UI.mobs
+    local before = T:Settings().mobFramesWidth
+    MF:SetWidth(300)
+    if math.floor(MF.frame:GetWidth() + 0.5) ~= 300 then error("the mob frames are " .. MF.frame:GetWidth() .. " wide, not 300") end
+    for _, row in ipairs(MF.rows) do
+      if row.nameW ~= MF:NameWidth() then error("a row's name column did not follow the width") end
+    end
+    if MF:NameWidth() <= 104 then error("a wider frame gave the name no more room") end
+    MF:SetWidth(1000)
+    if T:Settings().mobFramesWidth ~= 420 then error("the width is not held to 420") end
+    MF:SetWidth(10)
+    if T:Settings().mobFramesWidth ~= 160 then error("the width is not held to 160") end
+    -- The grip: only while placing, and dragging it saves the width.
+    UI.threatFrames.moving = true
+    MF.lastUpdate = nil
+    MF:Update()
+    if not MF.grip:IsShown() then error("no width grip while placing the frames") end
+    MF.frame:SetWidth(260)
+    MF.grip:GetScript("OnDragStop")()
+    if T:Settings().mobFramesWidth ~= 260 then error("dragging the grip did not save the width") end
+    UI.threatFrames.moving = nil
+    MF.lastUpdate = nil
+    MF:Update()
+    if MF.grip:IsShown() then error("the width grip stayed after placing") end
+    MF:SetWidth(before)
+  end
   -- Your target is marked, and every row with a reading shows its %.
   local realExistsMF = STUB.UnitExists
   STUB.UnitExists = function(u)
