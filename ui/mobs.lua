@@ -118,6 +118,16 @@ local function consider(guid, now)
     m.share = runner and runner.perc or 0
     m.pull = runner and runner.pull or m.pull
   end
+  -- Not tanking: a tank's relay may say you are the one closest to pulling
+  -- it, with your share of their threat -- the same two numbers a tank
+  -- reads for their runner-up, so the frames can sort mobs the same way.
+  m.mine = nil
+  if not m.pull and low then
+    local r = T.relayMobs[low]
+    if r and T:RelayMine(low, r, now) then
+      m.pull, m.share, m.mine = r.pull, r.perc, true
+    end
+  end
   -- Through the same watcher as the plates, so a mob with no plate in
   -- view is still caught going loose, and alerted once.
   m.state = T:WatchMob(guid, m.name)
@@ -382,7 +392,11 @@ local SAMPLE = {
        watch     on you, but someone has mobFramesExpandAt% of your threat
        fine      on you
        elsewhere on a co-tank, a pet, or nobody
-     Not tanking, a mob on YOU is the trouble and the rest are elsewhere. ]]
+     Not tanking, it is the same question turned round, from a tank's relay:
+       trouble   on you, or you are past your warning line on it
+       watch     you are the one closest to pulling it, with
+                 mobFramesExpandAt% of the tank's threat
+       elsewhere the rest ]]
 local function classify(m, tank, s)
   if tank then
     if m.state == "loose" then return "trouble" end
@@ -394,6 +408,8 @@ local function classify(m, tank, s)
     return "elsewhere"
   end
   if m.onMe then return "trouble" end
+  if m.mine and m.pull and m.pull >= s.warnAt then return "trouble" end
+  if m.mine and m.share and m.share >= s.mobFramesExpandAt then return "watch" end
   return "elsewhere"
 end
 

@@ -1208,6 +1208,7 @@ step("threat meter", function()
     error("mob frames show " .. onMe .. " on you and " .. onPriest .. " on the priest")
   end
   -- Raid markers: the skull on Drake 1 shows on its row, nothing on the rest.
+  local markNow = NOW
   local realMark = STUB.GetRaidTargetIndex
   STUB.GetRaidTargetIndex = function(u) if u == drakes[1] then return 8 end end
   NOW = NOW + 0.1
@@ -1235,6 +1236,7 @@ step("threat meter", function()
   for _, row in ipairs(UI.mobs.rows) do
     if row:IsShown() and row.mark:IsShown() then error("a marker stayed after it was cleared") end
   end
+  NOW = markNow
   -- Your target is marked, and every row with a reading shows its %.
   local realExistsMF = STUB.UnitExists
   STUB.UnitExists = function(u)
@@ -1345,6 +1347,40 @@ step("threat meter", function()
   UI.mobs.lastUpdate = nil
   UI.mobs:Update()
 
+  -- Not tanking, with the frames on for everyone and collapsed: a tank's
+  -- relay says you are about to pull Drake 2, so it gets a red row of its
+  -- own, as a slipping mob does for a tank.
+  do
+    local ts = T:Settings()
+    local was = { mode = ts.tankMode, forWho = ts.mobFramesFor, collapse = ts.mobFramesCollapse }
+    ts.tankMode, ts.mobFramesFor, ts.mobFramesCollapse = "off", "everyone", "always"
+    T.roleAt = nil
+    local saveCur = T.current
+    -- Drake 2 on the tank, not on you: only the relay can make it red.
+    local saveIsUnit, saveTarget = STUB.UnitIsUnit, WORLD[drakes[2] .. "target"]
+    STUB.UnitIsUnit = function() return false end
+    WORLD[drakes[2] .. "target"] = { name = "Tanky", isPlayer = true, class = "WARRIOR" }
+    T.current = nil
+    T.relayMobs[T.LowGuid(drakes[2])] = { runner = "Auditor", perc = 105, pull = 105 / 1.1,
+      at = NOW + 0.1, creature = "Drake 2", from = "Tanky" }
+    NOW = NOW + 0.1
+    UI.mobs.lastUpdate = nil
+    UI.mobs:Update()
+    -- Read now: the redraw below repaints the rows.
+    local found, red = false, false
+    for _, row in ipairs(UI.mobs.rows) do
+      if row:IsShown() and row.mob and row.mob.guid == drakes[2] then found, red = true, row.trouble end
+    end
+    T.relayMobs, T.current = {}, saveCur
+    STUB.UnitIsUnit, WORLD[drakes[2] .. "target"] = saveIsUnit, saveTarget
+    ts.tankMode, ts.mobFramesFor, ts.mobFramesCollapse = was.mode, was.forWho, was.collapse
+    T.roleAt = nil
+    -- Drawn again under the settings put back: the next check clicks row 1.
+    UI.mobs.lastUpdate = nil
+    UI.mobs:Update()
+    if not found then error("as DPS, the mob you are about to pull has no row of its own") end
+    if not red then error("as DPS, the mob you are past your line on is not red") end
+  end
   local casts = {}
   STUB.TargetUnit = function(u) table.insert(casts, "target:" .. u) end
   arg1 = "LeftButton"
