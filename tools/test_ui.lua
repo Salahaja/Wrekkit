@@ -899,6 +899,23 @@ step("settings: no control runs past the border, on any tab", function()
   S:SetTab("meter")
 end)
 
+step("the top bar spans its row, though the row reports a stale width", function()
+  local list = UI.ScrollList(UIParent, 18)
+  list:SetWidth(300)
+  list:SetHeight(90)
+  list:SetData({ { n = 1 }, { n = 0.5 } }, function(row, item)
+    row:SetData(1, "Salahaja", "56.3k", "", item.n, { 1, 1, 1 }, 58)
+  end)
+  -- Just re-anchored, the rows still report an older, narrower width.
+  for _, r in ipairs(list.rows) do r.GetWidth = function() return 200 end end
+  list:Render(list._paint)
+  local top = list.rows[1]
+  if math.abs(top.bar:GetWidth() - 300) > 0.5 then
+    error("the top bar is " .. top.bar:GetWidth() .. " wide in a 300-wide row")
+  end
+  if math.abs(list.rows[2].bar:GetWidth() - 150) > 0.5 then error("a half bar is not half the row") end
+end)
+
 step("a narrow row never draws its name over its value", function()
   local realScale = Wrekkit.db.fontScale
   Wrekkit.db.fontScale = 0.7
