@@ -113,6 +113,7 @@ function TF:CreateIndicator()
   ind.track:SetVertexColor(0, 0, 0, 0.6)
   ind.fill = ind:CreateTexture(nil, "OVERLAY")
   ind.fill:SetTexture(UI.media.bar)
+  UI.RegisterBar(ind.fill)
 
   -- The tank's other mobs, in one line: "4 held  1 slipping  1 loose".
   ind.summary = ind:CreateFontString(nil, "OVERLAY")

@@ -106,7 +106,8 @@ local function region(kind)
     GetValue = function(self) return self._value or self._min or 0 end,
     SetAlpha = function(self, a) self._alpha = a end,
     GetAlpha = function(self) return self._alpha or 1 end,
-    SetTexture = function() end,
+    SetTexture = function(self, t) self._texture = t end,
+    GetTexture = function(self) return self._texture end,
     -- Recorded, not discarded: opacity is expressed through the alpha
     -- channel here, so a stub that throws it away cannot tell a working
     -- opacity setting from one that does nothing.
@@ -117,7 +118,8 @@ local function region(kind)
     SetGradientAlpha = function() end,
     SetBlendMode = function() end,
     SetDrawLayer = function() end,
-    SetFont = function() return true end,
+    SetFont = function(self, face, size) self._face, self._size = face, size return true end,
+    GetFont = function(self) return self._face, self._size end,
     SetText = function(self, t) self._text = t end,
     GetText = function(self) return self._text or "" end,
     SetTextColor = function() end,
@@ -196,6 +198,8 @@ CreateFrame = function(kind, name, parent)
     SetBackdropColor = function(self, r, g, b, a) self._bdA = a end,
     SetBackdropBorderColor = function(self, r, g, b, a) self._bdBorderA = a end,
     GetCenter = function() return 400, 300 end,
+    GetLeft = function() return 300 end,
+    GetTop = function() return 600 end,
     GetEffectiveScale = function() return 1 end,
     SetScale = function() end,
     Raise = function() end,
@@ -605,6 +609,240 @@ step("meter toolbar toggles", function()
 end)
 
 step("meter scrolls", function() UI.meter.list:Scroll(-1) UI.meter.list:Scroll(1) end)
+
+step("bar style: changes every bar at once, and back to the skin's", function()
+  local M = UI.meter
+  M:Refresh()
+  local row = M.list.rows[1]
+  if not row then error("the meter has no rows to look at") end
+  local skinBar = UI.skinBar
+  UI.SetBarTexture("flat")
+  if row.bar:GetTexture() ~= UI.media.white then error("flat did not reach an existing bar: " .. tostring(row.bar:GetTexture())) end
+  if Wrekkit.db.barTexture ~= "flat" then error("the bar style was not saved") end
+  UI.SetBarTexture("blizzard")
+  if row.bar:GetTexture() ~= "Interface\\TargetingFrame\\UI-StatusBar" then error("Blizzard bars did not apply") end
+  UI.SetBarTexture("skin")
+  if row.bar:GetTexture() ~= skinBar then error("skin did not bring the look's own bar back") end
+  -- A row made after the change gets the new style too.
+  UI.SetBarTexture("flat")
+  local fresh = UI.Row(UIParent, 18)
+  if fresh.bar:GetTexture() ~= UI.media.white then error("a new row did not get the chosen style") end
+  UI.SetBarTexture("skin")
+end)
+
+step("colours apart from the look, and bar opacity", function()
+  local C = Wrekkit.color
+  local keep = {}
+  for _, k in ipairs({ "accent", "accentHi", "text", "textDim" }) do
+    keep[k] = { C[k][1], C[k][2], C[k][3] }
+  end
+  local function near(c, r, g, b) return math.abs(c[1] - r) + math.abs(c[2] - g) + math.abs(c[3] - b) < 0.01 end
+  UI.ApplyColorTheme("pfui")
+  if not near(C.accent, 0.20, 1.00, 0.80) then error("pfUI colours did not give the teal accent") end
+  UI.ApplyColorTheme("blizzard")
+  if not near(C.accent, 1.00, 0.82, 0.00) or not near(C.text, 1, 1, 1) then error("Blizzard colours did not apply") end
+  UI.ApplyColorTheme("modern")
+  if not near(C.accent, 0.878, 0.635, 0.173) then error("modern did not bring the amber back") end
+  UI.ApplyColorTheme("skin")   -- a no-op: the look's own stay
+  for k, c in pairs(keep) do C[k][1], C[k][2], C[k][3] = c[1], c[2], c[3] end
+
+  -- Bar opacity: live, and held to 20-100%.
+  local M = UI.meter
+  Wrekkit.db.barAlpha = 0.9
+  M:Refresh()
+  local row = M.list.rows[1]
+  if row and row:IsShown() and math.abs((row.bar._a or 0) - 0.9) > 0.001 then
+    error("bar opacity did not reach the bars: " .. tostring(row.bar._a))
+  end
+  Wrekkit.db.barAlpha = 5
+  if UI.BarAlpha() ~= 1 then error("bar opacity is not held to 100%") end
+  Wrekkit.db.barAlpha = 0
+  if UI.BarAlpha() ~= 0.2 then error("bar opacity is not held to 20%") end
+  Wrekkit.db.barAlpha = nil
+  if UI.BarAlpha() ~= 0.55 then error("unset, bars are not the looks' 55%") end
+  M:Refresh()
+end)
+
+step("font: changes text at once, leaves the numbers, offers pfUI's only with pfUI", function()
+  local M = UI.meter
+  M:Refresh()
+  local row = M.list.rows[1]
+  local skinFont = UI.skinFont or UI.font
+  -- A number set in the narrow face, to see it is left alone.
+  local num = UI.Text(UIParent, 10, nil, "RIGHT", UI.fontNum)
+  UI.SetFont("arial")
+  if row.name:GetFont() ~= "Fonts\\ARIALN.TTF" then error("the font did not reach an existing name: " .. tostring(row.name:GetFont())) end
+  if Wrekkit.db.font ~= "arial" then error("the font choice was not saved") end
+  UI.SetFont("morpheus")
+  if row.name:GetFont() ~= "Fonts\\MORPHEUS.TTF" then error("a second change did not follow") end
+  if num:GetFont() ~= UI.fontNum then error("the numbers' face was changed") end
+  local fresh = UI.Text(UIParent, 11)
+  if fresh:GetFont() ~= "Fonts\\MORPHEUS.TTF" then error("new text did not get the chosen font") end
+  UI.SetFont("skin")
+  if row.name:GetFont() ~= skinFont then error("skin did not bring the look's font back") end
+  -- pfUI's fonts: only with pfUI.
+  local hadPf = pfUI
+  pfUI = nil
+  for _, f in ipairs(UI.FontChoices()) do
+    if f.pfui then error("a pfUI font was offered without pfUI: " .. f.label) end
+  end
+  if UI.FontPath("myriad") then error("a pfUI font resolved without pfUI") end
+  pfUI = { font_default = "Interface\\AddOns\\pfUI\\fonts\\Myriad-Pro.ttf" }
+  local offered = 0
+  for _, f in ipairs(UI.FontChoices()) do if f.pfui then offered = offered + 1 end end
+  if offered == 0 then error("pfUI's fonts were not offered with pfUI") end
+  if UI.FontPath("pfui") ~= pfUI.font_default then error("pfUI's own font did not resolve") end
+  pfUI = hadPf
+end)
+
+step("class icons: on player rows when asked for, never stale on a reused row", function()
+  local M = UI.meter
+  M:Settings().metric, M:Settings().segment = "damage", "overall"
+  M.drill, M.drillAbility = nil, nil
+  Wrekkit.db.classIcons = true
+  M:Refresh()
+  local item = M.list.data[1]
+  if not item then error("the meter has no rows") end
+  local checked = 0
+  for i, it in ipairs(M.list.data) do
+    local row = M.list.rows[i]
+    if row and row:IsShown() and it.isPlayer and UI.CLASS_COORDS[it.class or ""] then
+      if not row.icon:IsShown() then error("no class icon on " .. tostring(it.name)) end
+      local p = row.name._points[1]
+      if not p or p[4] <= 26 then error("the name did not move over for the icon") end
+      checked = checked + 1
+    end
+  end
+  if checked == 0 then error("no player row to check a class icon on") end
+  -- The same row painted as an ability (no class): no icon left behind.
+  M.drill = item.key
+  M:Refresh()
+  if M.list.rows[1].icon:IsShown() then error("an ability row kept a class icon") end
+  M.drill = nil
+  -- Off: gone, and the name back at the gutter.
+  Wrekkit.db.classIcons = false
+  M:Refresh()
+  if M.list.rows[1].icon:IsShown() then error("class icons stayed after being switched off") end
+  local p = M.list.rows[1].name._points[1]
+  if not p or p[4] ~= 26 then error("the name did not go back to the gutter") end
+  M:Settings().segment = "current"
+  M:Refresh()
+end)
+
+step("fit to rows: no empty space under the last row, never taller than sized", function()
+  local M = UI.meter
+  local f = M.frame
+  local s = M:Settings()
+  s.segment = "overall"
+  M:SetSplit("off")
+  f:SetHeight(400)
+  f._maxH, f._topAnchored = nil, nil
+  -- The stub cannot work a height out from anchors: give the list what the
+  -- client would, the window less 60 of chrome.
+  local realGetH = M.list.GetHeight
+  M.list.GetHeight = function() return f:GetHeight() - 60 end
+  s.fitRows = true
+  M:Refresh()
+  local n = table.getn(M.list.data)
+  if n == 0 then error("no rows to fit to") end
+  local want = 60 + n * M.list.rowHeight + 2
+  if math.abs(f:GetHeight() - want) > 1 then
+    error(string.format("fitted to %d, not %d for %d rows", f:GetHeight(), want, n))
+  end
+  if f._maxH ~= 400 then error("the height it was sized to was not kept: " .. tostring(f._maxH)) end
+  local p = f._points[1]
+  if not p or p[1] ~= "TOPLEFT" then error("a fitted window is not held by its top") end
+  -- Saving keeps the sized height, not the fit.
+  f:SavePosition()
+  if s.window.h ~= 400 then error("saving kept the fitted height " .. tostring(s.window.h)) end
+  -- Never taller than sized: a small window stays small.
+  f._maxH = want - 20
+  M:Refresh()
+  if f:GetHeight() > want - 20 + 0.5 then error("grew past the height it was sized to") end
+  -- While the grip is held, the drag is the user's.
+  f._sizing = true
+  f:SetHeight(500)
+  M:Refresh()
+  if f:GetHeight() ~= 500 then error("fitted mid-drag") end
+  f._sizing = nil
+  -- Off: back to the sized height.
+  f._maxH = 400
+  s.fitRows = false
+  M:Refresh()
+  -- Back to the sized height, less the part of a row the list cannot use.
+  local rowH = M.list.rowHeight
+  local expect = 400 - math.mod(400 - 60, rowH)
+  if math.abs(f:GetHeight() - expect) > 0.5 or f._maxH then
+    error("switching it off left " .. f:GetHeight() .. ", not the sized height snapped to rows (" .. expect .. ")")
+  end
+  M.list.GetHeight = realGetH
+  s.segment = "current"
+  M:Refresh()
+end)
+
+step("fit after letting go of the grip, though the client reports a stale height first", function()
+  local M = UI.meter
+  local f = M.frame
+  local s = M:Settings()
+  M:SetSplit("off")
+  s.segment = "overall"
+  s.fitRows = true
+  f._maxH = nil
+  M:Refresh()
+  local n = table.getn(M.list.data)
+  if n == 0 then error("no rows to fit to") end
+  local rowH = M.list.rowHeight
+  -- Right after the grip is let go, the list still reports its old height.
+  local settled = false
+  local oldListH = 120
+  local realGetH, realAfter = M.list.GetHeight, Wrekkit.After
+  M.list.GetHeight = function() return settled and (f:GetHeight() - 60) or oldListH end
+  local queued = {}
+  Wrekkit.After = function(_, fn) table.insert(queued, fn) end
+  local ok, err = pcall(function()
+    f.grip:GetScript("OnDragStart")()
+    f:SetHeight(420)
+    f.grip:GetScript("OnDragStop")()
+    -- The client catches up; the grip's delayed passes run.
+    settled = true
+    for _, fn in ipairs(queued) do fn() end
+  end)
+  Wrekkit.After, M.list.GetHeight = realAfter, realGetH
+  if not ok then error(err) end
+  local want = 60 + n * rowH + 2
+  if math.abs(f:GetHeight() - want) > 1 then
+    error(string.format("after letting go the meter is %d tall, not fitted to %d rows (%d)", f:GetHeight(), n, want))
+  end
+  if f._maxH ~= 420 then error("the height dragged to is not the most it may grow to: " .. tostring(f._maxH)) end
+  s.fitRows = false
+  s.segment = "current"
+  M:Refresh()
+end)
+
+step("after a resize, the meter loses the part of a row it cannot use", function()
+  local M = UI.meter
+  local f = M.frame
+  local s = M:Settings()
+  s.fitRows = false
+  M:SetSplit("off")
+  local rowH = M.list.rowHeight
+  -- A list 3.5 rows tall: half a row of blank above the footer.
+  f:SetHeight(300)
+  local realGetH, realAfter = M.list.GetHeight, Wrekkit.After
+  M.list.GetHeight = function() return f:GetHeight() - 300 + rowH * 3.5 end
+  Wrekkit.After = function(_, fn) fn() end   -- the snap waits a moment; not here
+  f.OnResizeEnd()
+  Wrekkit.After = realAfter
+  local left = M.list:GetHeight()
+  M.list.GetHeight = realGetH
+  if math.abs(left - rowH * 3) > 0.5 then
+    error(string.format("the list is %.1f tall, not 3 whole rows (%d)", left, rowH * 3))
+  end
+  if math.abs((s.window.h or 0) - f:GetHeight()) > 0.5 then error("the snapped height was not saved") end
+  -- The footer's text sits low, not centred over a band of space.
+  local p = M.footL._points[1]
+  if not p or p[1] ~= "BOTTOMLEFT" then error("the footer text is not seated low") end
+end)
 
 step("a narrow row never draws its name over its value", function()
   local realScale = Wrekkit.db.fontScale
@@ -2526,8 +2764,8 @@ step("dragging the opacity bar changes the setting", function()
   UI.settings:Create()
   local bar
   for _, c in ipairs(UI.settings.controls) do
-    -- The first is the meter's; the threat tab has one of its own.
-    if c.slider and not bar then bar = c end
+    -- The meter's, by name: other tabs have sliders of their own.
+    if c.slider and c.label == "Meter opacity" and not bar then bar = c end
   end
   if not bar then error("no slider was built in the settings window") end
 
@@ -2544,8 +2782,8 @@ end)
 step("the bar refreshes from the setting without writing back", function()
   local bar
   for _, c in ipairs(UI.settings.controls) do
-    -- The first is the meter's; the threat tab has one of its own.
-    if c.slider and not bar then bar = c end
+    -- The meter's, by name: other tabs have sliders of their own.
+    if c.slider and c.label == "Meter opacity" and not bar then bar = c end
   end
 
   UI.meter:Settings().opacity = 0.7
@@ -2569,8 +2807,8 @@ end)
 step("the bar clamps and quantises like the client", function()
   local bar
   for _, c in ipairs(UI.settings.controls) do
-    -- The first is the meter's; the threat tab has one of its own.
-    if c.slider and not bar then bar = c end
+    -- The meter's, by name: other tabs have sliders of their own.
+    if c.slider and c.label == "Meter opacity" and not bar then bar = c end
   end
   bar.slider:SetValue(500)
   if UI.meter:Settings().opacity > 1.0 then error("not clamped high") end

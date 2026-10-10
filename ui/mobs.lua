@@ -217,6 +217,7 @@ local function makeRow(parent, i)
   -- Health, as a dim bar behind the text.
   b.hp = b:CreateTexture(nil, "BORDER")
   b.hp:SetTexture(UI.media.bar)
+  UI.RegisterBar(b.hp)
   b.hp:SetPoint("TOPLEFT", b, "TOPLEFT", 0, 0)
   b.hp:SetPoint("BOTTOMLEFT", b, "BOTTOMLEFT", 0, 0)
   b.hp:SetVertexColor(0.55, 0.16, 0.16, 0.7)

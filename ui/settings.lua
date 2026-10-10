@@ -255,6 +255,68 @@ function S:Create()
       "font when pfUI is loaded. auto: pfUI with", "pfUI or ShaguPlates, else Blizzard.",
       "Applies after a /reload." })
 
+  choice(self, "Bars", UI.BAR_TEXTURES,
+    function() return W.db.barTexture or "skin" end,
+    function(v) UI.SetBarTexture(v) end,
+    { "The bars' texture, whatever the look: flat", "colour, a smooth shade, or Blizzard's status",
+      "bar. skin: whatever the look uses." })
+
+  choice(self, "Colours", UI.COLOR_THEMES,
+    function() return W.db.colorTheme or "skin" end,
+    function(v)
+      if (W.db.colorTheme or "skin") == v then return end
+      W.db.colorTheme = v
+      if StaticPopup_Show and StaticPopupDialogs then
+        StaticPopup_Show("WREKKIT_RELOAD_SKIN")
+      else
+        W.Print("the new colours apply after /reload.")
+      end
+    end,
+    { "The accent and text colours, whatever the", "look: Blizzard gold, pfUI teal or modern",
+      "amber -- pfUI's colours with Blizzard's", "frames, say. skin: the look's own.",
+      "Applies after a /reload." })
+
+  choice(self, "Font", UI.FontChoices(),
+    function() return W.db.font or "skin" end,
+    function(v)
+      UI.SetFont(v)
+      meter:ApplyLayout()
+      S:Layout()
+    end,
+    { "The text's font, whatever the look. pfUI's", "fonts are offered when pfUI is installed.",
+      "Numbers keep their narrow font so columns", "line up. skin: the look's own." })
+
+  slider(self, "Bar opacity",
+    function() return math.floor(UI.BarAlpha() * 100 + 0.5) end,
+    function(v)
+      W.db.barAlpha = v / 100
+      meter:Refresh()
+      if UI.threat and UI.threat.Refresh then UI.threat:Refresh() end
+      if UI.report and UI.report.frame and UI.report.frame:IsShown() then UI.report:Refresh() end
+    end,
+    20, 100, 5,
+    function(v) return v .. "%" end)
+
+  check(self, "Class icons",
+    function() return W.db.classIcons == true end,
+    function(v)
+      W.db.classIcons = v and true or false
+      meter:Refresh()
+      if UI.threat and UI.threat.Refresh then UI.threat:Refresh() end
+      if UI.report and UI.report.frame and UI.report.frame:IsShown() then UI.report:Refresh() end
+    end,
+    { "Each player's class icon beside their name,", "in the meter, the report and the threat",
+      "window. (Specs are not something 1.12 can", "tell an addon.)" })
+
+  check(self, "Fit meter to its rows",
+    function() return meter:Settings().fitRows == true end,
+    function(v)
+      meter:Settings().fitRows = v and true or false
+      meter:Refresh()
+    end,
+    { "Shrinks the meter to the players it shows,", "with no empty space under them, and grows",
+      "it back as more appear -- never taller than", "you sized it. Not with two over and under." })
+
   check(self, "Compact meter",
     function() return meter:Settings().compact == true end,
     function(v)
@@ -655,6 +717,11 @@ function S:BuildThreat()
       { value = "always", label = "always" },
     }, get, set,
     { "The server only answers in a party or raid,", "so alone the window has nothing to show." })
+
+  get, set = opt("fitRows")
+  check(self, "Fit window to its rows", get, set,
+    { "In its own window: shrinks to the players it", "shows, with no empty space under them, never",
+      "taller than you sized it." })
 
   choice(self, "I'm the tank",
     {

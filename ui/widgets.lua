@@ -99,6 +99,145 @@ function UI.ApplySkin()
     setColor(W.color.accent, PFUI_ACCENT)
     setColor(W.color.accentHi, { 1, 1, 1 })
   end
+  UI.skinBar = UI.media.bar
+  local chosen = UI.BarTexturePath(W.db and W.db.barTexture)
+  if chosen then UI.media.bar = chosen end
+  UI.ApplyColorTheme(W.db and W.db.colorTheme)
+  UI.skinFont = UI.font
+  local face = UI.FontPath(W.db and W.db.font)
+  if face then UI.font = face end
+end
+
+--[[ The text's font, apart from the look. The client's four, and pfUI's
+     own and three of the fonts it ships, offered only with pfUI installed
+     (they live in its folder). "skin" keeps the look's: pfUI's font with
+     the pfUI look and pfUI loaded, the client's otherwise. Numbers keep
+     their narrow face (UI.fontNum) whatever is chosen, so columns line up. ]]
+local PFUI_FONTS = "Interface\\AddOns\\pfUI\\fonts\\"
+local FONTS = {
+  { value = "skin", label = "skin" },
+  { value = "friz", label = "Friz Quadrata", path = "Fonts\\FRIZQT__.TTF" },
+  { value = "arial", label = "Arial Narrow", path = "Fonts\\ARIALN.TTF" },
+  { value = "skurri", label = "Skurri", path = "Fonts\\skurri.ttf" },
+  { value = "morpheus", label = "Morpheus", path = "Fonts\\MORPHEUS.TTF" },
+  { value = "pfui", label = "pfUI's font", pfui = true },
+  { value = "myriad", label = "Myriad Pro", path = PFUI_FONTS .. "Myriad-Pro.ttf", pfui = true },
+  { value = "expressway", label = "Expressway", path = PFUI_FONTS .. "Expressway.ttf", pfui = true },
+  { value = "ptsans", label = "PT Sans Narrow", path = PFUI_FONTS .. "PT-Sans-Narrow-Regular.ttf", pfui = true },
+}
+
+--- The fonts to offer: pfUI's only where pfUI is.
+function UI.FontChoices()
+  local out = {}
+  for _, f in ipairs(FONTS) do
+    if not f.pfui or pfUI then table.insert(out, f) end
+  end
+  return out
+end
+
+--- The file for a font choice, or nil for "use the look's".
+function UI.FontPath(key)
+  for _, f in ipairs(FONTS) do
+    if f.value == key then
+      if f.pfui and not pfUI then return nil end
+      if f.value == "pfui" then return pfUI and pfUI.font_default or nil end
+      return f.path
+    end
+  end
+  return nil
+end
+
+--- Change the font everywhere it is the default face, at once, and
+--- remember the choice. Text set in another face (the numbers) is left --
+--- marked when it was made, not matched by file: Arial Narrow is both a
+--- choice and the numbers' face, and matching by file changed both.
+function UI.SetFont(key)
+  if W.db then W.db.font = key end
+  local old = UI.font
+  UI.font = UI.FontPath(key) or UI.skinFont or UI.font
+  if UI.font == old then return end
+  local scale = UI.FontScale()
+  for _, entry in ipairs(UI.fontObjects) do
+    if entry.default then
+      entry.face = UI.font
+      UI.ApplyFontEntry(entry, scale)
+    end
+  end
+end
+
+--[[ Colours, apart from the look: Blizzard's gold, pfUI's teal, or the
+     modern amber, with any chrome. Each theme is the accent and the text a
+     look would set; everything else (panels, bars, class colours) is
+     shared. "skin" (or nothing) keeps what the look chose. The modern
+     values are the ones W.color starts with, kept before any look runs. ]]
+local MODERN = {
+  accent = { W.color.accent[1], W.color.accent[2], W.color.accent[3] },
+  accentHi = { W.color.accentHi[1], W.color.accentHi[2], W.color.accentHi[3] },
+  text = { W.color.text[1], W.color.text[2], W.color.text[3] },
+  textDim = { W.color.textDim[1], W.color.textDim[2], W.color.textDim[3] },
+}
+local THEMES = {
+  modern = MODERN,
+  blizzard = { accent = BLIZZ_GOLD, accentHi = { 1, 1, 1 }, text = { 1, 1, 1 },
+               textDim = { 0.82, 0.82, 0.82 } },
+  pfui = { accent = PFUI_ACCENT, accentHi = { 1, 1, 1 }, text = MODERN.text,
+           textDim = MODERN.textDim },
+}
+UI.COLOR_THEMES = {
+  { value = "skin", label = "skin" },
+  { value = "blizzard", label = "Blizzard" },
+  { value = "pfui", label = "pfUI" },
+  { value = "modern", label = "modern" },
+}
+
+function UI.ApplyColorTheme(key)
+  local t = THEMES[key or ""]
+  if not t then return end
+  for name, c in pairs(t) do setColor(W.color[name], c) end
+end
+
+--- How strongly bars are drawn, 0.2-1. The looks all use 0.55; higher is
+--- the solid, flat-colour bar of the pfUI style.
+function UI.BarAlpha()
+  local a = W.db and tonumber(W.db.barAlpha)
+  if not a then return 0.55 end
+  if a < 0.2 then a = 0.2 elseif a > 1 then a = 1 end
+  return a
+end
+
+--[[ The bars' texture, apart from the skin: the flat colour of the pfUI and
+     modern looks with the Blizzard chrome, or the other way round. "skin"
+     (or nothing) keeps whatever the skin uses. ]]
+UI.BAR_TEXTURES = {
+  { value = "skin", label = "skin" },
+  { value = "flat", label = "flat" },
+  { value = "smooth", label = "smooth" },
+  { value = "blizzard", label = "Blizzard" },
+}
+
+--- The file for a bar style, or nil for "use the skin's".
+function UI.BarTexturePath(key)
+  if key == "flat" then return UI.media.white end
+  if key == "smooth" then return MEDIA .. "bar-fill" end
+  if key == "blizzard" then return "Interface\\TargetingFrame\\UI-StatusBar" end
+  return nil
+end
+
+--[[ Every bar texture, so a new style shows at once rather than after a
+     /reload. Weak keys: a pooled row is never freed in 1.12 anyway, but the
+     registry should not be what keeps anything alive. ]]
+local bars = setmetatable({}, { __mode = "k" })
+
+function UI.RegisterBar(tex)
+  if tex then bars[tex] = true end
+  return tex
+end
+
+--- Change the bar style everywhere, and remember it.
+function UI.SetBarTexture(key)
+  if W.db then W.db.barTexture = key end
+  UI.media.bar = UI.BarTexturePath(key) or UI.skinBar or UI.media.bar
+  for tex in pairs(bars) do tex:SetTexture(UI.media.bar) end
 end
 
 local BLIZZ_TOOLTIP = {
@@ -290,8 +429,9 @@ function UI.FontScale()
 end
 
 --- Track any object with SetFont so it follows the scale. Returns it.
-function UI.RegisterFont(obj, size, face)
-  table.insert(UI.fontObjects, { obj = obj, size = size, face = face })
+--- `default`: set in the default face (UI.font), so a font choice moves it.
+function UI.RegisterFont(obj, size, face, default)
+  table.insert(UI.fontObjects, { obj = obj, size = size, face = face, default = default })
   return obj
 end
 
@@ -301,6 +441,7 @@ local function applyFont(entry, scale)
   if px < 6 then px = 6 elseif px > 32 then px = 32 end
   entry.obj:SetFont(entry.face, px)
 end
+UI.ApplyFontEntry = applyFont
 
 function UI.ApplyFontScale()
   local scale = UI.FontScale()
@@ -312,9 +453,10 @@ end
 function UI.Text(parent, size, color, justify, face)
   local fs = parent:CreateFontString(nil, "OVERLAY")
   size = size or 12
+  local default = (face == nil)
   face = face or UI.font
   applyFont({ obj = fs, size = size, face = face }, UI.FontScale())
-  UI.RegisterFont(fs, size, face)
+  UI.RegisterFont(fs, size, face, default)
   fs:SetTextColor(unpackColor(color or W.color.text))
   fs:SetJustifyH(justify or "LEFT")
   fs:SetShadowColor(0, 0, 0, 0.9)
@@ -686,7 +828,7 @@ function UI.SearchBox(parent, width, onChange, placeholder)
   eb:SetPoint("TOPLEFT", f, "TOPLEFT", 6, -1)
   eb:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -18, 1)
   eb:SetFont(UI.font, 11 * UI.FontScale())
-  UI.RegisterFont(eb, 11, UI.font)
+  UI.RegisterFont(eb, 11, UI.font, true)
   eb:SetTextColor(unpackColor(W.color.text))
   eb:SetAutoFocus(false)
   eb:SetMaxLetters(24)
@@ -734,6 +876,28 @@ end
 -- width is set so this is never actually reached.
 local MIN_NAME_W = 60
 
+--[[ Class icons, from the character-create sheet -- the one TWThreat draws
+     its class icons from on this client -- at the coordinates pfUI uses
+     for it. 1.12 has no spec API, so a class is as specific as it gets. ]]
+local CLASS_SHEET = "Interface\\Glues\\CharacterCreate\\UI-CharacterCreate-Classes"
+local CLASS_COORDS = {
+  WARRIOR = { 0, 0.25, 0, 0.25 },
+  MAGE    = { 0.25, 0.49609375, 0, 0.25 },
+  ROGUE   = { 0.49609375, 0.7421875, 0, 0.25 },
+  DRUID   = { 0.7421875, 0.98828125, 0, 0.25 },
+  HUNTER  = { 0, 0.25, 0.25, 0.5 },
+  SHAMAN  = { 0.25, 0.49609375, 0.25, 0.5 },
+  PRIEST  = { 0.49609375, 0.7421875, 0.25, 0.5 },
+  WARLOCK = { 0.7421875, 0.98828125, 0.25, 0.5 },
+  PALADIN = { 0, 0.25, 0.5, 0.75 },
+}
+UI.CLASS_COORDS = CLASS_COORDS
+
+--- Are class icons on? A setting, off unless asked for.
+function UI.ClassIcons()
+  return W.db and W.db.classIcons == true
+end
+
 function UI.Row(parent, height)
   local r = CreateFrame("Button", nil, parent)
   r:SetHeight(height or 18)
@@ -742,6 +906,7 @@ function UI.Row(parent, height)
 
   r.bar = r:CreateTexture(nil, "BORDER")
   r.bar:SetTexture(UI.media.bar)
+  UI.RegisterBar(r.bar)
   r.bar:SetPoint("TOPLEFT", r, "TOPLEFT", 0, 0)
   r.bar:SetPoint("BOTTOMLEFT", r, "BOTTOMLEFT", 0, 0)
 
@@ -749,8 +914,19 @@ function UI.Row(parent, height)
   r.rank:SetPoint("LEFT", r, "LEFT", 0, 0)
   r.rank:SetWidth(20)
 
+  -- A player's class, between the rank and the name, when class icons are
+  -- on (see UI.ClassIcons) and the painter named a class (r:SetClass).
+  r.icon = r:CreateTexture(nil, "ARTWORK")
+  r.icon:SetTexture(CLASS_SHEET)
+  r.icon:SetPoint("LEFT", r, "LEFT", 24, 0)
+  r.icon:Hide()
+
   r.name = UI.Text(r, 11, W.color.text, "LEFT")
   r.name:SetPoint("LEFT", r, "LEFT", 26, 0)
+
+  --- Name the class for the next SetData only. Rows are reused, so a row
+  --- whose painter does not call this shows no icon, never a stale one.
+  r.SetClass = function(self, class) self._nextClass = class end
 
   r.sub = UI.Text(r, 10, W.color.textDim, "RIGHT")
   r.sub:SetPoint("RIGHT", r, "RIGHT", -6, 0)
@@ -776,6 +952,27 @@ function UI.Row(parent, height)
 
   --- Paint one data row. `frac` is 0..1 of the widest bar in the list.
   r.SetData = function(self, rank, name, value, sub, frac, color, subWidth)
+    -- The class icon: shown, sized to the row, and the name moved over for
+    -- it -- or gone, and the name back at the gutter.
+    local coords = UI.ClassIcons() and CLASS_COORDS[self._nextClass or ""]
+    self._nextClass = nil
+    local iconW = 0
+    if coords then
+      local size = (self:GetHeight() or 18) - 4
+      if size < 8 then size = 8 end
+      self.icon:SetWidth(size)
+      self.icon:SetHeight(size)
+      self.icon:SetTexCoord(coords[1], coords[2], coords[3], coords[4])
+      self.icon:Show()
+      iconW = size + 3
+    else
+      self.icon:Hide()
+    end
+    if self._iconW ~= iconW then
+      self._iconW = iconW
+      self.name:ClearAllPoints()
+      self.name:SetPoint("LEFT", self, "LEFT", 26 + iconW, 0)
+    end
     self.rank:SetText(rank and tostring(rank) .. "." or "")
     self.name:SetText(name or "")
     self.value:SetText(value or "")
@@ -793,7 +990,7 @@ function UI.Row(parent, height)
     local barW = w * (frac or 0)
     if barW < 1 then barW = 1 end
     self.bar:SetWidth(barW)
-    self.bar:SetVertexColor(color[1], color[2], color[3], 0.55)
+    self.bar:SetVertexColor(color[1], color[2], color[3], UI.BarAlpha())
 
     --[[ Give the name every pixel the numbers do not need.
 
@@ -813,7 +1010,7 @@ function UI.Row(parent, height)
     if valueW < STEP then valueW = STEP end
 
     -- 26 is the rank gutter; 14 covers the gaps either side of the value.
-    local nameW = w - 26 - subW - valueW - 14
+    local nameW = w - 26 - iconW - subW - valueW - 14
     --[[ Too narrow for everything -- a meter split into columns, at a small
          text size. The secondary column (per second, a percentage) goes
          first, and the value moves up to the edge. If the name still does
@@ -823,7 +1020,7 @@ function UI.Row(parent, height)
       self.sub:SetText("")
       subW = 1
       self.sub:SetWidth(subW)
-      nameW = w - 26 - subW - valueW - 14
+      nameW = w - 26 - iconW - subW - valueW - 14
     end
     if nameW < 1 then nameW = 1 end
     self.name:SetWidth(nameW)
@@ -1113,8 +1310,21 @@ function UI.Window(name, width, height, title, opts)
   grip:SetScript("OnDragStop", function()
     f._sizing = nil
     f:StopMovingOrSizing()
+    -- Fitted to its rows: what was just dragged is the new most it may grow to.
+    if f._maxH then f._maxH = f:GetHeight() end
     if f.SavePosition then f:SavePosition() end
     if f.OnResize then f:OnResize() end
+    -- Done resizing: a window may tidy its size now (the meter snaps to
+    -- whole rows), which it must not do while the grip is held.
+    if f.OnResizeEnd then f:OnResizeEnd() end
+    --[[ And again a moment later. Right after the grip is let go the client
+         can still report a child's old height, and a fit or a trim worked
+         out from it is wrong until something redraws -- which, with nothing
+         changing, was the next click on a setting. ]]
+    if f.OnResize then
+      W.After(0.1, function() if not f._sizing then f:OnResize() end end, f._resizeKey .. ":settle1")
+      W.After(0.3, function() if not f._sizing then f:OnResize() end end, f._resizeKey .. ":settle2")
+    end
   end)
   f.grip = grip
 
@@ -1221,7 +1431,13 @@ function UI.BindGeometry(frame, store)
     store.x = x
     store.y = y
     store.w = self:GetWidth()
-    store.h = self:GetHeight()
+    -- Fitted to its rows (UI.FitHeight), the height on screen is the fit;
+    -- the one to keep is the height the window was sized to.
+    store.h = self._maxH or self:GetHeight()
+    -- Saved after every move and resize, and after either the client has
+    -- re-anchored the window itself: hold it by its top again before the
+    -- next fit or trim changes its height, or the title bar moves instead.
+    self._topAnchored = nil
   end
   frame.RestorePosition = function(self)
     self:ClearAllPoints()
@@ -1231,6 +1447,46 @@ function UI.BindGeometry(frame, store)
     if store.h then self:SetHeight(store.h) end
   end
   frame:RestorePosition()
+end
+
+--[[ Fit a window's height to the rows it is showing (#15: five players in
+     a window sized for eight left a block of empty space under them).
+
+     The height the window was sized to becomes the most it grows to
+     (frame._maxH): it shrinks to the rows, and grows back as more arrive.
+     The window is anchored by its top-left first, so the title bar stays
+     put and only the bottom edge moves. Nothing happens while the grip is
+     held -- the drag is the user's. `n` is the rows wanted; `list` is the
+     ScrollList they go in, everything else in the window being chrome. ]]
+function UI.FitHeight(f, list, n)
+  if not f or not list or f._sizing then return end
+  if not f._maxH then f._maxH = f:GetHeight() end
+  UI.AnchorTop(f)
+  local rowH = list.rowHeight or 18
+  local chrome = (f:GetHeight() or 0) - (list:GetHeight() or 0)
+  local want = chrome + (n > 1 and n or 1) * rowH + 2
+  if want > f._maxH then want = f._maxH end
+  if math.abs((f:GetHeight() or 0) - want) >= 1 then f:SetHeight(want) end
+end
+
+--- Hold a window by its top-left, so a change of height moves only its
+--- bottom edge. Done once until the window is next moved or resized.
+function UI.AnchorTop(f)
+  if f._topAnchored then return end
+  local left, top = f:GetLeft(), f:GetTop()
+  local ptop = UIParent and UIParent:GetTop()
+  if left and top and ptop then
+    f:ClearAllPoints()
+    f:SetPoint("TOPLEFT", UIParent, "TOPLEFT", left, top - ptop)
+    f._topAnchored = true
+  end
+end
+
+--- Back to the height the window was sized to, fitting switched off.
+function UI.UnfitHeight(f)
+  if not f or not f._maxH then return end
+  f:SetHeight(f._maxH)
+  f._maxH = nil
 end
 
 ----------------------------------------------------------------------
@@ -1335,6 +1591,7 @@ function UI.Slider(parent, label, get, set, min, max, step, format)
   step = step or 1
   local f = CreateFrame("Frame", nil, parent)
   f:SetHeight(30)
+  f.label = label
 
   local text = UI.Text(f, 11, W.color.text)
   text:SetPoint("TOPLEFT", f, "TOPLEFT", 0, 0)

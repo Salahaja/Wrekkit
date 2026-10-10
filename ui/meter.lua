@@ -19,6 +19,9 @@ UI.meter = {}
 local M = UI.meter
 
 local REFRESH = 0.5
+-- The footer's height at text size 100%. It was 15, which with the text
+-- centred left a band of space above the combat time (#15).
+local FOOTER_H = 13
 
 M.defaults = {
   -- Visible on login unless the user closed it last time. A meter you have
@@ -45,6 +48,8 @@ M.defaults = {
   -- "show", "fade" or "hide": what the meter does while you are fighting.
   combat = "show",
   locked = false,
+  -- Shrink to the rows shown, up to the height it was sized to (#15).
+  fitRows = false,
   window = { point = "CENTER", x = -320, y = 0, w = 260, h = 200 },
 }
 
@@ -460,14 +465,15 @@ function M:Create()
 
   local footer = CreateFrame("Frame", nil, f.body)
   self.footer = footer
-  footer:SetHeight(15)
+  footer:SetHeight(FOOTER_H)
   footer:SetPoint("BOTTOMLEFT", f.body, "BOTTOMLEFT", 0, 0)
   footer:SetPoint("BOTTOMRIGHT", f.body, "BOTTOMRIGHT", 0, 0)
 
   self.footL = UI.Text(footer, 10, W.color.textFaint)
-  self.footL:SetPoint("LEFT", footer, "LEFT", 6, 0)
+  -- Low in the footer: the space a footer needs is under its text, not over it.
+  self.footL:SetPoint("BOTTOMLEFT", footer, "BOTTOMLEFT", 6, 2)
   self.footR = UI.Text(footer, 10, W.color.textFaint, "RIGHT")
-  self.footR:SetPoint("RIGHT", footer, "RIGHT", -6, 0)
+  self.footR:SetPoint("BOTTOMRIGHT", footer, "BOTTOMRIGHT", -6, 2)
 
   ------------------------------------------------------------------
 
@@ -487,6 +493,7 @@ function M:Create()
     M:LayoutPanes()
     M:Refresh()
   end
+  f.OnResizeEnd = function() M:SnapToRows() end
   f:SetScript("OnShow", function() M:StartTicker() end)
 
   self:UpdatePetButton()
@@ -555,7 +562,7 @@ function M:ApplyLayout()
   end
 
   -- footer
-  local footerH = compact and 0 or px(15)
+  local footerH = compact and 0 or px(FOOTER_H)
   if compact then self.footer:Hide() else self.footer:Show() end
   self.footer:SetHeight(footerH > 0 and footerH or 1)
   self.list:SetPoint("BOTTOMRIGHT", f.body, "BOTTOMRIGHT", -2, footerH + 1)
@@ -1044,6 +1051,7 @@ local function makePainters(pane)
 
   local function paintActor(row, item, index)
     local color = item._color or W.ClassColor(item.class)
+    if item.isPlayer then row:SetClass(item.class) end
     row:SetData(item._rank, UI.RowName(item, M:Settings().pickedOnly),
       item._text, item._sub, item._frac, color, 58)
     row.tip = function(self) actorTooltip(self, item, metricKey()) end
@@ -1139,7 +1147,60 @@ end
 --- Repaints run on a ticker, so an error here would fire twice a second and
 --- bury its own first occurrence. Guard reports each distinct one once.
 function M:Refresh()
-  W.Guard("meter refresh", function() M:RefreshInner() end)
+  W.Guard("meter refresh", function()
+    M:RefreshInner()
+    M:Fit()
+  end)
+end
+
+--[[ After a resize, take off the part of a row the list cannot use.
+
+     The list draws whole rows only, so whatever height is left under the
+     last one is blank -- up to a row of it, right above the footer (#15).
+     Trimmed a moment after the grip is let go, once the client reports the
+     list's new height. Not when fitting to rows (that sizes to whole rows
+     already), nor over and under, where the halves share the height. ]]
+function M:SnapToRows()
+  W.After(0.05, function()
+    W.Guard("meter snap", function() M:TrimPartialRow() end)
+  end, "meterSnap")
+end
+
+--- Take the blank part-row off now, if there is one. Also run on every
+--- redraw (M:Fit), so a window sized before this existed -- or changed by
+--- a text size, a row height or a layout -- loses it without a resize.
+--- Once trimmed there is nothing left over, so it settles at once.
+function M:TrimPartialRow()
+  local f = self.frame
+  if not f or f._sizing or self:Settings().fitRows or self:SplitMode() == "stacked" then return end
+  local rowH = self.list.rowHeight or 18
+  local listH = self.list:GetHeight() or 0
+  if listH <= rowH then return end
+  local extra = math.mod(listH, rowH)
+  if extra < 1 then return end
+  UI.AnchorTop(f)
+  f:SetHeight(f:GetHeight() - extra)
+  if f.SavePosition then f:SavePosition() end
+end
+
+--[[ Fit the window to its rows, when asked to (#15). Side by side, to the
+     longer column. Over and under, each half has its own share of the
+     height, so the window keeps the height it was given. ]]
+function M:Fit()
+  local f = self.frame
+  if not f or not f:IsShown() then return end
+  local mode = self:SplitMode()
+  if not self:Settings().fitRows or mode == "stacked" then
+    UI.UnfitHeight(f)
+    self:TrimPartialRow()
+    return
+  end
+  local n = table.getn(self.list.data or {})
+  if mode == "side" and self.list2 then
+    local n2 = table.getn(self.list2.data or {})
+    if n2 > n then n = n2 end
+  end
+  UI.FitHeight(f, self.list, n)
 end
 
 --[[ Draw one pane from an already-built view, and say what its labels
