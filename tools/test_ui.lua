@@ -769,7 +769,12 @@ step("fit to rows: no empty space under the last row, never taller than sized", 
   f._maxH = 400
   s.fitRows = false
   M:Refresh()
-  if f:GetHeight() ~= 400 or f._maxH then error("switching it off did not restore the sized height") end
+  -- Back to the sized height, less the part of a row the list cannot use.
+  local rowH = M.list.rowHeight
+  local expect = 400 - math.mod(400 - 60, rowH)
+  if math.abs(f:GetHeight() - expect) > 0.5 or f._maxH then
+    error("switching it off left " .. f:GetHeight() .. ", not the sized height snapped to rows (" .. expect .. ")")
+  end
   M.list.GetHeight = realGetH
   s.segment = "current"
   M:Refresh()

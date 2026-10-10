@@ -1162,18 +1162,24 @@ end
      already), nor over and under, where the halves share the height. ]]
 function M:SnapToRows()
   W.After(0.05, function()
-    W.Guard("meter snap", function()
-      local f = M.frame
-      if not f or f._sizing or M:Settings().fitRows or M:SplitMode() == "stacked" then return end
-      local rowH = M.list.rowHeight or 18
-      local listH = M.list:GetHeight() or 0
-      if listH <= rowH then return end
-      local extra = math.mod(listH, rowH)
-      if extra < 1 then return end
-      f:SetHeight(f:GetHeight() - extra)
-      if f.SavePosition then f:SavePosition() end
-    end)
+    W.Guard("meter snap", function() M:TrimPartialRow() end)
   end, "meterSnap")
+end
+
+--- Take the blank part-row off now, if there is one. Also run on every
+--- redraw (M:Fit), so a window sized before this existed -- or changed by
+--- a text size, a row height or a layout -- loses it without a resize.
+--- Once trimmed there is nothing left over, so it settles at once.
+function M:TrimPartialRow()
+  local f = self.frame
+  if not f or f._sizing or self:Settings().fitRows or self:SplitMode() == "stacked" then return end
+  local rowH = self.list.rowHeight or 18
+  local listH = self.list:GetHeight() or 0
+  if listH <= rowH then return end
+  local extra = math.mod(listH, rowH)
+  if extra < 1 then return end
+  f:SetHeight(f:GetHeight() - extra)
+  if f.SavePosition then f:SavePosition() end
 end
 
 --[[ Fit the window to its rows, when asked to (#15). Side by side, to the
@@ -1185,6 +1191,7 @@ function M:Fit()
   local mode = self:SplitMode()
   if not self:Settings().fitRows or mode == "stacked" then
     UI.UnfitHeight(f)
+    self:TrimPartialRow()
     return
   end
   local n = table.getn(self.list.data or {})
