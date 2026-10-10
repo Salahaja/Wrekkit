@@ -606,6 +606,135 @@ end)
 
 step("meter scrolls", function() UI.meter.list:Scroll(-1) UI.meter.list:Scroll(1) end)
 
+step("a narrow row never draws its name over its value", function()
+  local realScale = Wrekkit.db.fontScale
+  Wrekkit.db.fontScale = 0.7
+  local list = UI.ScrollList(UIParent, 18)
+  local row = UI.Row(list, 18)
+  local function check(w)
+    row:SetWidth(w)
+    row:SetData(1, "Shieldbarbie", "31.0k", "965 dps", 0.5, { 1, 1, 1 }, 58)
+    local valueW = row.value:GetStringWidth()
+    local subW = row.sub:GetWidth() or 0
+    -- Rank gutter, the name, the value, the secondary column and the gaps
+    -- must fit in the row: anything over is the name drawn on the value.
+    local used = 26 + row.name:GetWidth() + valueW + subW + 14
+    if used > w + 12 then
+      error(string.format("at %dpx the name runs %dpx into the value", w, used - w))
+    end
+    return row.sub._text or ""
+  end
+  if check(320) ~= "965 dps" then error("a wide row lost its per-second column") end
+  if check(145) ~= "" then error("a narrow row kept its per-second column instead of the name") end
+  check(90)
+  Wrekkit.db.fontScale = realScale
+end)
+
+step("meter split: two metrics, each with its own drilldown", function()
+  local M = UI.meter
+  local s = M:Settings()
+  s.metric, s.segment = "damage", "overall"
+  M:SetSplit("stacked")
+  if not M:Split() then error("split did not turn on") end
+  if not M.head2:IsShown() or not M.list2:IsShown() then error("the second half is not shown") end
+  M:Refresh()
+  local label = M.head2.label:GetText() or ""
+  if not string.find(label, "Healing", 1, true) then error("the second half reads " .. label) end
+  -- Each half ranks its own metric.
+  local top, bottom = M.list.data[1], M.list2.data[1]
+  if not top or not bottom then error("a half is empty") end
+  if top._v == bottom._v and top.key == bottom.key and table.getn(M.list.data) > 1 then
+    error("both halves rank the same thing")
+  end
+  -- Drilling into the lower half leaves the upper alone, and back out.
+  M.drill2 = bottom.key
+  M:Refresh()
+  if M.drill then error("drilling the lower half opened the upper") end
+  if M.list2.data[1] and M.list2.data[1]._rank then error("the lower half did not open the player") end
+  M.head2:GetScript("OnClick")()            -- arg1 is nil: a left-click opens its menu
+  UI.CloseMenu()
+  arg1 = "RightButton"
+  M.head2:GetScript("OnClick")()
+  arg1 = nil
+  if M.drill2 then error("right-click on the lower header did not back out") end
+  -- The second metric's menu sets the second metric, and has no Threat.
+  M:MetricMenu(M.head2, 2)
+  UI.CloseMenu()
+  s.metric2 = "dispels"
+  M:Refresh()
+  -- Threat on top still draws the lower half.
+  s.metric = "threat"
+  M:Refresh()
+  s.metric = "damage"
+  -- A resize lays both halves out again; compact keeps them.
+  M.frame:SetHeight(320)
+  M.frame.OnResize()
+  s.compact = true
+  M:ApplyLayout()
+  s.compact = false
+  M:ApplyLayout()
+  -- The title-bar button goes on to side by side: both columns under a
+  -- header each, the window widened to fit them.
+  M.frame:SetWidth(260)
+  M.splitBtn:GetScript("OnClick")()
+  if M:SplitMode() ~= "side" then error("the button went to " .. M:SplitMode() .. ", not side by side") end
+  if not M.head1:IsShown() or not M.head2:IsShown() or not M.divider:IsShown() then
+    error("side by side is missing a header or the divider")
+  end
+  if (M.frame:GetWidth() or 0) < M.SIDE_MIN_W then error("the window was not widened for two columns") end
+  -- Equal columns by construction: both meet at a line held to the middle
+  -- of the area by its TOP and BOTTOM, never at a width measured once.
+  local function anchoredTo(frame, point, target)
+    for _, p in ipairs(frame._points or {}) do
+      if p[1] == point and p[2] == target then return true end
+    end
+    return false
+  end
+  if not anchoredTo(M.paneMid, "TOP", M.paneArea) or not anchoredTo(M.paneMid, "BOTTOM", M.paneArea) then
+    error("the middle line is not held to the middle of the area")
+  end
+  if not anchoredTo(M.list, "BOTTOMRIGHT", M.paneMid) then error("the first column does not end at the middle line") end
+  if not anchoredTo(M.head2, "TOPLEFT", M.paneMid) then error("the second column does not start at the middle line") end
+  M:Refresh()
+  if not string.find(M.head1.label:GetText() or "", "Damage", 1, true) then
+    error("the first column's header reads " .. tostring(M.head1.label:GetText()))
+  end
+  -- The first column's header opens its metric menu and backs out of its drilldown.
+  M.drill = M.list.data[1] and M.list.data[1].key
+  M:Refresh()
+  arg1 = "RightButton"
+  M.head1:GetScript("OnClick")()
+  arg1 = nil
+  if M.drill then error("right-click on the first column's header did not back out") end
+  M.head1:GetScript("OnClick")()
+  UI.CloseMenu()
+  M.frame:SetWidth(520)
+  M.frame.OnResize()
+  -- Then back to one metric.
+  M.splitBtn:GetScript("OnClick")()
+  if M:Split() or M.head1:IsShown() or M.head2:IsShown() or M.list2:IsShown() or M.divider:IsShown() then
+    error("the button did not go back to one metric")
+  end
+  -- A saved on/off from before the third option reads as over and under.
+  s.splitMode, s.split = "off", true
+  if M:SplitMode() ~= "stacked" or s.split ~= nil then error("an old split=true was not carried over") end
+  M:SetSplit("off")
+  -- The window menu offers all three.
+  local items
+  local realMenu = UI.Menu
+  UI.Menu = function(_, _, its) items = its end
+  M:WindowMenu(M.frame.bar)
+  UI.Menu = realMenu
+  local modes = 0
+  for _, it in ipairs(items or {}) do
+    if it.value and string.sub(it.value, 1, 6) == "split:" then modes = modes + 1 end
+  end
+  if modes ~= 3 then error("the window menu offers " .. modes .. " layouts, not 3") end
+  M.frame:SetWidth(260)
+  s.metric2, s.segment = "healing", "current"
+  M:ApplyLayout()
+end)
+
 step("meter menus open", function()
   UI.meter:MetricMenu(UI.meter.frame.bar)
   UI.CloseMenu()
@@ -1375,9 +1504,15 @@ step("a full name fits at the minimum window width", function()
   assert_(r.name:GetWidth() >= 72, "name got " .. r.name:GetWidth() .. "px")
 end)
 
-step("name never collapses below its floor", function()
+--[[ A row too narrow for everything gives up its per-second column before
+     the name, and never holds the name at a floor it has no room for: that
+     drew the name over the value, two columns side by side at 70% text. ]]
+step("a narrow row makes room for the name, never over the value", function()
   local r = measureRow(120, "110k", "179 dps", 58)
-  assert_(r.name:GetWidth() >= 60, "name got " .. r.name:GetWidth() .. "px")
+  assert_((r.sub._text or "") == "", "kept the per-second column at 120px")
+  assert_(r.name:GetWidth() >= 50, "name got " .. r.name:GetWidth() .. "px")
+  local used = 26 + r.name:GetWidth() + r.value:GetStringWidth() + r.sub:GetWidth() + 14
+  assert_(used <= 120 + 12, "name runs " .. (used - 120) .. "px into the value")
 end)
 
 step("columns fit inside the row without overlapping", function()

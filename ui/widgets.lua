@@ -814,7 +814,18 @@ function UI.Row(parent, height)
 
     -- 26 is the rank gutter; 14 covers the gaps either side of the value.
     local nameW = w - 26 - subW - valueW - 14
-    if nameW < MIN_NAME_W then nameW = MIN_NAME_W end
+    --[[ Too narrow for everything -- a meter split into columns, at a small
+         text size. The secondary column (per second, a percentage) goes
+         first, and the value moves up to the edge. If the name still does
+         not fit it is cut short. It used to be held at MIN_NAME_W regardless,
+         which drew it straight over the value. ]]
+    if nameW < MIN_NAME_W and subW > 0 then
+      self.sub:SetText("")
+      subW = 1
+      self.sub:SetWidth(subW)
+      nameW = w - 26 - subW - valueW - 14
+    end
+    if nameW < 1 then nameW = 1 end
     self.name:SetWidth(nameW)
     self:Show()
   end
