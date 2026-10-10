@@ -2,10 +2,11 @@
 
 Who is specced what: Holy, Protection, Retribution.
 
-1.12 has no API for another player's talents, but this server does. Sent
-on the TW_CHAT_MSG_WHISPER addon channel (it reaches one named player),
-"INSTalentShow" makes the server answer for that player -- addon or not --
-with a line per tree and per talent, and then the end:
+1.12 has no API for another player's talents, but this server's clients
+can. Sent on the TW_CHAT_MSG_WHISPER addon channel (it reaches one named
+player), "INSTalentShow" is answered by that player's client -- when it has
+the answering half, which about half the clients here do not -- with a line
+per tree and per talent, and then the end:
 
   INSTalentTabInfo;tree;tabName;a;b      (a tree's name; b is NOT its points)
   INSTalentInfo;tree;idx;name;tier;col;currRank;maxRank;...   (per talent)
@@ -33,7 +34,12 @@ local TL = W.talents
 local CHANNEL = "TW_CHAT_MSG_WHISPER"
 local REFRESH = 900        -- seconds before a player is asked again
 local TIMEOUT = 10         -- seconds before an unanswered ask is dropped
-local RETRY = 60           -- seconds before someone who did not answer is asked again
+--[[ Seconds before someone who did not answer is asked again, by how many
+     times in a row they have not. It is the inspected player's client that
+     answers, and about half the clients here never do: of fifty players in
+     the raid logs, twenty-two ever answered. So silence is mostly for good,
+     and asking stretches out to the refresh. ]]
+local RETRY = { 60, 300, 900 }
 local STEP = 1.5           -- seconds between looks at the queue
 
 TL.specs = {}              -- name -> { trees = { {name, points} x3 }, at, guess }
@@ -152,6 +158,8 @@ function TL:OnMessage(prefix, msg, sender)
   local _, _, gone = string.find(msg, "^Error:CantFindPlayer:(.+)")
   if gone then
     self:Note(gone .. " is not online")
+    self.misses = self.misses or {}
+    self.misses[gone] = (self.misses[gone] or 0) + 1
     if self.asking == gone then self.asking = nil end
     return
   end
@@ -165,6 +173,7 @@ function TL:OnMessage(prefix, msg, sender)
         if trees[i] then trees[i].name = trees[i].name or ("Tree " .. i) end
       end
       self.specs[sender] = { trees = trees, at = GetTime() }
+      if self.misses then self.misses[sender] = nil end
       self:Note(sender .. " answered: " .. (self:Describe(sender) or "no points spent"))
     end
     if self.asking == sender then self.asking = nil end
@@ -237,12 +246,13 @@ end
      joined in between went that long with no spec. ]]
 
 --- Queue the group's players who have not been inspected lately. Someone
---- who did not answer waits a minute before being asked again.
+--- who did not answer waits a minute, then five, then fifteen.
 function TL:QueueGroup()
   local now = GetTime()
   local queued = {}
   for _, n in ipairs(self.queue) do queued[n] = true end
   self.lastAsk = self.lastAsk or {}
+  self.misses = self.misses or {}
   local n = GetNumRaidMembers and GetNumRaidMembers() or 0
   local unit = "raid"
   if n == 0 then
@@ -255,7 +265,9 @@ function TL:QueueGroup()
     local name = UnitName(u)
     local s = name and self.specs[name]
     local fresh = s and not s.guess and now - (s.at or 0) < REFRESH
-    local waiting = name and self.lastAsk[name] and now - self.lastAsk[name] < RETRY
+    local misses = name and self.misses[name] or 0
+    local wait = RETRY[misses] or RETRY[table.getn(RETRY)]
+    local waiting = name and self.lastAsk[name] and misses > 0 and now - self.lastAsk[name] < wait
     if name and name ~= me and not fresh and not waiting and not queued[name]
        and (not UnitIsConnected or UnitIsConnected(u)) then
       table.insert(self.queue, name)
@@ -268,7 +280,10 @@ end
 function TL:Step()
   local now = GetTime()
   if self.asking and now - self.askedAt > TIMEOUT then
-    self:Note(self.asking .. " did not answer")
+    self.misses = self.misses or {}
+    self.misses[self.asking] = (self.misses[self.asking] or 0) + 1
+    self:Note(self.asking .. " did not answer" ..
+      (self.misses[self.asking] > 1 and (" (" .. self.misses[self.asking] .. " times)") or ""))
     self.pending[self.asking] = nil
     self.asking = nil
   end
@@ -368,9 +383,15 @@ end
 
 --- /wrek inspect Name: ask now, ahead of the rest.
 function TL:Inspect(name)
-  if not name or name == "" then
-    W.Print("usage: /wrek inspect <name>")
-    return
+  -- No name, "%t" or "target": whoever is targeted. (Slash commands get
+  -- "%t" as typed; only chat messages have it filled in.)
+  if not name or name == "" or name == "%t" or string.lower(name) == "target" then
+    name = UnitExists and UnitExists("target") and UnitIsPlayer and UnitIsPlayer("target")
+      and UnitName("target")
+    if not name then
+      W.Print("usage: /wrek inspect <name>, or target a player and /wrek inspect")
+      return
+    end
   end
   name = string.upper(string.sub(name, 1, 1)) .. string.lower(string.sub(name, 2))
   for i = table.getn(self.queue), 1, -1 do
@@ -378,6 +399,7 @@ function TL:Inspect(name)
   end
   table.insert(self.queue, 1, name)
   if self.lastAsk then self.lastAsk[name] = nil end
+  if self.misses then self.misses[name] = nil end
   W.Print("asking " .. name .. " for their talents -- /wrek specs in a moment for the answer.")
 end
 

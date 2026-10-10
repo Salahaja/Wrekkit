@@ -3605,6 +3605,20 @@ check("  nor a non-answerer straight away", table.getn(sent), 2)
 advance(61)
 TL:Step()
 check("  but again after a minute", sent[3], "TW_CHAT_MSG_WHISPER<Moras>|INSTalentShow|GUILD")
+-- Silent twice: half the clients never answer, so wait longer each time.
+-- (Shejian, long silent, stays out of it.)
+TL.misses["Shejian"], TL.lastAsk["Shejian"], TL.queue = 3, GetTime(), {}
+advance(11)
+TL:Step()
+check("  a second silence is counted", TL.misses["Moras"], 2)
+advance(61)
+TL:Step()
+check("  and then not asked again for five minutes", table.getn(sent), 3)
+advance(240)
+TL:Step()
+check("  but after them", sent[4], "TW_CHAT_MSG_WHISPER<Moras>|INSTalentShow|GUILD")
+table.remove(sent, 4)
+TL.asking = nil
 -- Someone ChronicleCompanion inspected (its answers land here too) is not asked.
 TL.asking, TL.queue = nil, {}
 answer("Moras", 0, 5, 46)
@@ -3617,6 +3631,19 @@ TL:Inspect("moras")
 TL:Step()
 check("/wrek inspect asks at once", sent[4], "TW_CHAT_MSG_WHISPER<Moras>|INSTalentShow|GUILD")
 TL.asking = nil
+-- "%t" reaches a slash command as typed: it means the target.
+local realExists, realIsPlayer = UnitExists, UnitIsPlayer
+UnitExists = function(u) return u == "target" end
+UnitIsPlayer = function(u) return u == "target" end
+UnitName = function(u) if u == "target" then return "Khtalla" end return realName(u) end
+TL:Inspect("%t")
+TL:Step()
+check("/wrek inspect %t asks the target", sent[5], "TW_CHAT_MSG_WHISPER<Khtalla>|INSTalentShow|GUILD")
+TL.asking = nil
+TL:Inspect()
+check("  as does no name at all", TL.queue[1], "Khtalla")
+UnitExists, UnitIsPlayer = realExists, realIsPlayer
+TL.queue, TL.misses, TL.lastAsk = {}, {}, {}
 SendAddonMessage, GetNumRaidMembers, UnitName, UnitAffectingCombat = realSend, realRaid, realName, realUAC
 
 -- Your own, from the talent API.
