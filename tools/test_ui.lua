@@ -780,6 +780,45 @@ step("fit to rows: no empty space under the last row, never taller than sized", 
   M:Refresh()
 end)
 
+step("fit after letting go of the grip, though the client reports a stale height first", function()
+  local M = UI.meter
+  local f = M.frame
+  local s = M:Settings()
+  M:SetSplit("off")
+  s.segment = "overall"
+  s.fitRows = true
+  f._maxH = nil
+  M:Refresh()
+  local n = table.getn(M.list.data)
+  if n == 0 then error("no rows to fit to") end
+  local rowH = M.list.rowHeight
+  -- Right after the grip is let go, the list still reports its old height.
+  local settled = false
+  local oldListH = 120
+  local realGetH, realAfter = M.list.GetHeight, Wrekkit.After
+  M.list.GetHeight = function() return settled and (f:GetHeight() - 60) or oldListH end
+  local queued = {}
+  Wrekkit.After = function(_, fn) table.insert(queued, fn) end
+  local ok, err = pcall(function()
+    f.grip:GetScript("OnDragStart")()
+    f:SetHeight(420)
+    f.grip:GetScript("OnDragStop")()
+    -- The client catches up; the grip's delayed passes run.
+    settled = true
+    for _, fn in ipairs(queued) do fn() end
+  end)
+  Wrekkit.After, M.list.GetHeight = realAfter, realGetH
+  if not ok then error(err) end
+  local want = 60 + n * rowH + 2
+  if math.abs(f:GetHeight() - want) > 1 then
+    error(string.format("after letting go the meter is %d tall, not fitted to %d rows (%d)", f:GetHeight(), n, want))
+  end
+  if f._maxH ~= 420 then error("the height dragged to is not the most it may grow to: " .. tostring(f._maxH)) end
+  s.fitRows = false
+  s.segment = "current"
+  M:Refresh()
+end)
+
 step("after a resize, the meter loses the part of a row it cannot use", function()
   local M = UI.meter
   local f = M.frame

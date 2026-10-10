@@ -1317,6 +1317,14 @@ function UI.Window(name, width, height, title, opts)
     -- Done resizing: a window may tidy its size now (the meter snaps to
     -- whole rows), which it must not do while the grip is held.
     if f.OnResizeEnd then f:OnResizeEnd() end
+    --[[ And again a moment later. Right after the grip is let go the client
+         can still report a child's old height, and a fit or a trim worked
+         out from it is wrong until something redraws -- which, with nothing
+         changing, was the next click on a setting. ]]
+    if f.OnResize then
+      W.After(0.1, function() if not f._sizing then f:OnResize() end end, f._resizeKey .. ":settle1")
+      W.After(0.3, function() if not f._sizing then f:OnResize() end end, f._resizeKey .. ":settle2")
+    end
   end)
   f.grip = grip
 
@@ -1426,6 +1434,10 @@ function UI.BindGeometry(frame, store)
     -- Fitted to its rows (UI.FitHeight), the height on screen is the fit;
     -- the one to keep is the height the window was sized to.
     store.h = self._maxH or self:GetHeight()
+    -- Saved after every move and resize, and after either the client has
+    -- re-anchored the window itself: hold it by its top again before the
+    -- next fit or trim changes its height, or the title bar moves instead.
+    self._topAnchored = nil
   end
   frame.RestorePosition = function(self)
     self:ClearAllPoints()
@@ -1449,20 +1461,25 @@ end
 function UI.FitHeight(f, list, n)
   if not f or not list or f._sizing then return end
   if not f._maxH then f._maxH = f:GetHeight() end
-  if not f._topAnchored then
-    local left, top = f:GetLeft(), f:GetTop()
-    local ptop = UIParent and UIParent:GetTop()
-    if left and top and ptop then
-      f:ClearAllPoints()
-      f:SetPoint("TOPLEFT", UIParent, "TOPLEFT", left, top - ptop)
-      f._topAnchored = true
-    end
-  end
+  UI.AnchorTop(f)
   local rowH = list.rowHeight or 18
   local chrome = (f:GetHeight() or 0) - (list:GetHeight() or 0)
   local want = chrome + (n > 1 and n or 1) * rowH + 2
   if want > f._maxH then want = f._maxH end
   if math.abs((f:GetHeight() or 0) - want) >= 1 then f:SetHeight(want) end
+end
+
+--- Hold a window by its top-left, so a change of height moves only its
+--- bottom edge. Done once until the window is next moved or resized.
+function UI.AnchorTop(f)
+  if f._topAnchored then return end
+  local left, top = f:GetLeft(), f:GetTop()
+  local ptop = UIParent and UIParent:GetTop()
+  if left and top and ptop then
+    f:ClearAllPoints()
+    f:SetPoint("TOPLEFT", UIParent, "TOPLEFT", left, top - ptop)
+    f._topAnchored = true
+  end
 end
 
 --- Back to the height the window was sized to, fitting switched off.

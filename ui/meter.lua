@@ -1178,6 +1178,7 @@ function M:TrimPartialRow()
   if listH <= rowH then return end
   local extra = math.mod(listH, rowH)
   if extra < 1 then return end
+  UI.AnchorTop(f)
   f:SetHeight(f:GetHeight() - extra)
   if f.SavePosition then f:SavePosition() end
 end
