@@ -3576,7 +3576,11 @@ SpellInfo, Wrekkit.capture.groupMembers = realInfo, realGroup
 -- Asking: never in combat, one at a time, ChronicleCompanion or not.
 local sent = {}
 local realSend, realRaid, realName, realUAC = SendAddonMessage, GetNumRaidMembers, UnitName, UnitAffectingCombat
-SendAddonMessage = function(p, m, c) table.insert(sent, p .. "|" .. m .. "|" .. c) end
+local oldForm = {}
+SendAddonMessage = function(p, m, c)
+  if m == "INSShowTalents" then table.insert(oldForm, p) return end
+  table.insert(sent, p .. "|" .. m .. "|" .. c)
+end
 GetNumRaidMembers = function() return 2 end
 UnitName = function(u)
   if u == "raid1" then return "Moras" end
@@ -3591,6 +3595,7 @@ check("  nor in combat", table.getn(sent), 0)
 UnitAffectingCombat = function() return false end
 TL:Step()
 check("without it, the first player is asked", sent[1], "TW_CHAT_MSG_WHISPER<Moras>|INSTalentShow|GUILD")
+check("  in the older form too, for older clients", oldForm[1], "TW_CHAT_MSG_WHISPER<Moras>")
 TL:Step()
 check("  one at a time", table.getn(sent), 1)
 advance(11)
@@ -3667,7 +3672,8 @@ SendAddonMessage, GetNumRaidMembers, UnitName, UnitAffectingCombat = realSend, r
 
 -- The client's Talents tab only hears answers it can be waiting for: while
 -- open, from the target or yourself. An ask always reaches it (it answers).
-do
+-- (A function of its own: the file's main chunk is at Lua's 200 locals.)
+;(function()
   local got = {}
   InspectTalentsFrame_HandleMessage = function(m, s) table.insert(got, s .. ":" .. m) end
   local open = false
@@ -3678,8 +3684,19 @@ do
     if u == "player" then return "Salahaja" end
     return realName2(u)
   end
+  local shown, asked = 0, {}
+  InspectTalentsFrame_OnShow = function() shown = shown + 1 end
+  local realSend2 = SendAddonMessage
+  SendAddonMessage = function(p, m) table.insert(asked, p .. "|" .. m) end
   TL.inspectHooked = nil
   TL:HookInspectUI()
+  InspectTalentsFrame_OnShow()
+  check("opening the tab still runs the client's own", shown, 1)
+  check("  and asks the target in the older form too", asked[1], "TW_CHAT_MSG_WHISPER<Duskii>|INSShowTalents")
+  SendAddonMessage = realSend2
+  InspectTalentsFrame_HandleMessage("\tINSShowTalents", "Khtalla")
+  check("an older-form ask reaches it too", got[1], "Khtalla:\tINSShowTalents")
+  got = {}
   InspectTalentsFrame_HandleMessage("\tINSTalentEND;", "Khtalla")
   check("tab shut: a background answer does not reach it", table.getn(got), 0)
   InspectTalentsFrame_HandleMessage("\tINSTalentShow", "Khtalla")
@@ -3700,7 +3717,8 @@ do
   check("  hooked once, however often asked", table.getn(got), 5)
   UnitName = realName2
   InspectTalentsFrame_HandleMessage, InspectTalentsFrame, TL.inspectHooked = nil, nil, nil
-end
+  InspectTalentsFrame_OnShow = nil
+end)()
 
 -- Your own, from the talent API.
 local realTab = GetTalentTabInfo

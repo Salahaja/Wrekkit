@@ -307,9 +307,24 @@ function TL:Ask(name, why)
   self.lastAsk[name] = now
   self.pending[name] = nil
   self:Note("asked " .. name .. (why and (" (" .. why .. ")") or ""))
+  TL:SendAsk(name)
+end
+
+--[[ The ask, in both its forms. Two client builds are about: the current
+     one answers "INSTalentShow" (Turtle_General hands it to
+     Blizzard_InspectUI), an older one only "INSShowTalents" (its FrameXML
+     answered by itself). Each ignores the other's, and both answer the
+     same way, so both are sent and whichever is understood is answered.
+     Tried in game: players silent to one answered the other. ]]
+local ASKS = { "INSTalentShow", "INSShowTalents" }
+
+function TL:SendAsk(name)
+  if not name or not SendAddonMessage then return end
   -- The addressee is in the prefix: this channel reaches that one player.
   -- No ">" may appear in the text, and none does.
-  pcall(SendAddonMessage, CHANNEL .. "<" .. name .. ">", "INSTalentShow", "GUILD")
+  for _, ask in ipairs(ASKS) do
+    pcall(SendAddonMessage, CHANNEL .. "<" .. name .. ">", ask, "GUILD")
+  end
 end
 
 --[[ A player targeted: ask them now. On this server an ask goes through
@@ -466,8 +481,15 @@ function TL:HookInspectUI()
   if type(InspectTalentsFrame_OnShow) == "function" then
     local origShow = InspectTalentsFrame_OnShow
     InspectTalentsFrame_OnShow = function()
-      TL:Note("tab opened on " .. tostring(UnitName("target")))
-      return origShow()
+      local name = UnitName("target")
+      TL:Note("tab opened on " .. tostring(name))
+      local r = origShow()
+      -- The tab asks in the current form only; ask in the older one too,
+      -- for the clients that only know that.
+      if name and SendAddonMessage then
+        pcall(SendAddonMessage, CHANNEL .. "<" .. name .. ">", "INSShowTalents", "GUILD")
+      end
+      return r
     end
   end
 end
@@ -500,6 +522,7 @@ end
 function TL:ForTab(message, sender)
   if type(message) ~= "string" then return true end
   if string.find(message, "INSTalentShow", 1, true) then return true end   -- an ask: answer it
+  if string.find(message, "INSShowTalents", 1, true) then return true end
   if not string.find(message, "INSTalent", 1, true) then return true end
   local tab = InspectTalentsFrame
   if not tab or not tab.IsVisible or not tab:IsVisible() then return false, "tab shut" end
