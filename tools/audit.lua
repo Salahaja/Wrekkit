@@ -1237,6 +1237,48 @@ step("threat meter", function()
     if row:IsShown() and row.mark:IsShown() then error("a marker stayed after it was cleared") end
   end
   NOW = markNow
+  -- The width: set it, and the frame and every row's name column follow;
+  -- outside its limits it is held to them.
+  do
+    local MF = UI.mobs
+    local before = T:Settings().mobFramesWidth
+    MF:SetWidth(300)
+    if math.floor(MF.frame:GetWidth() + 0.5) ~= 300 then error("the mob frames are " .. MF.frame:GetWidth() .. " wide, not 300") end
+    for _, row in ipairs(MF.rows) do
+      if row.nameW ~= MF:NameWidth() then error("a row's name column did not follow the width") end
+    end
+    if MF:NameWidth() <= 104 then error("a wider frame gave the name no more room") end
+    MF:SetWidth(1000)
+    if T:Settings().mobFramesWidth ~= 420 then error("the width is not held to 420") end
+    MF:SetWidth(10)
+    if T:Settings().mobFramesWidth ~= 160 then error("the width is not held to 160") end
+    -- The grip: only while placing, and dragging it saves the width.
+    UI.threatFrames.moving = true
+    MF.lastUpdate = nil
+    MF:Update()
+    if not MF.grip:IsShown() then error("no width grip while placing the frames") end
+    -- Mid-drag the frames keep redrawing (the samples pulse). A redraw must
+    -- not put the saved width back under the cursor.
+    MF.grip:GetScript("OnDragStart")()
+    MF.frame:SetWidth(340)
+    NOW = NOW + 0.3
+    MF.lastUpdate = nil
+    MF:Update()
+    if math.floor(MF.frame:GetWidth() + 0.5) ~= 340 then
+      error("a redraw mid-drag snapped the frames back to " .. MF.frame:GetWidth())
+    end
+    for _, row in ipairs(MF.rows) do
+      if row.nameW ~= 340 - 4 - 2 * (MF.pad or 0) - 112 then error("mid-drag, a row's name column did not follow") end
+    end
+    MF.grip:GetScript("OnDragStop")()
+    if T:Settings().mobFramesWidth ~= 340 then error("letting go of the grip did not save the width") end
+    if MF.sizing then error("still sizing after letting go") end
+    UI.threatFrames.moving = nil
+    MF.lastUpdate = nil
+    MF:Update()
+    if MF.grip:IsShown() then error("the width grip stayed after placing") end
+    MF:SetWidth(before)
+  end
   -- Your target is marked, and every row with a reading shows its %.
   local realExistsMF = STUB.UnitExists
   STUB.UnitExists = function(u)

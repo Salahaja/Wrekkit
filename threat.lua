@@ -136,6 +136,7 @@ T.defaults = {
   mobFramesFor = "tank",   -- "tank" | "everyone"
   mobFramesMin = 2,        -- shown from this many mobs
   mobFramesMax = 8,        -- at most this many rows
+  mobFramesWidth = 220,    -- pixels; the name column takes what is left
   -- Collapsed, mobs that are fine share one line ("All 10 on you") and
   -- only the ones in trouble get a row.
   mobFramesCollapse = "auto",  -- "auto" | "always" | "never"
@@ -228,6 +229,7 @@ function T:Sanitize(s)
   s.mobFramesFor = oneOf(s.mobFramesFor, { "tank", "everyone" }, d.mobFramesFor)
   s.mobFramesMin = math.floor(clamp(s.mobFramesMin, 1, 10, d.mobFramesMin))
   s.mobFramesMax = math.floor(clamp(s.mobFramesMax, 2, 15, d.mobFramesMax))
+  s.mobFramesWidth = math.floor(clamp(s.mobFramesWidth, 160, 420, d.mobFramesWidth))
   s.mobFramesCollapse = oneOf(s.mobFramesCollapse, { "auto", "always", "never" }, d.mobFramesCollapse)
   s.mobFramesCollapseAt = math.floor(clamp(s.mobFramesCollapseAt, 1, 15, d.mobFramesCollapseAt))
   s.mobFramesExpandAt = math.floor(clamp(s.mobFramesExpandAt, 30, 130, d.mobFramesExpandAt))
