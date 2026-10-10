@@ -1206,7 +1206,7 @@ function M:TrimPartialRow()
   -- Never mid-drag: re-anchoring or resizing a moving frame crashes the client.
   if not f or f._sizing or f._moving or self:Settings().fitRows or self:SplitMode() == "stacked" then return end
   local rowH = self.list.rowHeight or 18
-  local listH = self.list:GetHeight() or 0
+  local listH = UI.FrameHeight(self.list)
   if listH <= rowH then return end
   local extra = math.mod(listH, rowH)
   if extra < 1 then return end

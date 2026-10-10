@@ -200,8 +200,8 @@ CreateFrame = function(kind, name, parent)
     GetCenter = function() return 400, 300 end,
     GetLeft = function() return 300 end,
     GetTop = function() return 600 end,
-    GetRight = function(self) return 300 + (self._w or 0) end,
-    GetBottom = function(self) return 600 - (self._h or 0) end,
+    GetRight = function(self) return 300 + (self:GetWidth() or 0) end,
+    GetBottom = function(self) return 600 - (self:GetHeight() or 0) end,
     GetEffectiveScale = function() return 1 end,
     SetScale = function() end,
     Raise = function() end,
@@ -942,6 +942,22 @@ step("the top bar spans its row, though the row reports a stale width", function
     error("the top bar is " .. top.bar:GetWidth() .. " wide in a 300-wide row")
   end
   if math.abs(list.rows[2].bar:GetWidth() - 150) > 0.5 then error("a half bar is not half the row") end
+end)
+
+step("sizes come from edges: a list that says 194.4 but spans 216 gets 216 bars", function()
+  -- The numbers /wrek layout printed in the game.
+  local list = UI.ScrollList(UIParent, 26.1)
+  list:SetHeight(78.3)
+  list.GetWidth = function() return 194.4 end
+  list.GetLeft = function() return 414.9 end
+  list.GetRight = function() return 630.9 end
+  list:SetData({ { n = 1 }, { n = 0.8 } }, function(row, item)
+    row:SetData(1, "Salahaja", "11.2k", "131 dps", item.n, { 1, 1, 1 }, 58)
+  end)
+  local top = list.rows[1]
+  if math.abs(top.bar:GetWidth() - 216) > 0.5 then
+    error("the top bar is " .. top.bar:GetWidth() .. " in a list whose edges are 216 apart")
+  end
 end)
 
 step("a narrow row never draws its name over its value", function()

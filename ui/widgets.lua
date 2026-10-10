@@ -876,6 +876,27 @@ end
 -- width is set so this is never actually reached.
 local MIN_NAME_W = 60
 
+--[[ A frame's size as drawn: from its edges, not GetWidth/GetHeight.
+
+     On this client a frame sized by its anchors -- a window's body, a
+     list, a row -- can go on reporting an old size through GetWidth and
+     GetHeight after a resize or a re-layout, while its edges are where it
+     really is. /wrek layout caught it: a row whose edges were 216 apart
+     said it was 194.4 wide, and its bar, sized from that, stopped 22
+     pixels short of the row's end. Frames given a size outright (a
+     window) report it truly either way. ]]
+function UI.FrameWidth(f)
+  local l, r = f:GetLeft(), f:GetRight()
+  if l and r and r > l then return r - l end
+  return f:GetWidth() or 0
+end
+
+function UI.FrameHeight(f)
+  local t, b = f:GetTop(), f:GetBottom()
+  if t and b and t > b then return t - b end
+  return f:GetHeight() or 0
+end
+
 --[[ Class icons, from the character-create sheet -- the one TWThreat draws
      its class icons from on this client -- at the coordinates pfUI uses
      for it. 1.12 has no spec API, so a class is as specific as it gets. ]]
@@ -995,9 +1016,9 @@ function UI.Row(parent, height)
     local w
     local list = self._list
     if list then
-      w = (list:GetWidth() or 0) - (list._anchorW or 0)
+      w = UI.FrameWidth(list) - (list._anchorW or 0)
     end
-    if not w or w <= 0 then w = self:GetWidth() end
+    if not w or w <= 0 then w = UI.FrameWidth(self) end
     if not w or w <= 0 then w = 200 end
     local barW = w * (frac or 0)
     if barW < 1 then barW = 1 end
@@ -1073,7 +1094,7 @@ function UI.ScrollList(parent, rowHeight, makeRow)
   list.track, list.thumb = track, thumb
 
   function list:VisibleCount()
-    local h = self:GetHeight()
+    local h = UI.FrameHeight(self)
     if not h or h <= 0 then return 0 end
     --[[ A zero row height would make this h/0, and EnsureRows would then
          loop creating frames until the client died -- 1.12 cannot destroy a
@@ -1158,7 +1179,8 @@ function UI.ScrollList(parent, rowHeight, makeRow)
     if maxOff > 0 then
       track:Show()
       local frac = self.offset / maxOff
-      local trackH = self:GetHeight() or 1
+      local trackH = UI.FrameHeight(self)
+      if trackH <= 0 then trackH = 1 end
       local thumbH = math.max(16, trackH * (vis / table.getn(self.data)))
       thumb:SetHeight(thumbH)
       thumb:ClearAllPoints()
@@ -1502,7 +1524,7 @@ function UI.FitHeight(f, list, n)
   if not f._maxH then f._maxH = f:GetHeight() end
   UI.AnchorTop(f)
   local rowH = list.rowHeight or 18
-  local chrome = (f:GetHeight() or 0) - (list:GetHeight() or 0)
+  local chrome = (f:GetHeight() or 0) - UI.FrameHeight(list)
   local want = chrome + (n > 1 and n or 1) * rowH + 2
   if want > f._maxH then want = f._maxH end
   if math.abs((f:GetHeight() or 0) - want) >= 1 then f:SetHeight(want) end

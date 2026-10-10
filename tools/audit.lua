@@ -340,6 +340,11 @@ local function makeFrame(kind, name, parent)
   m.SetBackdropColor = function() end
   m.SetBackdropBorderColor = function() end
   m.GetCenter = function() return 400, 300 end
+  -- Edges follow the size, so UI.FrameWidth/FrameHeight read what GetWidth would.
+  m.GetLeft = function() return 300 end
+  m.GetTop = function() return 600 end
+  m.GetRight = function(self) return 300 + (self:GetWidth() or 0) end
+  m.GetBottom = function(self) return 600 - (self:GetHeight() or 0) end
   m.GetEffectiveScale = function() return 1 end
   m.SetScale = function() end
   m.Raise = function() end
