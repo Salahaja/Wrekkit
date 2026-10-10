@@ -304,11 +304,12 @@ fire("PLAYER_REGEN_DISABLED")
 
 -- Rogue hits the boss: swings are (attacker, target, dmg, hitInfo, ...).
 -- hitInfo is the raw HitInfo bitfield, so realistic values matter here:
--- 0x02 (AFFECTS_VICTIM) is set on every landed swing and 0x200 is the crit.
+-- 0x02 (AFFECTS_VICTIM) is set on every landed swing and 0x80 is the crit (1.12;
+-- later expansions moved it to 0x200, which no swing here ever sets).
 -- Using 0 and 2 as "normal" and "crit" -- as this test originally did --
 -- hides a reversed crit test completely.
 local HIT_NORMAL = 2            -- 0x002 AFFECTS_VICTIM
-local HIT_CRIT   = 2 + 512      -- 0x202 AFFECTS_VICTIM | CRITICALHIT
+local HIT_CRIT   = 2 + 128      -- 0x082 AFFECTS_VICTIM | CRITICALHIT, as the server sends it
 
 fire("AUTO_ATTACK_SELF", "0xP1", "0xBoss", 300, HIT_NORMAL, 0, 1, 0, 0, 0)
 advance(1)
@@ -3431,6 +3432,62 @@ E:Finish()
 
 UnitAffectingCombat, GetNumRaidMembers = realUAC, realRaid
 IN_COMBAT = true
+end
+
+----------------------------------------------------------------------
+print("\n-- crit % counts what could crit --")
+----------------------------------------------------------------------
+do
+-- What a paladin's fight looked like in the Chronicle log: swings of 2
+-- (hit), 16386 (0x4002 glancing) and 130 (0x82 crit); Seal of Command
+-- crits with hitInfo 2; Consecration ticks ("27,0,0,3": periodic, never
+-- crits); Retribution Aura (a damage shield); and heals, some crits.
+local E = Wrekkit.encounter
+local IN = IN_COMBAT
+IN_COMBAT = true
+advance(30)
+fire("PLAYER_REGEN_DISABLED")
+local a = E.live and E:Actor("0xP1")
+local b = { hits = a.hits, crits = a.crits, critHits = a.critHits or 0,
+            healHits = a.healHits or 0, healCrits = a.healCrits or 0 }
+
+fire("AUTO_ATTACK_SELF", "0xP1", "0xBoss", 300, 2, 0, 1, 0, 0, 0)        -- hit
+fire("AUTO_ATTACK_SELF", "0xP1", "0xBoss", 200, 16386, 0, 1, 0, 0, 0)    -- glancing
+fire("AUTO_ATTACK_SELF", "0xP1", "0xBoss", 600, 130, 0, 1, 0, 0, 0)      -- crit
+-- On its own, before anything else could make the count come out right.
+check("a 0x82 swing is a crit, and 0x4002 is not", a.crits - b.crits, 1)
+fire("SPELL_DAMAGE_EVENT_SELF", "0xBoss", "0xP1", 20424, 500, "0,0,0", 2, 2, "31,0,0,0")  -- SoC crit
+fire("SPELL_DAMAGE_EVENT_SELF", "0xBoss", "0xP1", 20424, 250, "0,0,0", 0, 2, "31,0,0,0")  -- SoC hit
+for _ = 1, 6 do
+  fire("SPELL_DAMAGE_EVENT_SELF", "0xBoss", "0xP1", 20924, 50, "0,0,0", 0, 2, "27,0,0,3")  -- Consecration tick
+end
+fire("DAMAGE_SHIELD_SELF", "0xP1", "0xBoss", 30, 2)                       -- Retribution Aura
+-- Heals: a crit, a plain one, and two HoT ticks that cannot crit.
+fire("SPELL_HEAL_BY_SELF", "0xP2", "0xP1", 10917, 900, 1, 0)
+fire("SPELL_HEAL_BY_SELF", "0xP2", "0xP1", 10917, 450, 0, 0)
+fire("SPELL_HEAL_BY_SELF", "0xP2", "0xP1", 25299, 100, 0, 1)
+fire("SPELL_HEAL_BY_SELF", "0xP2", "0xP1", 25299, 100, 0, 1)
+
+local d = function(k) return (a[k] or 0) - b[k] end
+check("one swing crit and one spell crit", d("crits"), 2)
+check("  every damage event is still a hit", d("hits"), 12)
+check("  but only the 5 that could crit count toward Crit %", d("critHits"), 5)
+check("  a heal crit is not a damage crit", d("crits"), 2)
+check("heal crits are counted apart", d("healCrits"), 1)
+check("  HoT ticks are not chances to crit", d("healHits"), 2)
+-- The metric, on just these events.
+local crit = Wrekkit.metrics.byKey.crit.value({ crits = d("crits"), critHits = d("critHits"), hits = d("hits") })
+check("Crit % is 2 of 5", crit, 40, 0.01)
+local hcrit = Wrekkit.metrics.byKey.healCrit.value({ healCrits = d("healCrits"), healHits = d("healHits") })
+check("Heal Crit % is 1 of 2", hcrit, 50, 0.01)
+-- A pull saved before critHits existed reads as it did.
+check("an old pull with no critHits uses its hits", Wrekkit.metrics.byKey.crit.value({ crits = 3, hits = 12 }), 25, 0.01)
+
+IN_COMBAT = false
+E:LeftCombat()
+advance(6)
+E:Finish()
+IN_COMBAT = IN
 end
 
 ----------------------------------------------------------------------

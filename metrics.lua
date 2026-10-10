@@ -206,11 +206,24 @@ M.list = {
   },
   {
     key = "crit", label = "Crit %", short = "CRIT", side = "player",
+    -- Of the hits that could crit: periodic ticks (a DoT, Consecration) and
+    -- damage shields never do, and counting them drowned the rate.
     value = function(r)
-      if (r.hits or 0) <= 0 then return 0 end
-      return r.crits / r.hits * 100
+      local n = r.critHits or r.hits or 0
+      if n <= 0 then return 0 end
+      return (r.crits or 0) / n * 100
     end,
-    sub = function(r) return (r.crits or 0) .. "/" .. (r.hits or 0) end,
+    sub = function(r) return (r.crits or 0) .. "/" .. (r.critHits or r.hits or 0) end,
+    percent = true,
+  },
+  {
+    key = "healCrit", label = "Heal Crit %", short = "HCRIT", side = "player",
+    -- Direct heals only: a HoT tick cannot crit.
+    value = function(r)
+      if (r.healHits or 0) <= 0 then return 0 end
+      return (r.healCrits or 0) / r.healHits * 100
+    end,
+    sub = function(r) return (r.healCrits or 0) .. "/" .. (r.healHits or 0) end,
     percent = true,
   },
   {
