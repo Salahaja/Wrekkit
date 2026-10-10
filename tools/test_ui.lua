@@ -821,6 +821,61 @@ step("fit after letting go of the grip, though the client reports a stale height
   M:Refresh()
 end)
 
+step("rows: fixed, stretched to fill, or a set number filling the window", function()
+  local M = UI.meter
+  local s = M:Settings()
+  M:SetSplit("off")
+  s.fitRows = false
+  local base = math.floor((s.rowHeight or 18) * UI.FontScale() + 0.5)
+  local listH = base * 5 + base * 0.6        -- five rows and a bit
+  local realGetH = M.list.GetHeight
+  M.list.GetHeight = function() return listH end
+  local ok, err = pcall(function()
+    s.rowMode = "fixed"
+    M:Refresh()
+    if math.abs(M.list.rowHeight - base) > 0.01 then error("fixed rows are not the Row height") end
+    -- Stretch: the five that fit, stretched to fill, nothing left over.
+    s.rowMode = "stretch"
+    M:Refresh()
+    if math.abs(M.list.rowHeight * 5 - listH) > 0.01 then
+      error(string.format("stretched rows are %.2f; five of them do not fill %.2f", M.list.rowHeight, listH))
+    end
+    if M.list:VisibleCount() ~= 5 then error("stretched, the list shows " .. M.list:VisibleCount() .. " rows, not 5") end
+    -- A set number: three rows fill it.
+    s.rowMode, s.rowCount = "count", 3
+    M:Refresh()
+    if math.abs(M.list.rowHeight * 3 - listH) > 0.01 then error("three set rows do not fill the list") end
+    if M.list:VisibleCount() ~= 3 then error("set to 3, the list shows " .. M.list:VisibleCount()) end
+    -- Fill with players: the players shown fill the list exactly...
+    s.rowMode = "players"
+    M:Refresh()
+    local n = table.getn(M.list.data)
+    if n == 0 then error("no players to fill with") end
+    local each = listH / n
+    if each <= base * 3 then
+      if math.abs(M.list.rowHeight * n - listH) > 0.01 then
+        error(string.format("%d players at %.2f do not fill %.2f", n, M.list.rowHeight, listH))
+      end
+    end
+    -- ...but a few players in a tall window stop at three Row heights.
+    local tall = base * 3 * n * 4
+    M.list.GetHeight = function() return tall end
+    M:Refresh()
+    if math.abs(M.list.rowHeight - base * 3) > 0.01 then
+      error(string.format("few players in a tall window are %.2f tall, not capped at %.2f", M.list.rowHeight, base * 3))
+    end
+    M.list.GetHeight = function() return listH end
+    -- Fitting to rows sizes the window instead: rows keep the Row height.
+    s.fitRows = true
+    M:Refresh()
+    if math.abs(M.list.rowHeight - base) > 0.01 then error("with fit on, rows were still stretched") end
+  end)
+  M.list.GetHeight = realGetH
+  s.rowMode, s.rowCount, s.fitRows = "fixed", 8, false
+  M:Refresh()
+  if not ok then error(err) end
+end)
+
 step("a window being moved is never re-anchored or resized (that crashes 1.12)", function()
   local M = UI.meter
   local f = M.frame

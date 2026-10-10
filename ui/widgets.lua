@@ -1105,7 +1105,9 @@ function UI.ScrollList(parent, rowHeight, makeRow)
          line. ]]
     local rh = self.rowHeight
     if not rh or rh < 1 then rh = 18 end
-    return math.floor(h / rh)
+    -- A hair over: a row height worked out as h/n must give n rows, and
+    -- in floating point h/(h/n) can come out a whisker under n.
+    return math.floor(h / rh + 0.001)
   end
 
   function list:MaxOffset()

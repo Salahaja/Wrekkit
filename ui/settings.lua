@@ -355,6 +355,33 @@ function S:Create()
     10, 32, 1,
     function(v) return v .. "px" end)
 
+  choice(self, "Rows",
+    {
+      { value = "fixed", label = "fixed height" },
+      { value = "stretch", label = "stretch to fill" },
+      { value = "count", label = "set number" },
+      { value = "players", label = "fill with players" },
+    },
+    function() return meter:Settings().rowMode or "fixed" end,
+    function(v)
+      meter:Settings().rowMode = v
+      meter:ApplyLayout()
+    end,
+    { "fixed height: rows at Row height, as many", "as the window holds.",
+      "stretch to fill: as many as fit at Row", "height, stretched evenly to fill the window.",
+      "set number: Rows shown rows, stretched to", "fill it.",
+      "fill with players: the players shown fill", "it, however many -- each bar at most three",
+      "Row heights tall. (Fit to rows, when on,", "sizes the window to the rows instead.)" })
+
+  stepper(self, "Rows shown",
+    function() return meter:Settings().rowCount or 8 end,
+    function(v)
+      meter:Settings().rowCount = v
+      meter:ApplyLayout()
+    end,
+    2, 40, 1,
+    function(v) return v .. " rows" end)
+
   slider(self, "Meter opacity",
     function() return math.floor(((meter:Settings().opacity or 1) * 100) + 0.5) end,
     function(v)
