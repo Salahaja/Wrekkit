@@ -844,6 +844,25 @@ step("rows: fixed, stretched to fill, or a set number filling the window", funct
     M:Refresh()
     if math.abs(M.list.rowHeight * 3 - listH) > 0.01 then error("three set rows do not fill the list") end
     if M.list:VisibleCount() ~= 3 then error("set to 3, the list shows " .. M.list:VisibleCount()) end
+    -- Fill with players: the players shown fill the list exactly...
+    s.rowMode = "players"
+    M:Refresh()
+    local n = table.getn(M.list.data)
+    if n == 0 then error("no players to fill with") end
+    local each = listH / n
+    if each <= base * 3 then
+      if math.abs(M.list.rowHeight * n - listH) > 0.01 then
+        error(string.format("%d players at %.2f do not fill %.2f", n, M.list.rowHeight, listH))
+      end
+    end
+    -- ...but a few players in a tall window stop at three Row heights.
+    local tall = base * 3 * n * 4
+    M.list.GetHeight = function() return tall end
+    M:Refresh()
+    if math.abs(M.list.rowHeight - base * 3) > 0.01 then
+      error(string.format("few players in a tall window are %.2f tall, not capped at %.2f", M.list.rowHeight, base * 3))
+    end
+    M.list.GetHeight = function() return listH end
     -- Fitting to rows sizes the window instead: rows keep the Row height.
     s.fitRows = true
     M:Refresh()

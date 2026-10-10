@@ -46,6 +46,8 @@ M.defaults = {
          fixed    rows at rowHeight; the window decides how many fit
          stretch  as many as fit at rowHeight, stretched to fill it
          count    rowCount rows, stretched to fill it
+         players  one row per player shown, stretched to fill it (each
+                  at most PLAYERS_MAX times rowHeight)
        Fitting to rows (fitRows), when on, sizes the window instead. ]]
   rowMode = "fixed",
   rowCount = 8,
@@ -1202,6 +1204,9 @@ end
      there the rows keep the Row height. Each half of a split meter fills
      its own list. Run on every redraw, so a resize, a layout or a text
      size is followed at once. ]]
+-- "players": the tallest a row may stretch, in Row heights.
+local PLAYERS_MAX = 3
+
 function M:SizeRows()
   local s = self:Settings()
   local mode = s.rowMode or "fixed"
@@ -1215,12 +1220,16 @@ function M:SizeRows()
       local n
       if mode == "count" then
         n = tonumber(s.rowCount) or 8
+      elseif mode == "players" then
+        n = table.getn(list.data or {})
       else
         n = math.floor(listH / base + 0.001)
       end
       if n < 1 then n = 1 end
       if listH > 0 then h = listH / n end
       if h < 8 then h = 8 end
+      -- One player is not one bar the height of the window.
+      if mode == "players" and h > base * PLAYERS_MAX then h = base * PLAYERS_MAX end
     end
     if math.abs((list.rowHeight or 0) - h) > 0.01 then list:SetRowHeight(h) end
   end
