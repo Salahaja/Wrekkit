@@ -3498,18 +3498,41 @@ do
 local TL = Wrekkit.talents
 TL.specs, TL.pending, TL.queue, TL.asking = {}, {}, {}, nil
 
--- An inspection answer, as it arrives: the server leads each line with a tab.
+-- An inspection answer, as it arrives: the server leads each line with a
+-- tab. A tree line's numbers are the same for every paladin (its size, not
+-- points spent); the points are in the talent lines, as ranks.
+local function talents(name, tree, points)
+  local idx = 0
+  while points > 0 do
+    idx = idx + 1
+    local r = points > 5 and 5 or points
+    points = points - r
+    TL:OnMessage("TW_CHAT_MSG_WHISPER", "\tINSTalentInfo;" .. tree .. ";" .. idx ..
+      ";Talent " .. idx .. ";1;2;" .. r .. ";5;1;0;0;0", name)
+  end
+  TL:OnMessage("TW_CHAT_MSG_WHISPER", "\tINSTalentInfo;" .. tree .. ";" .. (idx + 1) ..
+    ";Untaken;3;1;0;5;0;0;0;0", name)
+end
 local function answer(name, a, b, c)
-  TL:OnMessage("TW_CHAT_MSG_WHISPER", "\tINSTalentTabInfo;1;Holy;14;" .. a, name)
-  TL:OnMessage("TW_CHAT_MSG_WHISPER", "\tINSTalentInfo;1;1;Divine Strength;1;2;5;5;1", name)
-  TL:OnMessage("TW_CHAT_MSG_WHISPER", "\tINSTalentTabInfo;2;Protection;15;" .. b, name)
-  TL:OnMessage("TW_CHAT_MSG_WHISPER", "\tINSTalentTabInfo;3;Retribution;15;" .. c, name)
+  TL:OnMessage("TW_CHAT_MSG_WHISPER", "\tINSTalentTabInfo;1;Holy;14;14", name)
+  talents(name, 1, a)
+  TL:OnMessage("TW_CHAT_MSG_WHISPER", "\tINSTalentTabInfo;2;Protection;15;15", name)
+  talents(name, 2, b)
+  TL:OnMessage("TW_CHAT_MSG_WHISPER", "\tINSTalentTabInfo;3;Retribution;15;15", name)
+  talents(name, 3, c)
   TL:OnMessage("TW_CHAT_MSG_WHISPER", "\tINSTalentEND", name)
 end
 answer("Pempuk", 5, 11, 35)
 local sp = TL:Spec("Pempuk")
 check("an inspection gives the spec", sp and sp.tree, "Retribution")
-check("  with its points", TL:Describe("Pempuk"), "Retribution (5/11/35)")
+check("  with its points, added up from the talents", TL:Describe("Pempuk"), "Retribution (5/11/35)")
+-- The same answer heard twice over (two addons asked) counts once.
+TL:OnMessage("TW_CHAT_MSG_WHISPER", "\tINSTalentTabInfo;1;Holy;14;14", "Twice")
+TL:OnMessage("TW_CHAT_MSG_WHISPER", "\tINSTalentInfo;1;1;Divine Strength;1;2;5;5;1", "Twice")
+TL:OnMessage("TW_CHAT_MSG_WHISPER", "\tINSTalentInfo;1;1;Divine Strength;1;2;5;5;1", "Twice")
+TL:OnMessage("TW_CHAT_MSG_WHISPER", "\tINSTalentInfo;1;2;Divine Intellect;1;3;3;5;1", "Twice")
+TL:OnMessage("TW_CHAT_MSG_WHISPER", "\tINSTalentEND", "Twice")
+check("  an answer heard twice counts once", TL:Spec("Twice").points[1], 8)
 check("  and the tree's icon", TL:Icon("Pempuk", "PALADIN"), "Interface\\Icons\\Spell_Holy_AuraOfLight")
 answer("Albintank", 0, 31, 20)
 check("a Protection paladin's shield is the paladin's", TL:Icon("Albintank", "PALADIN"),
@@ -3537,9 +3560,11 @@ check("a deep talent cast guesses the spec", TL:Describe("Rogue"), "Arms (guesse
 WORLD["0xPemp"] = { name = "Pempuk", class = "PALADIN", isPlayer = true }
 TL:OnCast("0xPemp", 21553)
 check("a cast does not overrule an inspection", TL:Spec("Pempuk").tree, "Retribution")
-TL:OnMessage("TW_CHAT_MSG_WHISPER", "\tINSTalentTabInfo;1;Arms;18;31", "Rogue")
-TL:OnMessage("TW_CHAT_MSG_WHISPER", "\tINSTalentTabInfo;2;Fury;17;20", "Rogue")
-TL:OnMessage("TW_CHAT_MSG_WHISPER", "\tINSTalentTabInfo;3;Protection;17;0", "Rogue")
+TL:OnMessage("TW_CHAT_MSG_WHISPER", "\tINSTalentTabInfo;1;Arms;18;18", "Rogue")
+talents("Rogue", 1, 31)
+TL:OnMessage("TW_CHAT_MSG_WHISPER", "\tINSTalentTabInfo;2;Fury;17;17", "Rogue")
+talents("Rogue", 2, 20)
+TL:OnMessage("TW_CHAT_MSG_WHISPER", "\tINSTalentTabInfo;3;Protection;17;17", "Rogue")
 TL:OnMessage("TW_CHAT_MSG_WHISPER", "\tINSTalentEND", "Rogue")
 check("an inspection replaces a guess", TL:Describe("Rogue"), "Arms (31/20/0)")
 -- Someone outside the group is not guessed at.
@@ -3548,7 +3573,7 @@ TL:OnCast("0xStranger", 20066)
 check("no guesses about strangers", TL:Spec("Stranger"), nil)
 SpellInfo, Wrekkit.capture.groupMembers = realInfo, realGroup
 
--- Asking: only without ChronicleCompanion, never in combat, one at a time.
+-- Asking: never in combat, one at a time, ChronicleCompanion or not.
 local sent = {}
 local realSend, realRaid, realName, realUAC = SendAddonMessage, GetNumRaidMembers, UnitName, UnitAffectingCombat
 SendAddonMessage = function(p, m, c) table.insert(sent, p .. "|" .. m .. "|" .. c) end
@@ -3560,14 +3585,6 @@ UnitName = function(u)
 end
 UnitAffectingCombat = function() return false end
 TL.specs, TL.queue, TL.asking = {}, {}, nil
--- ChronicleCompanion with its logging on asks for us...
-ChronicleLog = { enabled = true, QueueTalentInspection = function() end }
-TL:Step()
-check("with ChronicleCompanion asking, Wrekkit does not", table.getn(sent), 0)
--- ...but installed with its logging off it asks nobody, so Wrekkit must.
-ChronicleLog.enabled = false
-check("  installed but not logging, it is not asking", TL:OthersAsk(), false)
-ChronicleLog = nil
 UnitAffectingCombat = function() return true end
 TL:Step()
 check("  nor in combat", table.getn(sent), 0)
@@ -3579,6 +3596,27 @@ check("  one at a time", table.getn(sent), 1)
 advance(11)
 TL:Step()
 check("  and the next after a timeout", sent[2], "TW_CHAT_MSG_WHISPER<Shejian>|INSTalentShow|GUILD")
+-- Offline: the server says so, and the next is not held up.
+TL:OnMessage("TW_CHAT_MSG_WHISPER", "Error:CantFindPlayer:Shejian", "Shejian")
+check("  an offline player frees the line at once", TL.asking, nil)
+-- Nobody answered: not asked again for a minute.
+TL:Step()
+check("  nor a non-answerer straight away", table.getn(sent), 2)
+advance(61)
+TL:Step()
+check("  but again after a minute", sent[3], "TW_CHAT_MSG_WHISPER<Moras>|INSTalentShow|GUILD")
+-- Someone ChronicleCompanion inspected (its answers land here too) is not asked.
+TL.asking, TL.queue = nil, {}
+answer("Moras", 0, 5, 46)
+answer("Shejian", 0, 5, 46)
+advance(61)
+TL:Step()
+check("  someone answered lately is not asked", table.getn(sent), 3)
+-- /wrek inspect asks now, ahead of the rest.
+TL:Inspect("moras")
+TL:Step()
+check("/wrek inspect asks at once", sent[4], "TW_CHAT_MSG_WHISPER<Moras>|INSTalentShow|GUILD")
+TL.asking = nil
 SendAddonMessage, GetNumRaidMembers, UnitName, UnitAffectingCombat = realSend, realRaid, realName, realUAC
 
 -- Your own, from the talent API.

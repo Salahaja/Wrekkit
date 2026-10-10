@@ -44,6 +44,7 @@ local HELP = {
   { "/wrek status", "diagnose why nothing is being recorded" },
   { "/wrek layout", "the meter's sizes, to report a drawing problem" },
   { "/wrek specs", "your group's talent specs, and where each came from" },
+  { "/wrek inspect <name>", "ask a player for their talents now" },
   { "/wrek who", "list every actor and how it was classified" },
   { "/wrek mode <metric>", "set the meter metric (dps, healing, taken, ...)" },
   { "/wrek segment <what>", "current, last, back2..back5 or overall" },
@@ -121,6 +122,9 @@ local function handler(msg)
 
   elseif cmd == "specs" or cmd == "spec" then
     W.talents:Report()
+
+  elseif cmd == "inspect" then
+    W.talents:Inspect(a[2])
 
   elseif cmd == "who" then
     W.Who()

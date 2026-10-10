@@ -5,21 +5,19 @@ Who is specced what: Holy, Protection, Retribution.
 1.12 has no API for another player's talents, but this server does. Sent
 on the TW_CHAT_MSG_WHISPER addon channel (it reaches one named player),
 "INSTalentShow" makes the server answer for that player -- addon or not --
-with one line per tree and then the end:
+with a line per tree and per talent, and then the end:
 
-  INSTalentTabInfo;tree;tabName;numTalents;pointsSpent
+  INSTalentTabInfo;tree;tabName;a;b      (a tree's name; b is NOT its points)
   INSTalentInfo;tree;idx;name;tier;col;currRank;maxRank;...   (per talent)
   INSTalentEND
 
 each as an addon message from the inspected player under the prefix
-TW_CHAT_MSG_WHISPER, its text led by a tab. Only the tree totals are kept:
-that is the spec.
+TW_CHAT_MSG_WHISPER, its text led by a tab. A tree's points are its
+talents' ranks added up; the three totals are the spec.
 
-ChronicleCompanion already inspects the raid every fifteen minutes, out of
-combat. Its answers arrive on this client like any other addon message, so
-they are read here and nothing more is sent. Only without it does Wrekkit
-ask, the same way: one player at a time, never in combat, each again after
-fifteen minutes.
+Wrekkit asks one player at a time, never in combat, each again after
+fifteen minutes. ChronicleCompanion asks the same way, and its answers
+arrive here too, so whoever it inspected lately is not asked again.
 
 The player's own spec comes straight from GetTalentTabInfo.
 
@@ -35,6 +33,7 @@ local TL = W.talents
 local CHANNEL = "TW_CHAT_MSG_WHISPER"
 local REFRESH = 900        -- seconds before a player is asked again
 local TIMEOUT = 10         -- seconds before an unanswered ask is dropped
+local RETRY = 60           -- seconds before someone who did not answer is asked again
 local STEP = 1.5           -- seconds between looks at the queue
 
 TL.specs = {}              -- name -> { trees = { {name, points} x3 }, at, guess }
@@ -149,29 +148,71 @@ end
 function TL:OnMessage(prefix, msg, sender)
   if prefix ~= CHANNEL or type(msg) ~= "string" or not sender then return end
   msg = string.gsub(msg, "^%s+", "")
+  -- The server's answer when the one asked is not online.
+  local _, _, gone = string.find(msg, "^Error:CantFindPlayer:(.+)")
+  if gone then
+    self:Note(gone .. " is not online")
+    if self.asking == gone then self.asking = nil end
+    return
+  end
   if string.sub(msg, 1, 9) ~= "INSTalent" then return end
 
   if string.find(msg, "^INSTalentEND") then
     local trees = self.pending[sender]
     self.pending[sender] = nil
     if trees and (trees[1] or trees[2] or trees[3]) then
+      for i = 1, 3 do
+        if trees[i] then trees[i].name = trees[i].name or ("Tree " .. i) end
+      end
       self.specs[sender] = { trees = trees, at = GetTime() }
+      self:Note(sender .. " answered: " .. (self:Describe(sender) or "no points spent"))
     end
     if self.asking == sender then self.asking = nil end
     return
   end
 
-  -- INSTalentTabInfo;tree;tabName;numTalents;pointsSpent
-  local _, _, tree, tabName, points = string.find(msg, "^INSTalentTabInfo;(%d);([^;]*);[^;]*;(%d+)")
-  tree = tonumber(tree)
-  if tree and tree >= 1 and tree <= 3 then
-    local t = self.pending[sender]
-    if not t then
-      t = {}
-      self.pending[sender] = t
-    end
-    t[tree] = { name = tabName, points = tonumber(points) or 0 }
+  local t = self.pending[sender]
+  if not t then
+    t = {}
+    self.pending[sender] = t
   end
+  local function tree(i)
+    i = tonumber(i)
+    if not i or i < 1 or i > 3 then return nil end
+    t[i] = t[i] or { points = 0 }
+    return t[i]
+  end
+
+  --[[ INSTalentTabInfo;tree;tabName;a;b -- the name of a tree. Its numbers
+       are NOT the points spent: every player of a class sends the same ones
+       (rogues 18/18/20, priests 18/17/17), the trees' sizes. ]]
+  local _, _, i, tabName = string.find(msg, "^INSTalentTabInfo;(%d);([^;]*)")
+  if i then
+    local tr = tree(i)
+    if tr then tr.name = tabName end
+    return
+  end
+
+  -- INSTalentInfo;tree;idx;name;tier;col;currRank;maxRank;... -- one talent.
+  -- The points spent in a tree are its talents' ranks, added up.
+  -- By talent, so an answer heard twice (two addons asking) counts once.
+  local _, _, j, idx, rank = string.find(msg, "^INSTalentInfo;(%d);(%d+);[^;]*;[^;]*;[^;]*;(%d+)")
+  if j then
+    local tr = tree(j)
+    if tr then
+      tr.ranks = tr.ranks or {}
+      tr.points = tr.points - (tr.ranks[idx] or 0)
+      tr.ranks[idx] = tonumber(rank) or 0
+      tr.points = tr.points + tr.ranks[idx]
+    end
+  end
+end
+
+--- A line for /wrek specs: what was asked and heard, the last few.
+function TL:Note(text)
+  self.log = self.log or {}
+  table.insert(self.log, string.format("%.0f", GetTime()) .. "s " .. text)
+  while table.getn(self.log) > 8 do table.remove(self.log, 1) end
 end
 
 --- The player's own spec, from the talent API.
@@ -189,21 +230,19 @@ function TL:ReadOwn()
   end
 end
 
---[[ Is ChronicleCompanion asking already? Then its answers are enough.
-     Installed is not enough: it only inspects while its logging is on
-     (switched on by hand, or in an instance), and with it off it asks
-     nobody -- which left a party with no specs at all, Wrekkit having
-     stood back for an addon that was not asking. ]]
-function TL:OthersAsk()
-  return ChronicleLog ~= nil and ChronicleLog.enabled == true
-    and type(ChronicleLog.QueueTalentInspection) == "function"
-end
+--[[ ChronicleCompanion inspects too, and its answers land here like ours,
+     so whoever it has inspected lately is not asked again. But Wrekkit no
+     longer stands back for it: it asks only while its logging is on, and
+     then rounds up the party only every fifteen minutes -- someone who
+     joined in between went that long with no spec. ]]
 
---- Queue the group's players who have not been inspected lately.
+--- Queue the group's players who have not been inspected lately. Someone
+--- who did not answer waits a minute before being asked again.
 function TL:QueueGroup()
   local now = GetTime()
   local queued = {}
   for _, n in ipairs(self.queue) do queued[n] = true end
+  self.lastAsk = self.lastAsk or {}
   local n = GetNumRaidMembers and GetNumRaidMembers() or 0
   local unit = "raid"
   if n == 0 then
@@ -216,7 +255,8 @@ function TL:QueueGroup()
     local name = UnitName(u)
     local s = name and self.specs[name]
     local fresh = s and not s.guess and now - (s.at or 0) < REFRESH
-    if name and name ~= me and not fresh and not queued[name]
+    local waiting = name and self.lastAsk[name] and now - self.lastAsk[name] < RETRY
+    if name and name ~= me and not fresh and not waiting and not queued[name]
        and (not UnitIsConnected or UnitIsConnected(u)) then
       table.insert(self.queue, name)
       queued[name] = true
@@ -226,9 +266,9 @@ end
 
 --- Ask the next player, when nothing is waiting and nobody is fighting.
 function TL:Step()
-  if self:OthersAsk() then return end
   local now = GetTime()
   if self.asking and now - self.askedAt > TIMEOUT then
+    self:Note(self.asking .. " did not answer")
     self.pending[self.asking] = nil
     self.asking = nil
   end
@@ -238,7 +278,10 @@ function TL:Step()
   local name = table.remove(self.queue, 1)
   if not name or not SendAddonMessage then return end
   self.asking, self.askedAt = name, now
+  self.lastAsk = self.lastAsk or {}
+  self.lastAsk[name] = now
   self.pending[name] = nil
+  self:Note("asked " .. name)
   -- The addressee is in the prefix: this channel reaches that one player.
   -- No ">" may appear in the text, and none does.
   pcall(SendAddonMessage, CHANNEL .. "<" .. name .. ">", "INSTalentShow", "GUILD")
@@ -306,16 +349,36 @@ function TL:Report()
   for name in pairs(self.specs) do table.insert(names, name) end
   table.sort(names)
   if table.getn(names) == 0 then
-    W.Print("no specs known yet. They come from the server's talent inspect, which " ..
-      (self:OthersAsk() and "ChronicleCompanion" or "Wrekkit") ..
-      " runs out of combat, a player at a time.")
+    W.Print("no specs known yet. They come from the server's talent inspect, " ..
+      "asked out of combat, a player at a time.")
+  else
+    W.Print(table.getn(names) .. " specs known:")
+    for _, name in ipairs(names) do
+      W.Print("  " .. name .. ": " .. (self:Describe(name) or "?"))
+    end
+  end
+  -- What was asked and heard lately: when a spec will not come, why.
+  if self.log and table.getn(self.log) > 0 then
+    W.Print("lately (now " .. string.format("%.0f", GetTime()) .. "s):")
+    for _, line in ipairs(self.log) do W.Print("  " .. line) end
+  end
+  if self.asking then W.Print("waiting on " .. self.asking) end
+  if table.getn(self.queue) > 0 then W.Print("to ask: " .. table.concat(self.queue, ", ")) end
+end
+
+--- /wrek inspect Name: ask now, ahead of the rest.
+function TL:Inspect(name)
+  if not name or name == "" then
+    W.Print("usage: /wrek inspect <name>")
     return
   end
-  W.Print(table.getn(names) .. " specs known" ..
-    (self:OthersAsk() and " (inspected by ChronicleCompanion):" or ":"))
-  for _, name in ipairs(names) do
-    W.Print("  " .. name .. ": " .. (self:Describe(name) or "?"))
+  name = string.upper(string.sub(name, 1, 1)) .. string.lower(string.sub(name, 2))
+  for i = table.getn(self.queue), 1, -1 do
+    if self.queue[i] == name then table.remove(self.queue, i) end
   end
+  table.insert(self.queue, 1, name)
+  if self.lastAsk then self.lastAsk[name] = nil end
+  W.Print("asking " .. name .. " for their talents -- /wrek specs in a moment for the answer.")
 end
 
 ----------------------------------------------------------------------
