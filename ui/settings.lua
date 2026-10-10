@@ -940,6 +940,17 @@ function S:BuildThreat()
     160, 420, 10,
     function(v) return v .. "px" end)
 
+  -- Clicking the player a mob is on: a spell each, or empty to target them.
+  textField(self, "Click player: cast",
+    function() return ts().mobWhoLeft end,
+    function(v) ts().mobWhoLeft = v or "" end)
+  textField(self, "Right-click player",
+    function() return ts().mobWhoRight end,
+    function(v) ts().mobWhoRight = v or "" end)
+  textField(self, "Shift-click player",
+    function() return ts().mobWhoShift end,
+    function(v) ts().mobWhoShift = v or "" end)
+
   stepper(self, "From",
     function() return ts().mobFramesMin end,
     function(v) ts().mobFramesMin = v; redraw() end,

@@ -97,7 +97,7 @@ declare(WOW, [[
   GetNumShapeshiftForms GetShapeshiftFormInfo
   GetSpellName GetSpellTexture GetSpellCooldown CastSpell CastSpellByName
   GetPlayerBuff GetPlayerBuffTexture
-  TargetUnit TargetByName
+  TargetUnit TargetByName TargetLastTarget ClearTarget
   this event arg1 arg2 arg3 arg4 arg5 arg6 arg7 arg8 arg9
 ]])
 
@@ -1278,6 +1278,49 @@ step("threat meter", function()
     MF:Update()
     if MF.grip:IsShown() then error("the width grip stayed after placing") end
     MF:SetWidth(before)
+  end
+  -- Clicking the player a mob is hitting: the spell set for that click, at
+  -- them; with no spell, they are targeted. Drake 1 is on you.
+  do
+    local ts = T:Settings()
+    local real = { cast = STUB.CastSpellByName, target = STUB.TargetUnit, last = STUB.TargetLastTarget,
+                   shift = STUB.IsShiftKeyDown, info = STUB.SpellInfo }
+    local did = {}
+    STUB.CastSpellByName = function(spell, unit) table.insert(did, "cast:" .. spell .. "@" .. tostring(unit)) end
+    STUB.TargetUnit = function(u) table.insert(did, "target:" .. tostring(u)) end
+    STUB.TargetLastTarget = function() table.insert(did, "back") end
+    ts.mobWhoLeft, ts.mobWhoRight, ts.mobWhoShift = "Flash Heal", "", "Power Word: Shield"
+    local row
+    for _, r in ipairs(UI.mobs.rows) do
+      if r:IsShown() and r.mob and r.mob.guid == drakes[1] then row = r end
+    end
+    if not row or not row.whoBtn then error("no player button on Drake 1's row") end
+    local click = row.whoBtn:GetScript("OnClick")
+    local function press(button, shift)
+      did = {}
+      STUB.IsShiftKeyDown = function() return shift end
+      arg1 = button
+      click()
+      arg1 = nil
+      return table.concat(did, " ")
+    end
+    local ok, err = pcall(function()
+      -- With SuperWoW: straight at you, your target untouched.
+      local got = press("LeftButton")
+      if got ~= "cast:Flash Heal@player" then error("click cast " .. got) end
+      got = press("RightButton")
+      if got ~= "target:player" then error("right-click with no spell did " .. got) end
+      got = press("LeftButton", true)
+      if got ~= "cast:Power Word: Shield@player" then error("shift-click cast " .. got) end
+      -- Without SuperWoW: target them, cast, and the old target back.
+      STUB.SpellInfo = nil
+      got = press("LeftButton")
+      if got ~= "target:player cast:Flash Heal@nil back" then error("without SuperWoW the click did " .. got) end
+    end)
+    STUB.CastSpellByName, STUB.TargetUnit, STUB.TargetLastTarget = real.cast, real.target, real.last
+    STUB.IsShiftKeyDown, STUB.SpellInfo = real.shift, real.info
+    ts.mobWhoLeft, ts.mobWhoRight, ts.mobWhoShift = "", "", ""
+    if not ok then error(err) end
   end
   -- Your target is marked, and every row with a reading shows its %.
   local realExistsMF = STUB.UnitExists

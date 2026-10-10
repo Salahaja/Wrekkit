@@ -288,6 +288,31 @@ local function makeRow(parent, i)
   b.pct:SetPoint("RIGHT", b, "RIGHT", -4, 0)
   b.pct:SetWidth(34)
 
+  --[[ The player the mob is hitting is a button of its own, over their
+       name: a healer clicks it to heal, shield or bubble them (the spells
+       are set under Mob frames), or to target them when none is. The rest
+       of the row still targets the mob, and right-click still taunts. ]]
+  b.whoBtn = CreateFrame("Button", nil, b)
+  b.whoBtn:SetFrameLevel(b:GetFrameLevel() + 2)
+  b.whoBtn:SetPoint("TOPRIGHT", b, "TOPRIGHT", -38, 0)
+  b.whoBtn:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", -38, 0)
+  b.whoBtn:SetWidth(66)
+  b.whoBtn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+  -- A faint wash under the mouse says the name is a button of its own.
+  b.whoBtn.hl = UI.Fill(b.whoBtn, W.color.text, 0.1, "HIGHLIGHT")
+  b.whoBtn:SetScript("OnClick", function()
+    local button = arg1
+    W.Guard("mob frame player click", function() MF:ClickWho(b, button) end)
+  end)
+  b.whoBtn:SetScript("OnEnter", function()
+    b.hl:SetVertexColor(1, 1, 1, 0.06)
+    MF:WhoTooltip(b)
+  end)
+  b.whoBtn:SetScript("OnLeave", function()
+    b.hl:SetVertexColor(1, 1, 1, 0)
+    if GameTooltip then GameTooltip:Hide() end
+  end)
+
   b:SetScript("OnEnter", function() b.hl:SetVertexColor(1, 1, 1, 0.06) end)
   b:SetScript("OnLeave", function() b.hl:SetVertexColor(1, 1, 1, 0) end)
   b:SetScript("OnClick", function()
@@ -384,6 +409,53 @@ function MF:Create()
   self.rows = {}
   self:RestorePosition()
   return f
+end
+
+--- Who a row's player button acts on: the player the mob is hitting, you
+--- included, or nil when it is on nobody (or this is a sample).
+local function whoOf(b)
+  local m = b.mob
+  if not m or m.sample or b.summary then return nil end
+  if m.onMe then return UnitName("player") end
+  return m.who
+end
+
+--- What each click on the player does, from the settings.
+local function whoAction(button)
+  local s = T:Settings()
+  if button == "RightButton" then return s.mobWhoRight end
+  if IsShiftKeyDown and IsShiftKeyDown() then return s.mobWhoShift end
+  return s.mobWhoLeft
+end
+
+function MF:ClickWho(b, button)
+  local name = whoOf(b)
+  if not name then
+    -- On nobody: the click means what it means on the rest of the row.
+    local click = b:GetScript("OnClick")
+    if click then
+      local was = arg1
+      arg1 = button
+      click()
+      arg1 = was
+    end
+    return
+  end
+  T:CastOn(name, whoAction(button))
+end
+
+function MF:WhoTooltip(b)
+  local name = whoOf(b)
+  if not name or not GameTooltip then return end
+  local s = T:Settings()
+  local function say(spell) return (spell and spell ~= "") and spell or "target them" end
+  GameTooltip:SetOwner(b.whoBtn, "ANCHOR_TOP")
+  GameTooltip:AddLine(name)
+  GameTooltip:AddDoubleLine("Click", say(s.mobWhoLeft), 0.72, 0.75, 0.8, 1, 1, 1)
+  GameTooltip:AddDoubleLine("Right-click", say(s.mobWhoRight), 0.72, 0.75, 0.8, 1, 1, 1)
+  GameTooltip:AddDoubleLine("Shift-click", say(s.mobWhoShift), 0.72, 0.75, 0.8, 1, 1, 1)
+  GameTooltip:AddLine("Spells: Frames & plates -> Mob frames.", 0.55, 0.58, 0.64)
+  GameTooltip:Show()
 end
 
 --- The stack's width, from the setting.
