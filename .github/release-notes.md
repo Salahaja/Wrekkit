@@ -1,22 +1,15 @@
-**Other tanks are found, shared and picked from a button. And a pull now lasts as long as anyone in the group is fighting, not just you.**
+**Know which mobs you're about to pull, targeted or not, and get a real raid warning when it counts.**
 
-## New: other tanks
-- **Found automatically.** A group member in Defensive Stance, Bear or Dire Bear Form, or with Righteous Fury counts as a tank, whether or not they run Wrekkit. Their threat and the mobs they hold don't set off warnings.
-- **Shared with the group.** Marking or unmarking a tank does it for everyone in the party or raid running Wrekkit. Each Wrekkit also tells the group when its player is tanking, at any range.
-- **Tank button.** A shield in the threat window's title bar lists the group's warriors, druids and paladins, with a check beside each tank. Click a name to change it, mark your target, or clear all.
-- **Unmarking sticks.** Unmark someone by hand and detection won't mark them again. Use this for a tank spec who is DPSing.
-- **Cleared with the group.** Marks are cleared once you've left the group, it has disbanded, or you log in solo.
-- Both behaviours have a checkbox under Settings → Threat. `/wrek threat tanks` lists marked, found and unmarked players.
-
-## Fixed: pulls
-- **Damage done while you were out of combat is kept.** If you died, or dropped combat before the raid did, the rest of the fight used to be thrown away. That's why Wrekkit showed less damage than ShaguDPS. A pull now ends only once you, every group member and every pet are out of combat.
-- **Pulls the tank starts before you're in combat are kept whole,** from their first hit.
-- **A group member who stays in combat after a fight no longer holds the pull open.** This happens with a pet, or a mob walking back to its spot. Once nobody in the group has dealt or taken damage for 15 seconds, the pull ends, and the next pack is its own pull.
-- Solo, nothing changes.
+## New
+- **A tank's mobs, shared with the group.** The server tells a damage dealer about one mob: their target. A tank hears about every mob they hold, along with who is closest to pulling each one. The tank's Wrekkit now passes that to the party or raid about once a second. If you're the one closest to pulling any of those mobs, you get the usual THREAT warning and flash, and that mob's nameplate shows your %. This works even when you're AoEing five mobs and targeting none of them.
+  - It needs the tank to run Wrekkit 0.9.4, and covers the mobs they're holding.
+  - Relayed mobs are measured against the melee line, because the tank's data doesn't say who's in melee range. Casters are warned a little early, never late.
+  - On by default: **Settings → Threat → Share threat on every mob**.
+- **Big raid warning.** AGGRO, LOST AGGRO and danger-level THREAT also show as **WARNING: …** at the top of your screen, in the raid-warning style, with the raid-warning sound. Only you see it; nothing is sent to the raid. On by default: **Settings → Threat → Big raid warning**.
 
 ## Install
 
-Download `Wrekkit-0.9.3.zip` and extract it into `<your client>\Interface\AddOns\`. You should end up with `Interface\AddOns\Wrekkit\Wrekkit.toc`. Do **not** use the "Source code" links. **Fully restart the client** after installing. `/wrek status` should then report **v0.9.3**.
+Download `Wrekkit-0.9.4.zip` and extract it into `<your client>\Interface\AddOns\`. You should end up with `Interface\AddOns\Wrekkit\Wrekkit.toc`. Do **not** use the "Source code" links. **Fully restart the client** after installing. `/wrek status` should then report **v0.9.4**.
 
 ## Requirements
 

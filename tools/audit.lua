@@ -103,7 +103,7 @@ declare(FRAMEXML, [[
   CooldownFrame_SetTimer ReloadUI
   DEFAULT_CHAT_FRAME GameTooltip SlashCmdList StaticPopupDialogs
   StaticPopup_Show UISpecialFrames
-  UNKNOWN MouseIsOver
+  UNKNOWN MouseIsOver RaidWarningFrame
 ]])
 
 declare(SUPER, [[
@@ -2353,6 +2353,100 @@ step("other tanks: found by stance and shared with the group", function()
   STUB.SendAddonMessage, W.capture.groupMembers = real.send, real.members
   s.coTanks, s.coTanksOff, s.coTankAuto, s.coTankShare = "", "", true, true
   T.seenTank, T.peerRoles, T.detectedAt, T.lastChannel, T.sentRole = {}, {}, nil, nil, nil
+  if not ok then error(err) end
+end)
+
+step("a tank's mobs relayed: warned on every mob you are about to pull", function()
+  local T = W.threat
+  local s = T:Settings()
+  local real = { raid = STUB.GetNumRaidMembers, send = STUB.SendAddonMessage,
+                 members = W.capture.groupMembers, alert = T.Alert }
+  local sent, alerts = {}, {}
+  STUB.GetNumRaidMembers = function() return 3 end
+  STUB.SendAddonMessage = function(p, m, c)
+    if p == T.TANK_PREFIX then table.insert(sent, m) end
+  end
+  W.capture.groupMembers = { Tanky = true, Healy = true, Auditor = true }
+  T.Alert = function(self, text, level) table.insert(alerts, text .. "|" .. tostring(level)) end
+  s.relayThreat, s.warnAt, s.dangerAt, s.flashAt, s.flash = true, 80, 95, 85, true
+  T.fired, T.relayMobs, T.tankMobs, T.lastRelay, T.lastTM, T.current = {}, {}, {}, nil, nil, nil
+
+  local ok, err = pcall(function()
+    -- Tanking: tank mode names a runner-up on three mobs. One message goes
+    -- out, closest first, and no second one inside a second.
+    s.tankMode = "on"
+    T:OnMessage("TWTv4=Auditor:1:3000:100:1;#TMTv1=Imp:777:Healy:50;Ragefang:4660:Mage:105;" ..
+                "Rag, the Big:4661:Mage:70;")
+    if table.getn(sent) ~= 1 then error("tanking sent " .. table.getn(sent) .. " relays, not 1") end
+    if string.sub(sent[1], 1, 21) ~= "T:4660,Mage,105,Ragef" then error("relay reads " .. sent[1]) end
+    if string.find(sent[1], "Rag, the", 1, true) then error("a comma in a mob's name went out raw") end
+    T:OnMessage("TWTv4=Auditor:1:3000:100:1;#TMTv1=Imp:777:Healy:50;")
+    if table.getn(sent) ~= 1 then error("relayed twice inside a second") end
+
+    -- Not tanking: a tank's relay names this player on Ragefang. Warned and
+    -- flashed for it; not for Imp, which Healy is closer to.
+    s.tankMode = "off"
+    T.roleAt = nil
+    T.fired, T.tankMobs, alerts = {}, {}, {}
+    T:OnTankMessage("T:4660,Auditor,105,Ragefang;777,Healy,50,Imp", "Tanky")
+    if table.getn(alerts) ~= 1 or not string.find(alerts[1], "Ragefang", 1, true) then
+      error("relay alerts: " .. table.concat(alerts, " / "))
+    end
+    if not string.find(alerts[1], "|danger", 1, true) then error("95% of the way was not a danger alert") end
+    local pull = T:Alarm()
+    if not pull or pull < s.flashAt then error("no flash for a relayed mob about to be pulled") end
+    local pct, _, fresh = T:ForMob(nil, "0xF130000ABC001234")
+    if not pct or not fresh then error("the relayed mob's nameplate shows nothing") end
+    if T:ForMob(nil, "0xF130000ABC000309") then error("a plate showed a mob Healy is closer to") end
+    -- The same reading again does not warn again.
+    T:OnTankMessage("T:4660,Auditor,106,Ragefang", "Tanky")
+    if table.getn(alerts) ~= 1 then error("a relayed mob warned twice") end
+
+    -- Your own target: its own reply covers it, the relay does not.
+    T.fired, T.relayMobs, alerts = {}, {}, {}
+    T.current = { low = 4662, at = GetTime(), key = "x" }
+    T:OnTankMessage("T:4662,Auditor,105,Whelp", "Tanky")
+    if table.getn(alerts) ~= 0 then error("the relay warned about your own target") end
+    T.current = nil
+
+    -- From outside the group: ignored. Switched off: ignored.
+    T.fired, T.relayMobs, alerts = {}, {}, {}
+    T:OnTankMessage("T:4663,Auditor,105,Whelp", "Stranger")
+    s.relayThreat = false
+    T:OnTankMessage("T:4664,Auditor,105,Whelp", "Tanky")
+    if table.getn(alerts) ~= 0 or next(T.relayMobs) then error("a relay was taken from outside or while off") end
+
+    -- Gone stale: forgotten.
+    s.relayThreat = true
+    T:OnTankMessage("T:4665,Auditor,60,Whelp", "Tanky")
+    NOW = NOW + 5
+    T:Prune()
+    if T.relayMobs[4665] then error("a stale relay was kept") end
+
+    -- Danger alerts also go up as a raid warning, on this screen only.
+    local rw = {}
+    STUB.RaidWarningFrame = { AddMessage = function(self, m) table.insert(rw, m) end }
+    T.Alert = real.alert
+    s.raidWarning = true
+    T:Alert("AGGRO! Ragefang is on you", "danger")
+    T:Alert("THREAT 82%", "warn")
+    T:Alert("AGGRO! Ragefang is on you", "danger")
+    if table.getn(rw) ~= 1 or rw[1] ~= "WARNING: AGGRO! Ragefang is on you" then
+      error("raid warnings: " .. table.concat(rw, " / "))
+    end
+    s.raidWarning = false
+    NOW = NOW + 3
+    T:Alert("LOST AGGRO: Imp", "danger")
+    if table.getn(rw) ~= 1 then error("a raid warning showed with the setting off") end
+    s.raidWarning = true
+    STUB.RaidWarningFrame = nil
+  end)
+
+  STUB.GetNumRaidMembers, STUB.SendAddonMessage = real.raid, real.send
+  W.capture.groupMembers, T.Alert = real.members, real.alert
+  s.tankMode, s.relayThreat = "auto", true
+  T.fired, T.relayMobs, T.tankMobs, T.lastRelay, T.lastTM, T.current = {}, {}, {}, nil, nil, nil
+  T.roleAt = nil
   if not ok then error(err) end
 end)
 

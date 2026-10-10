@@ -717,6 +717,10 @@ function S:BuildThreat()
   check(self, "Flash screen edges", get, set)
   get, set = opt("warnSound")
   check(self, "Warning sound", get, set)
+  get, set = opt("raidWarning")
+  check(self, "Big raid warning", get, set,
+    { "AGGRO, LOST AGGRO and danger-level THREAT", "also as a raid warning: big at the top of",
+      "the screen. On your screen only; nothing", "is sent to the raid." })
   get, set = opt("warnPulled")
   check(self, "Alert when I pull aggro", get, set,
     { "Not tanking, and a mob turns on you." })
@@ -788,6 +792,11 @@ function S:BuildThreat()
   check(self, "Find the other tanks", get, set,
     { "A group member in Defensive Stance, Bear", "Form or with Righteous Fury counts as a",
       "co-tank, addon or not. Unmark one by hand", "and they stay unmarked." })
+
+  get, set = opt("relayThreat")
+  check(self, "Share threat on every mob", get, set,
+    { "Tanking, your Wrekkit tells the group who", "is closest to pulling each mob you hold.",
+      "Not tanking, you are warned on any of them", "you are about to pull, targeted or not." })
 
   get, set = opt("coTankShare")
   check(self, "Share tanks with the group", get, set,
