@@ -23,6 +23,13 @@ local E = W.encounter
 -- half-second drop out of combat between waves doesn't shard the report.
 local MERGE_GAP = 5
 
+-- Out of combat yourself, with nobody in the group hitting or being hit for
+-- this long, the pull is over even if the client still has someone in the
+-- group flagged as fighting. That flag can linger a minute or more (a pet,
+-- a mob walking home), and holding the pull open for it swallowed the next
+-- pack into it.
+local IDLE_END = 15
+
 -- Read-only stand-in for an event that carried no details, so a missing
 -- table costs nothing rather than a new empty one per event.
 local NO_INFO = {}
@@ -747,6 +754,7 @@ function E:Damage(sourceGuid, targetGuid, spellId, amount, info)
     noteResist(row, amount, info.resisted)
 
     if src.isPlayer or src.class == "PET" then
+      self.lastGroupHit = now
       enc.totals.damage = enc.totals.damage + amount
       b.dd = b.dd + amount
       contribute(b, "d", sourceGuid, targetGuid, spellId, amount)
@@ -769,6 +777,7 @@ function E:Damage(sourceGuid, targetGuid, spellId, amount, info)
     noteAmount(row, amount, info.crit)
 
     if dst.isPlayer or dst.class == "PET" then
+      self.lastGroupHit = now
       enc.totals.taken = enc.totals.taken + amount
       b.dt = b.dt + amount
       -- Recorded from the victim's side: the source is whatever hit them,
@@ -1178,8 +1187,11 @@ end
 --- and it also stops a missed REGEN_ENABLED from leaving the flag stuck.
 function E:HealStuckCombat()
   if not self.inCombat then return end
-  if self:GroupInCombat() then return end
-  self:CombatEnd()
+  if self:ReallyInCombat() then return end
+  if not self:GroupInCombat() then return self:CombatEnd() end
+  -- The group is flagged, but nothing has happened to it for a while.
+  local last = self.lastGroupHit or 0
+  if GetTime() - last >= IDLE_END then self:CombatEnd(last) end
 end
 
 function E:CombatStart()
@@ -1208,6 +1220,12 @@ function E:CombatStart()
     self.session = self:ResumeOrNew(zone, now, instanceType, instanceId)
   end
 
+  --[[ Already running: the group's damage opened this pull before you were
+       in combat (the tank pulled), and now you have joined it. Taking it
+       for a stale pull finished it at length 0 -- it is not stopped yet,
+       so stopT is still its start -- and dropped everything before you. ]]
+  if self.live and self.inCombat then return end
+
   -- Resume the previous encounter if we only briefly dropped combat.
   if self.live and self.lastCombatEnd and (now - self.lastCombatEnd) <= MERGE_GAP then
     self.inCombat = true
@@ -1219,6 +1237,7 @@ function E:CombatStart()
   if self.live then self:Finish() end
 
   self.live = newEncounter(self.session, now)
+  self.lastGroupHit = now
   self.inCombat = true
   self.combatMark = now
   -- Report our own totals while this pull runs; W.sync decides whether.
@@ -1234,9 +1253,13 @@ function E:LeftCombat()
   self:CombatEnd()
 end
 
-function E:CombatEnd()
+--- `at` backdates the end to when the fighting actually stopped, so the
+--- idle wait that proved it had stopped is not counted as fighting.
+function E:CombatEnd(at)
   if not self.inCombat then return end
   local now = GetTime()
+  if at and self.combatMark and at < self.combatMark then at = self.combatMark end
+  now = math.min(at or now, now)
   self.inCombat = false
   self.lastCombatEnd = now
   if self.live then
