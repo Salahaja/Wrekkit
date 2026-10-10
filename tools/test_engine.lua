@@ -3560,9 +3560,13 @@ UnitName = function(u)
 end
 UnitAffectingCombat = function() return false end
 TL.specs, TL.queue, TL.asking = {}, {}, nil
-ChronicleLog = { QueueTalentInspection = function() end }
+-- ChronicleCompanion with its logging on asks for us...
+ChronicleLog = { enabled = true, QueueTalentInspection = function() end }
 TL:Step()
 check("with ChronicleCompanion asking, Wrekkit does not", table.getn(sent), 0)
+-- ...but installed with its logging off it asks nobody, so Wrekkit must.
+ChronicleLog.enabled = false
+check("  installed but not logging, it is not asking", TL:OthersAsk(), false)
 ChronicleLog = nil
 UnitAffectingCombat = function() return true end
 TL:Step()

@@ -168,9 +168,14 @@ function TL:ReadOwn()
   end
 end
 
---- Is ChronicleCompanion asking already? Then its answers are enough.
+--[[ Is ChronicleCompanion asking already? Then its answers are enough.
+     Installed is not enough: it only inspects while its logging is on
+     (switched on by hand, or in an instance), and with it off it asks
+     nobody -- which left a party with no specs at all, Wrekkit having
+     stood back for an addon that was not asking. ]]
 function TL:OthersAsk()
-  return ChronicleLog ~= nil and type(ChronicleLog.QueueTalentInspection) == "function"
+  return ChronicleLog ~= nil and ChronicleLog.enabled == true
+    and type(ChronicleLog.QueueTalentInspection) == "function"
 end
 
 --- Queue the group's players who have not been inspected lately.
