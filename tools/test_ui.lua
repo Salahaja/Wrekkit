@@ -200,6 +200,8 @@ CreateFrame = function(kind, name, parent)
     GetCenter = function() return 400, 300 end,
     GetLeft = function() return 300 end,
     GetTop = function() return 600 end,
+    GetRight = function(self) return 300 + (self:GetWidth() or 0) end,
+    GetBottom = function(self) return 600 - (self:GetHeight() or 0) end,
     GetEffectiveScale = function() return 1 end,
     SetScale = function() end,
     Raise = function() end,
@@ -819,6 +821,40 @@ step("fit after letting go of the grip, though the client reports a stale height
   M:Refresh()
 end)
 
+step("a window being moved is never re-anchored or resized (that crashes 1.12)", function()
+  local M = UI.meter
+  local f = M.frame
+  local s = M:Settings()
+  M:SetSplit("off")
+  s.fitRows = false
+  local rowH = M.list.rowHeight
+  f:SetHeight(300)
+  f._topAnchored = nil
+  local realGetH = M.list.GetHeight
+  -- A part-row left over, so the trim would act.
+  M.list.GetHeight = function() return f:GetHeight() - 300 + rowH * 3.5 end
+  local ok, err = pcall(function()
+    f:StartMoving()
+    if not f._moving then error("moving the window did not mark it as moving") end
+    local points = table.getn(f._points or {})
+    local before = f._points[1]
+    M:Refresh()
+    if f:GetHeight() ~= 300 then error("the window was resized while being moved") end
+    if f._points[1] ~= before or table.getn(f._points) ~= points then
+      error("the window was re-anchored while being moved")
+    end
+    -- Let go: now the trim may run.
+    f:StopMovingOrSizing()
+    if f._moving then error("still marked as moving after letting go") end
+    M:Refresh()
+    if math.abs(M.list:GetHeight() - rowH * 3) > 0.5 then error("after the move the part-row was not trimmed") end
+  end)
+  if f._moving then f:StopMovingOrSizing() end
+  M.list.GetHeight = realGetH
+  M:Refresh()
+  if not ok then error(err) end
+end)
+
 step("after a resize, the meter loses the part of a row it cannot use", function()
   local M = UI.meter
   local f = M.frame
@@ -842,6 +878,86 @@ step("after a resize, the meter loses the part of a row it cannot use", function
   -- The footer's text sits low, not centred over a band of space.
   local p = M.footL._points[1]
   if not p or p[1] ~= "BOTTOMLEFT" then error("the footer text is not seated low") end
+end)
+
+step("settings: no control runs past the border, on any tab", function()
+  local S = UI.settings
+  local f = S:Create()
+  local inner = f:GetWidth() - (f.inset or 1) * 2
+  for _, t in ipairs(S.TABS) do
+    S:SetTab(t[1])
+    for _, item in ipairs(S.items) do
+      if (item.tab or "meter") == t[1] and not item.full then
+        local c = item.control
+        local p = c._points and c._points[1]
+        local right = p and (p[4] + (c:GetWidth() or 0))
+        if right and right > inner - 14 + 0.5 then
+          error(string.format("on %s, %q reaches %d of %d inside the border", t[1],
+            tostring(c.labelText or c.label or "?"), right, inner - 14))
+        end
+      end
+    end
+  end
+  S:SetTab("meter")
+end)
+
+step("settings: tall enough that its border clips nothing, on any tab", function()
+  local S = UI.settings
+  local f = S:Create()
+  for _, t in ipairs(S.TABS) do
+    S:SetTab(t[1])
+    local need = S.y + 14 + (f.bar:GetHeight() or 26) + 2 * (f.inset or 1)
+    if f:GetHeight() + 0.5 < need then
+      error(string.format("on %s the window is %d tall, the controls and border need %d", t[1], f:GetHeight(), need))
+    end
+  end
+  S:SetTab("meter")
+end)
+
+step("/wrek layout reports the meter's sizes", function()
+  local said = {}
+  local realPrint = Wrekkit.Print
+  Wrekkit.Print = function(m) table.insert(said, m) end
+  local ok, err = pcall(function() SlashCmdList["WREKKIT"]("layout") end)
+  Wrekkit.Print = realPrint
+  if not ok then error(err) end
+  local all = table.concat(said, "\n")
+  if not string.find(all, "meter ", 1, true) or not string.find(all, "list ", 1, true) then
+    error("layout said: " .. all)
+  end
+end)
+
+step("the top bar spans its row, though the row reports a stale width", function()
+  local list = UI.ScrollList(UIParent, 18)
+  list:SetWidth(300)
+  list:SetHeight(90)
+  list:SetData({ { n = 1 }, { n = 0.5 } }, function(row, item)
+    row:SetData(1, "Salahaja", "56.3k", "", item.n, { 1, 1, 1 }, 58)
+  end)
+  -- Just re-anchored, the rows still report an older, narrower width.
+  for _, r in ipairs(list.rows) do r.GetWidth = function() return 200 end end
+  list:Render(list._paint)
+  local top = list.rows[1]
+  if math.abs(top.bar:GetWidth() - 300) > 0.5 then
+    error("the top bar is " .. top.bar:GetWidth() .. " wide in a 300-wide row")
+  end
+  if math.abs(list.rows[2].bar:GetWidth() - 150) > 0.5 then error("a half bar is not half the row") end
+end)
+
+step("sizes come from edges: a list that says 194.4 but spans 216 gets 216 bars", function()
+  -- The numbers /wrek layout printed in the game.
+  local list = UI.ScrollList(UIParent, 26.1)
+  list:SetHeight(78.3)
+  list.GetWidth = function() return 194.4 end
+  list.GetLeft = function() return 414.9 end
+  list.GetRight = function() return 630.9 end
+  list:SetData({ { n = 1 }, { n = 0.8 } }, function(row, item)
+    row:SetData(1, "Salahaja", "11.2k", "131 dps", item.n, { 1, 1, 1 }, 58)
+  end)
+  local top = list.rows[1]
+  if math.abs(top.bar:GetWidth() - 216) > 0.5 then
+    error("the top bar is " .. top.bar:GetWidth() .. " in a list whose edges are 216 apart")
+  end
 end)
 
 step("a narrow row never draws its name over its value", function()

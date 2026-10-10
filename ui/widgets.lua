@@ -876,6 +876,27 @@ end
 -- width is set so this is never actually reached.
 local MIN_NAME_W = 60
 
+--[[ A frame's size as drawn: from its edges, not GetWidth/GetHeight.
+
+     On this client a frame sized by its anchors -- a window's body, a
+     list, a row -- can go on reporting an old size through GetWidth and
+     GetHeight after a resize or a re-layout, while its edges are where it
+     really is. /wrek layout caught it: a row whose edges were 216 apart
+     said it was 194.4 wide, and its bar, sized from that, stopped 22
+     pixels short of the row's end. Frames given a size outright (a
+     window) report it truly either way. ]]
+function UI.FrameWidth(f)
+  local l, r = f:GetLeft(), f:GetRight()
+  if l and r and r > l then return r - l end
+  return f:GetWidth() or 0
+end
+
+function UI.FrameHeight(f)
+  local t, b = f:GetTop(), f:GetBottom()
+  if t and b and t > b then return t - b end
+  return f:GetHeight() or 0
+end
+
 --[[ Class icons, from the character-create sheet -- the one TWThreat draws
      its class icons from on this client -- at the coordinates pfUI uses
      for it. 1.12 has no spec API, so a class is as specific as it gets. ]]
@@ -985,7 +1006,19 @@ function UI.Row(parent, height)
     local subW = math.ceil((subWidth or 64) * scale)
     self.sub:SetWidth(subW)
 
-    local w = self:GetWidth()
+    --[[ The row's width, from its list when it has one. A list re-anchors
+         its rows when the row height changes -- which the stretched row
+         modes do as they fill the window -- and paints them straight after,
+         when the client can still report a row's OLD width: the top bar,
+         meant to span the row, stopped short and left the rest undrawn.
+         The list itself is not re-anchored then, so its width is current;
+         a row spans it less the scrollbar's inset (EnsureRows). ]]
+    local w
+    local list = self._list
+    if list then
+      w = UI.FrameWidth(list) - (list._anchorW or 0)
+    end
+    if not w or w <= 0 then w = UI.FrameWidth(self) end
     if not w or w <= 0 then w = 200 end
     local barW = w * (frac or 0)
     if barW < 1 then barW = 1 end
@@ -1061,7 +1094,7 @@ function UI.ScrollList(parent, rowHeight, makeRow)
   list.track, list.thumb = track, thumb
 
   function list:VisibleCount()
-    local h = self:GetHeight()
+    local h = UI.FrameHeight(self)
     if not h or h <= 0 then return 0 end
     --[[ A zero row height would make this h/0, and EnsureRows would then
          loop creating frames until the client died -- 1.12 cannot destroy a
@@ -1088,6 +1121,8 @@ function UI.ScrollList(parent, rowHeight, makeRow)
     local have = table.getn(self.rows)
     for i = have + 1, n do
       self.rows[i] = self.makeRow(self, self.rowHeight)
+      -- Placed by this list, so it spans it (see the row's SetData).
+      self.rows[i]._list = self
     end
     -- Re-anchor when the layout changed: the scrollbar appearing or
     -- vanishing moves the right inset, and the row height is a live
@@ -1144,7 +1179,8 @@ function UI.ScrollList(parent, rowHeight, makeRow)
     if maxOff > 0 then
       track:Show()
       local frac = self.offset / maxOff
-      local trackH = self:GetHeight() or 1
+      local trackH = UI.FrameHeight(self)
+      if trackH <= 0 then trackH = 1 end
       local thumbH = math.max(16, trackH * (vis / table.getn(self.data)))
       thumb:SetHeight(thumbH)
       thumb:ClearAllPoints()
@@ -1185,8 +1221,32 @@ function UI.Window(name, width, height, title, opts)
   local kind = opts.skin or "window"
   local f = UI.Panel(UIParent, W.color.bg, W.color.border, name, kind)
   local inset = f._skinned and UI.SkinInset(kind) or 1
+  -- Kept: what is inside the border is the window less this on each side,
+  -- and a layout sized to the whole window spills out of a thick one.
+  f.inset = inset
   f:SetWidth(width) f:SetHeight(height)
   f:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+
+  --[[ Know when the window is being dragged, by anyone.
+
+       Re-anchoring or resizing a frame the client is moving takes the
+       process down -- ERROR #132, an access violation, no Lua error to
+       catch. The fit and the part-row trim do both, twice a second, so
+       they have to hold off for the length of a drag; this flag is how
+       they know. Set here, around the client's own calls, so every way a
+       window is moved (its title, the docked threat window dragging the
+       meter) is covered without each remembering to. ]]
+  local startMoving, stopMoving = f.StartMoving, f.StopMovingOrSizing
+  f.StartMoving = function(self)
+    self._moving = true
+    return startMoving(self)
+  end
+  f.StopMovingOrSizing = function(self)
+    local r = stopMoving(self)
+    self._moving = nil
+    return r
+  end
+
   -- Strata decides which window wins when they overlap. The report has to
   -- sit above the meter, or the meter's bars draw straight through it.
   f:SetFrameStrata(opts.strata or "MEDIUM")
@@ -1459,11 +1519,12 @@ end
      held -- the drag is the user's. `n` is the rows wanted; `list` is the
      ScrollList they go in, everything else in the window being chrome. ]]
 function UI.FitHeight(f, list, n)
-  if not f or not list or f._sizing then return end
+  -- Never mid-drag: see the note on _moving in UI.Window.
+  if not f or not list or f._sizing or f._moving then return end
   if not f._maxH then f._maxH = f:GetHeight() end
   UI.AnchorTop(f)
   local rowH = list.rowHeight or 18
-  local chrome = (f:GetHeight() or 0) - (list:GetHeight() or 0)
+  local chrome = (f:GetHeight() or 0) - UI.FrameHeight(list)
   local want = chrome + (n > 1 and n or 1) * rowH + 2
   if want > f._maxH then want = f._maxH end
   if math.abs((f:GetHeight() or 0) - want) >= 1 then f:SetHeight(want) end
@@ -1472,7 +1533,7 @@ end
 --- Hold a window by its top-left, so a change of height moves only its
 --- bottom edge. Done once until the window is next moved or resized.
 function UI.AnchorTop(f)
-  if f._topAnchored then return end
+  if f._topAnchored or f._moving or f._sizing then return end
   local left, top = f:GetLeft(), f:GetTop()
   local ptop = UIParent and UIParent:GetTop()
   if left and top and ptop then
@@ -1484,7 +1545,7 @@ end
 
 --- Back to the height the window was sized to, fitting switched off.
 function UI.UnfitHeight(f)
-  if not f or not f._maxH then return end
+  if not f or not f._maxH or f._moving or f._sizing then return end
   f:SetHeight(f._maxH)
   f._maxH = nil
 end

@@ -1166,15 +1166,47 @@ function M:SnapToRows()
   end, "meterSnap")
 end
 
+--[[ /wrek layout: the meter's real sizes, as the client reports them, for
+     a drawing problem the offline tests cannot see -- they have no layout
+     engine, so a width that is wrong only in the game never shows there. ]]
+function M:DescribeLayout()
+  local f = self.frame
+  if not f then W.Print("the meter has not been built yet.") return end
+  local s = self:Settings()
+  local function n(v) return v and string.format("%.1f", v) or "nil" end
+  W.Print(string.format("meter %sx%s  body %sx%s  inset %s  split %s  rows %s  fit %s",
+    n(f:GetWidth()), n(f:GetHeight()), n(f.body:GetWidth()), n(f.body:GetHeight()),
+    tostring(f.inset), self:SplitMode(), tostring(s.rowMode), tostring(s.fitRows)))
+  local lists = { { "list", self.list } }
+  if self:Split() and self.list2 then table.insert(lists, { "list2", self.list2 }) end
+  for _, e in ipairs(lists) do
+    local list = e[2]
+    W.Print(string.format("  %s %sx%s  rowH %s  visible %d of %d  scroll inset %s  track %s",
+      e[1], n(list:GetWidth()), n(list:GetHeight()), n(list.rowHeight),
+      list:VisibleCount(), table.getn(list.data or {}), tostring(list._anchorW),
+      list.track:IsShown() and "shown" or "hidden"))
+    for i = 1, 2 do
+      local r = list.rows[i]
+      if r and r:IsShown() then
+        local item = list.data[i + (list.offset or 0)]
+        W.Print(string.format("    row %d: %sx%s  bar %s  share %s  left %s right %s",
+          i, n(r:GetWidth()), n(r:GetHeight()), n(r.bar:GetWidth()),
+          n(item and item._frac), n(r:GetLeft()), n(r:GetRight())))
+      end
+    end
+  end
+end
+
 --- Take the blank part-row off now, if there is one. Also run on every
 --- redraw (M:Fit), so a window sized before this existed -- or changed by
 --- a text size, a row height or a layout -- loses it without a resize.
 --- Once trimmed there is nothing left over, so it settles at once.
 function M:TrimPartialRow()
   local f = self.frame
-  if not f or f._sizing or self:Settings().fitRows or self:SplitMode() == "stacked" then return end
+  -- Never mid-drag: re-anchoring or resizing a moving frame crashes the client.
+  if not f or f._sizing or f._moving or self:Settings().fitRows or self:SplitMode() == "stacked" then return end
   local rowH = self.list.rowHeight or 18
-  local listH = self.list:GetHeight() or 0
+  local listH = UI.FrameHeight(self.list)
   if listH <= rowH then return end
   local extra = math.mod(listH, rowH)
   if extra < 1 then return end
