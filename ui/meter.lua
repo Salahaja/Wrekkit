@@ -42,6 +42,13 @@ M.defaults = {
   showToolbar = true,
   compact = false,
   rowHeight = 18,
+  --[[ How the rows use the window's height:
+         fixed    rows at rowHeight; the window decides how many fit
+         stretch  as many as fit at rowHeight, stretched to fill it
+         count    rowCount rows, stretched to fill it
+       Fitting to rows (fitRows), when on, sizes the window instead. ]]
+  rowMode = "fixed",
+  rowCount = 8,
   -- Chrome opacity, 0-1. Only the panel, title bar and border fade; the
   -- text and bars stay fully opaque so the meter is readable at any value.
   opacity = 1.0,
@@ -1173,6 +1180,8 @@ end
 function M:TrimPartialRow()
   local f = self.frame
   if not f or f._sizing or self:Settings().fitRows or self:SplitMode() == "stacked" then return end
+  -- Stretched rows fill the window already; there is no part-row to trim.
+  if (self:Settings().rowMode or "fixed") ~= "fixed" then return end
   local rowH = self.list.rowHeight or 18
   local listH = self.list:GetHeight() or 0
   if listH <= rowH then return end
@@ -1186,9 +1195,41 @@ end
 --[[ Fit the window to its rows, when asked to (#15). Side by side, to the
      longer column. Over and under, each half has its own share of the
      height, so the window keeps the height it was given. ]]
+--[[ Set each list's row height for the row mode. "fixed": the Row height
+     setting. "stretch": as many rows as fit at that height, stretched to
+     fill the list exactly. "count": the chosen number of rows, stretched
+     to fill it. Fitting to rows sizes the window to the rows instead, so
+     there the rows keep the Row height. Each half of a split meter fills
+     its own list. Run on every redraw, so a resize, a layout or a text
+     size is followed at once. ]]
+function M:SizeRows()
+  local s = self:Settings()
+  local mode = s.rowMode or "fixed"
+  local base = math.floor((s.rowHeight or 18) * UI.FontScale() + 0.5)
+  local lists = { self.list }
+  if self:Split() and self.list2 then table.insert(lists, self.list2) end
+  for _, list in ipairs(lists) do
+    local h = base
+    if mode ~= "fixed" and not s.fitRows then
+      local listH = list:GetHeight() or 0
+      local n
+      if mode == "count" then
+        n = tonumber(s.rowCount) or 8
+      else
+        n = math.floor(listH / base + 0.001)
+      end
+      if n < 1 then n = 1 end
+      if listH > 0 then h = listH / n end
+      if h < 8 then h = 8 end
+    end
+    if math.abs((list.rowHeight or 0) - h) > 0.01 then list:SetRowHeight(h) end
+  end
+end
+
 function M:Fit()
   local f = self.frame
   if not f or not f:IsShown() then return end
+  self:SizeRows()
   local mode = self:SplitMode()
   if not self:Settings().fitRows or mode == "stacked" then
     UI.UnfitHeight(f)
