@@ -26,6 +26,10 @@ M.defaults = {
   -- every session would be worse, so the choice is remembered.
   shown = true,
   metric = "damage",
+  -- Two metrics at once: the window splits into two lists, `metric` on top
+  -- and `metric2` underneath, each with its own drilldown.
+  split = false,
+  metric2 = "healing",
   segment = "current",
   petMode = "merge",
   groupOnly = false,
@@ -179,6 +183,33 @@ function M:Create()
   cogBtn:SetPoint("RIGHT", f.closeButton, "LEFT", -1, 0)
   self.cogBtn = cogBtn
 
+  --[[ Split: two metrics at once. On the title bar rather than the toolbar,
+       which has no room left at the meter's narrowest and is gone in compact
+       mode -- and a compact meter is exactly where a second metric saves
+       opening another window. ]]
+  local splitBtn = CreateFrame("Button", nil, f.bar)
+  splitBtn:SetWidth(30)
+  splitBtn:SetHeight(14)
+  splitBtn:RegisterForClicks("LeftButtonUp")
+  splitBtn.bg = UI.Fill(splitBtn, W.color.accent, 0)
+  splitBtn.label = UI.Text(splitBtn, 9, W.color.textFaint, "CENTER")
+  splitBtn.label:SetPoint("CENTER", splitBtn, "CENTER", 0, 0)
+  splitBtn.label:SetText("1+2")
+  splitBtn:SetPoint("RIGHT", cogBtn, "LEFT", -2, 0)
+  splitBtn:SetScript("OnClick", function()
+    W.Guard("meter split", function() M:SetSplit(not M:Settings().split) end)
+  end)
+  splitBtn:SetScript("OnEnter", function()
+    if not GameTooltip then return end
+    GameTooltip:SetOwner(splitBtn, "ANCHOR_TOPLEFT")
+    GameTooltip:AddLine("Two metrics")
+    GameTooltip:AddLine("Splits the meter: this metric on top, a second", 0.72, 0.75, 0.8)
+    GameTooltip:AddLine("underneath. Click the lower header to pick it.", 0.72, 0.75, 0.8)
+    GameTooltip:Show()
+  end)
+  splitBtn:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
+  self.splitBtn = splitBtn
+
   --[[ The segment indicator is its own button rather than a label.
 
        "Current / Onyxia / All Session" is the thing people most want to
@@ -211,7 +242,7 @@ function M:Create()
 
   local titleHit = CreateFrame("Button", nil, f.bar)
   titleHit:SetPoint("TOPLEFT", f.bar, "TOPLEFT", 0, 0)
-  titleHit:SetPoint("BOTTOMRIGHT", cogBtn, "BOTTOMLEFT", -2, 0)
+  titleHit:SetPoint("BOTTOMRIGHT", splitBtn, "BOTTOMLEFT", -2, 0)
   titleHit:RegisterForClicks("LeftButtonUp", "RightButtonUp")
   titleHit:SetScript("OnClick", function()
     if arg1 == "RightButton" then M:WindowMenu(titleHit) else M:MetricMenu(titleHit) end
@@ -363,6 +394,33 @@ function M:Create()
   list:SetPoint("BOTTOMRIGHT", f.body, "BOTTOMRIGHT", -2, 16)
   self.list = list
 
+  -- The second half, when split: a header naming its metric -- click it
+  -- to choose one, right-click to back out of a drilldown -- and its list.
+  local head2 = CreateFrame("Button", nil, f.body)
+  head2:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+  head2.bg = UI.Fill(head2, W.color.panel, 0.8)
+  head2.rule = UI.Line(head2, W.color.border)
+  head2.rule:SetPoint("TOPLEFT", head2, "TOPLEFT", 0, 0)
+  head2.rule:SetPoint("TOPRIGHT", head2, "TOPRIGHT", 0, 0)
+  head2.label = UI.Text(head2, 10, W.color.text)
+  head2.label:SetPoint("LEFT", head2, "LEFT", 6, 0)
+  head2.right = UI.Text(head2, 10, W.color.textFaint, "RIGHT")
+  head2.right:SetPoint("RIGHT", head2, "RIGHT", -6, 0)
+  head2:SetScript("OnClick", function()
+    if arg1 == "RightButton" then
+      M.drill2, M.drillAbility2 = nil, nil
+      M:Refresh()
+    else
+      W.Guard("second metric menu", function() M:MetricMenu(head2, 2) end)
+    end
+  end)
+  head2:Hide()
+  self.head2 = head2
+
+  local list2 = UI.ScrollList(f.body, s.rowHeight)
+  list2:Hide()
+  self.list2 = list2
+
   ------------------------------------------------------------------
   -- footer
   ------------------------------------------------------------------
@@ -392,7 +450,10 @@ function M:Create()
     W.Print("meter hidden. |cffe0a22c/wrek|r or the minimap button brings it back.")
   end)
 
-  f.OnResize = function() M:Refresh() end
+  f.OnResize = function()
+    M:LayoutPanes()
+    M:Refresh()
+  end
   f:SetScript("OnShow", function() M:StartTicker() end)
 
   self:UpdatePetButton()
@@ -467,6 +528,15 @@ function M:ApplyLayout()
   self.list:SetPoint("BOTTOMRIGHT", f.body, "BOTTOMRIGHT", -2, footerH + 1)
 
   self.list:SetRowHeight(px(s.rowHeight or 18))
+  if self.list2 then self.list2:SetRowHeight(px(s.rowHeight or 18)) end
+
+  -- Where the lists may go, for LayoutPanes: below the toolbar (when there
+  -- is one) and above the footer.
+  self.paneTop = showToolbar and (px(22) + 2) or 2
+  self.paneBottom = footerH + 1
+  self.headH = px(16)
+  self:LayoutPanes()
+  self:UpdateSplitButton()
 
   if f.SetOpacity then f:SetOpacity(s.opacity) end
 
@@ -484,6 +554,8 @@ function M:ApplyLayout()
                  + (showToolbar and px(22) or 0)
                  + footerH
                  + 8                                   -- borders and insets
+    -- Split: two rows in each half, and the second half's header.
+    if self:Split() then chrome = chrome + rowH * 2 + px(16) end
     f:SetMinResize(px(260), chrome + rowH * 2)
   end
 
@@ -493,6 +565,74 @@ end
 --- Kept for the segment menu's toolbar entry and older call sites.
 function M:ApplyToolbar()
   self:ApplyLayout()
+end
+
+----------------------------------------------------------------------
+-- two metrics
+----------------------------------------------------------------------
+
+--- Is the meter showing two metrics?
+function M:Split()
+  return self:Settings().split == true and self.list2 ~= nil
+end
+
+--- Split the meter into two metrics, or go back to one.
+function M:SetSplit(on)
+  local s = self:Settings()
+  s.split = on and true or false
+  -- The second metric starts as something other than the first.
+  if s.split and s.metric2 == s.metric then
+    s.metric2 = (s.metric == "healing") and "damage" or "healing"
+  end
+  self.drill2, self.drillAbility2 = nil, nil
+  self:ApplyLayout()
+  if UI.settings and UI.settings.Refresh then UI.settings:Refresh() end
+end
+
+function M:UpdateSplitButton()
+  local b = self.splitBtn
+  if not b then return end
+  local on = self:Split()
+  local c = on and W.color.accent or W.color.textFaint
+  b.label:SetTextColor(c[1], c[2], c[3], 1)
+  b.bg:SetVertexColor(W.color.accent[1], W.color.accent[2], W.color.accent[3], on and 0.18 or 0)
+end
+
+--[[ Share the space between the lists. Split, each gets half of what is
+     between the toolbar and the footer, the second under its header; not
+     split, the one list has all of it. Heights are worked out here rather
+     than with anchors, because 1.12 cannot anchor to the middle of a span.
+     Run on every layout change and every resize. ]]
+function M:LayoutPanes()
+  local f = self.frame
+  if not f or not self.list2 then return end
+  local top, bottom = self.paneTop or 2, self.paneBottom or 16
+
+  if not self:Split() then
+    self.head2:Hide()
+    self.list2:Hide()
+    self.list:SetPoint("BOTTOMRIGHT", f.body, "BOTTOMRIGHT", -2, bottom)
+    return
+  end
+
+  local headH = self.headH or 16
+  local bodyH = f.body:GetHeight() or 0
+  -- Remembered, so a refresh can tell the window has its real size now:
+  -- laid out before it was first drawn, the body can read as 0 tall.
+  self.layoutBodyH = bodyH
+  local half = math.floor((bodyH - top - bottom - headH) / 2)
+  if half < 1 then half = 1 end
+
+  self.list:SetPoint("BOTTOMRIGHT", f.body, "TOPRIGHT", -2, -(top + half))
+  self.head2:ClearAllPoints()
+  self.head2:SetHeight(headH)
+  self.head2:SetPoint("TOPLEFT", f.body, "TOPLEFT", 0, -(top + half + 1))
+  self.head2:SetPoint("TOPRIGHT", f.body, "TOPRIGHT", 0, -(top + half + 1))
+  self.list2:ClearAllPoints()
+  self.list2:SetPoint("TOPLEFT", self.head2, "BOTTOMLEFT", 2, -1)
+  self.list2:SetPoint("BOTTOMRIGHT", f.body, "BOTTOMRIGHT", -2, bottom)
+  self.head2:Show()
+  self.list2:Show()
 end
 
 --- Put the current segment on its button and size the button to the word.
@@ -526,12 +666,15 @@ local METRIC_GROUPS = {
 }
 M.METRIC_GROUPS = METRIC_GROUPS
 
-function M:MetricMenu(anchor)
+--- `which` 2 picks the second metric of a split meter; otherwise the first.
+function M:MetricMenu(anchor, which)
   local s = self:Settings()
+  local second = (which == 2)
+  local current = second and s.metric2 or s.metric
   local items, placed = {}, {}
   local function add(m)
     placed[m.key] = true
-    table.insert(items, { text = W.metrics.Label(m), value = m.key, checked = (m.key == s.metric) })
+    table.insert(items, { text = W.metrics.Label(m), value = m.key, checked = (m.key == current) })
   end
   for _, g in ipairs(METRIC_GROUPS) do
     local first = true
@@ -558,12 +701,21 @@ function M:MetricMenu(anchor)
   end
   -- Not in W.metrics: it ranks nobody's recorded totals, it is the server's
   -- live table for your target, so the report has nothing to sort by it.
-  table.insert(items, { text = "Live", header = true })
-  table.insert(items, { text = "Threat", value = "threat", checked = (s.metric == "threat") })
+  -- The first metric only: the threat table has one place to be drawn.
+  if not second then
+    table.insert(items, { text = "Live", header = true })
+    table.insert(items, { text = "Threat", value = "threat", checked = (s.metric == "threat") })
+  end
 
   UI.Menu(self.frame, anchor, items, function(value)
     if not value then return end
-    M:SetMetric(value)
+    if second then
+      s.metric2 = value
+      M.drill2, M.drillAbility2 = nil, nil
+      M:Refresh()
+    else
+      M:SetMetric(value)
+    end
   end, 180)
 end
 
@@ -617,6 +769,7 @@ function M:WindowMenu(anchor)
     { text = "Threat window", value = "threat", checked = threatShown },
     { text = "Announce to chat...", value = "announce" },
     { text = "Meter", header = true },
+    { text = "Two metrics (split)", value = "split", checked = s.split == true },
     { text = "Compact", value = "compact", checked = s.compact == true },
     { text = "Toolbar", value = "toolbar", checked = s.showToolbar ~= false },
     { text = "Lock position", value = "lock", checked = s.locked == true },
@@ -648,6 +801,8 @@ function M:WindowMenu(anchor)
       W.Print("meter hidden. |cffe0a22c/wrek|r or the minimap button brings it back.")
     elseif value == "report" then
       if UI.report then UI.report:Toggle() end
+    elseif value == "split" then
+      self:SetSplit(not s.split)
     elseif value == "compact" then
       s.compact = not s.compact
       self:ApplyLayout()
@@ -678,9 +833,9 @@ end
      says and what the bar says cannot disagree. ]]
 local MAX_DETAIL = 12
 
-local function actorTooltip(row, item)
+local function actorTooltip(row, item, metricKey)
   if not GameTooltip then return end
-  local metricKey = M:Settings().metric
+  metricKey = metricKey or M:Settings().metric
   local metric = W.metrics.Get(metricKey)
   local c = item._color or W.ClassColor(item.class)
 
@@ -727,76 +882,97 @@ local function actorTooltip(row, item)
   GameTooltip:Show()
 end
 
-local function paintActor(row, item, index)
-  local color = item._color or W.ClassColor(item.class)
-  row:SetData(item._rank, UI.RowName(item, M:Settings().pickedOnly),
-    item._text, item._sub, item._frac, color, 58)
-  row.tip = function(self) actorTooltip(self, item) end
-  --[[ The meter repaints twice a second. Without this the numbers under the
-       cursor are frozen at whatever they were when the tooltip opened, which
-       is worst exactly when someone is watching a pull happen. ]]
-  if GameTooltip and GameTooltip.IsOwned and GameTooltip:IsOwned(row) then
-    row:tip()
+--[[ The meter's lists, as panes. One normally; two when split, the second
+     ranking its own metric under its own header. Each pane keeps its own
+     drilldown in fields on M -- drill/drillAbility for the first, which is
+     what every older caller reads, drill2/drillAbility2 for the second -- so
+     opening a player in one half leaves the other alone. ]]
+local PANES = {
+  { metricKey = "metric", drillField = "drill", abilityField = "drillAbility", listField = "list" },
+  { metricKey = "metric2", drillField = "drill2", abilityField = "drillAbility2", listField = "list2" },
+}
+M.PANES = PANES
+
+--- The three row painters for one pane: players, a player's abilities, and
+--- one ability's statistics. They read the pane's metric and write its
+--- drilldown, so the same code serves both halves.
+local function makePainters(pane)
+  local function metricKey() return M:Settings()[pane.metricKey] end
+  local function setDrill(key, ability)
+    M[pane.drillField] = key
+    M[pane.abilityField] = ability
   end
-  row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-  row:SetScript("OnClick", function()
-    -- Shift-click picks or unpicks the player, rather than opening them.
-    if UI.ShiftPick(item) then return end
-    if arg1 == "RightButton" then
-      UI.meter.drill = nil
-      UI.meter.drillAbility = nil
-    else
-      UI.meter.drill = item.key
-      UI.meter.drillAbility = nil
+
+  local function paintActor(row, item, index)
+    local color = item._color or W.ClassColor(item.class)
+    row:SetData(item._rank, UI.RowName(item, M:Settings().pickedOnly),
+      item._text, item._sub, item._frac, color, 58)
+    row.tip = function(self) actorTooltip(self, item, metricKey()) end
+    --[[ The meter repaints twice a second. Without this the numbers under the
+         cursor are frozen at whatever they were when the tooltip opened, which
+         is worst exactly when someone is watching a pull happen. ]]
+    if GameTooltip and GameTooltip.IsOwned and GameTooltip:IsOwned(row) then
+      row:tip()
     end
-    UI.meter:Refresh()
-  end)
+    row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    row:SetScript("OnClick", function()
+      -- Shift-click picks or unpicks the player, rather than opening them.
+      if UI.ShiftPick(item) then return end
+      if arg1 == "RightButton" then setDrill(nil, nil) else setDrill(item.key, nil) end
+      UI.meter:Refresh()
+    end)
+  end
+
+  local function paintAbility(row, item, index)
+    local color = item._color or W.color.accent
+    local label = item.label or item.name
+    -- The buff Buff Uptime is ranking by, so it can be found again to clear.
+    if item._selected then label = "|cffe0a22c>|r " .. (label or "?") end
+    row:SetData(index, label,
+      item._value or W.Short(item.amount),
+      item._note or string.format("%.0f%%", item._pct or 0),
+      item._frac, color, 42)
+    -- Rows are reused, so a row that carried the actor tooltip a moment ago
+    -- would go on describing someone who is no longer in this list.
+    row.tip = nil
+    row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    -- Stashed on the row, not captured, for the same reason: reuse.
+    row.abilityId = item.id
+    row.abilityName = item.name
+    row.selectsBuff = item._select
+    row:SetScript("OnClick", function()
+      local btn = this or row
+      if arg1 == "RightButton" then
+        M[pane.drillField] = nil
+      elseif btn.selectsBuff then
+        -- A buff: rank everybody by it, or stop if it already was.
+        W.metrics.SelectBuff(btn.abilityId, btn.abilityName)
+        setDrill(nil, nil)
+      else
+        -- Second level: the spread for this one ability.
+        M[pane.abilityField] = btn.abilityId
+      end
+      UI.meter:Refresh()
+    end)
+  end
+
+  --- Label/value lines, no bar -- these are statistics, not a ranking, and a
+  --- proportional bar behind them would imply a comparison that isn't there.
+  local function paintStat(row, item, index)
+    row:SetData(nil, item.label, item.value, item.note, 0, W.color.panelHi, 52)
+    row.tip = nil
+    row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    row:SetScript("OnClick", function()
+      M[pane.abilityField] = nil
+      UI.meter:Refresh()
+    end)
+  end
+
+  return paintActor, paintAbility, paintStat
 end
 
-local function paintAbility(row, item, index)
-  local color = item._color or W.color.accent
-  local label = item.label or item.name
-  -- The buff Buff Uptime is ranking by, so it can be found again to clear.
-  if item._selected then label = "|cffe0a22c>|r " .. (label or "?") end
-  row:SetData(index, label,
-    item._value or W.Short(item.amount),
-    item._note or string.format("%.0f%%", item._pct or 0),
-    item._frac, color, 42)
-  -- Rows are reused, so a row that carried the actor tooltip a moment ago
-  -- would go on describing someone who is no longer in this list.
-  row.tip = nil
-  row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-  -- Stashed on the row, not captured, for the same reason: reuse.
-  row.abilityId = item.id
-  row.abilityName = item.name
-  row.selectsBuff = item._select
-  row:SetScript("OnClick", function()
-    local btn = this or row
-    if arg1 == "RightButton" then
-      UI.meter.drill = nil
-    elseif btn.selectsBuff then
-      -- A buff: rank everybody by it, or stop if it already was.
-      W.metrics.SelectBuff(btn.abilityId, btn.abilityName)
-      UI.meter.drill = nil
-      UI.meter.drillAbility = nil
-    else
-      -- Second level: the spread for this one ability.
-      UI.meter.drillAbility = btn.abilityId
-    end
-    UI.meter:Refresh()
-  end)
-end
-
---- Label/value lines, no bar -- these are statistics, not a ranking, and a
---- proportional bar behind them would imply a comparison that isn't there.
-local function paintStat(row, item, index)
-  row:SetData(nil, item.label, item.value, item.note, 0, W.color.panelHi, 52)
-  row.tip = nil
-  row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-  row:SetScript("OnClick", function()
-    UI.meter.drillAbility = nil
-    UI.meter:Refresh()
-  end)
+for _, pane in ipairs(PANES) do
+  pane.paintActor, pane.paintAbility, pane.paintStat = makePainters(pane)
 end
 
 --[[ The aggregate behind the rows, rebuilt only when it can have changed.
@@ -827,98 +1003,121 @@ function M:Refresh()
   W.Guard("meter refresh", function() M:RefreshInner() end)
 end
 
-function M:RefreshInner()
-  local f = self.frame
-  if not f or not f:IsShown() then return end
-
+--[[ Draw one pane from an already-built view, and say what its labels
+     should read: { title, seg, footL, footR }. The first pane's go on the
+     title bar and footer; the second's on its own header. ]]
+function M:RenderPane(pane, view, segLabel)
   local s = self:Settings()
-  if s.metric == "threat" then return self:RefreshThreat() end
-  local encounters, segLabel = self:Encounters()
-  local metric = W.metrics.Get(s.metric)
+  local list = self[pane.listField]
+  local metricKey = s[pane.metricKey]
+  local metric = W.metrics.Get(metricKey)
+  local rows, _, total = W.report:Rank(view, metricKey, self:Filter())
+  local out = { title = W.metrics.Label(metric), seg = segLabel }
 
-  local view = cachedView(encounters, s.petMode)
-  -- Kept for the hover tooltip, which needs it to explain an empty detail.
-  self.lastView = view
-  local rows, _, total = W.report:Rank(view, s.metric, self:Filter())
-
-  f.title:SetText(W.metrics.Label(metric))
-  self:SetSegmentLabel(segLabel)
-
-  if self.drill then
+  local drill = self[pane.drillField]
+  if drill then
     local target
     for _, r in ipairs(rows) do
-      if r.key == self.drill then target = r end
+      if r.key == drill then target = r end
     end
     if not target then
-      self.drill = nil
-      self.drillAbility = nil
+      self[pane.drillField] = nil
+      self[pane.abilityField] = nil
     else
-      local abilities = W.report:Abilities(target, s.metric)
+      local abilities = W.report:Abilities(target, metricKey)
       local color = W.ClassColor(target.class)
       for _, a in ipairs(abilities) do a._color = color end
 
       -- Level two: the spread for a single ability.
-      if self.drillAbility then
+      local drillAbility = self[pane.abilityField]
+      if drillAbility then
         local ability
         for _, a in ipairs(abilities) do
-          if a.id == self.drillAbility then ability = a end
+          if a.id == drillAbility then ability = a end
         end
         if ability then
-          local stats = W.report:AbilityStats(ability, s.metric)
-          self:SetSegmentLabel(target.name .. " - " .. (ability.label or ability.name))
-          self.list:SetData(stats, paintStat)
-          self.footL:SetText((ability.label or ability.name))
-          self.footR:SetText("click to go back")
-          return
+          local stats = W.report:AbilityStats(ability, metricKey)
+          out.seg = target.name .. " - " .. (ability.label or ability.name)
+          list:SetData(stats, pane.paintStat)
+          out.footL, out.footR = (ability.label or ability.name), "click to go back"
+          return out
         end
-        self.drillAbility = nil
+        self[pane.abilityField] = nil
       end
 
       -- An empty drilldown needs to say why; see R:EmptyDetailNote.
       if table.getn(abilities) == 0 then
-        self:SetSegmentLabel(target.name)
-        self.list:SetData({ { label = W.report:EmptyDetailNote(view), value = "" } },
-          paintStat)
-        self.footL:SetText(target.name)
-        self.footR:SetText("click to go back")
-        return
+        out.seg = target.name
+        list:SetData({ { label = W.report:EmptyDetailNote(view), value = "" } }, pane.paintStat)
+        out.footL, out.footR = target.name, "click to go back"
+        return out
       end
 
       -- Level one: which abilities made up that number.
-      self:SetSegmentLabel(target.name .. " - " .. segLabel)
-      self.list:SetData(abilities, paintAbility)
+      out.seg = target.name .. " - " .. segLabel
+      list:SetData(abilities, pane.paintAbility)
       if metric.detail == "auras" then
-        self.footL:SetText(string.format("%d buffs", table.getn(abilities)))
-        self.footR:SetText("click one to rank everyone by it")
+        out.footL = string.format("%d buffs", table.getn(abilities))
+        out.footR = "click one to rank everyone by it"
       else
-        self.footL:SetText(string.format("%d abilities", table.getn(abilities)))
-        self.footR:SetText(W.Short(target._v) .. "  (click one for detail)")
+        out.footL = string.format("%d abilities", table.getn(abilities))
+        out.footR = W.Short(target._v) .. "  (click one for detail)"
       end
-      return
+      return out
     end
   end
 
   for _, r in ipairs(rows) do
     r._color = metric.color or W.ClassColor(r.class)
   end
-
-  self.list:SetData(rows, paintActor)
+  list:SetData(rows, pane.paintActor)
 
   local live = W.encounter.live and W.encounter:ReallyInCombat()
-  self.footL:SetText((live and "|cffe0a22c* |r" or "") ..
-    W.Duration(view.rateBase) .. " combat time")
-  local totalText = W.metrics.Format(metric, total)
+  out.footL = (live and "|cffe0a22c* |r" or "") .. W.Duration(view.rateBase) .. " combat time"
   if metric.percent or metric.integer then
-    self.footR:SetText(table.getn(rows) .. " shown")
+    out.footR = table.getn(rows) .. " shown"
   else
-    self.footR:SetText(totalText .. " total")
+    out.footR = W.metrics.Format(metric, total) .. " total"
   end
-
   -- Only picked players, and none of them in this segment: say so, rather
   -- than show an empty meter that looks broken.
   if table.getn(rows) == 0 and s.pickedOnly and W.report:AnyPicked() then
-    self.footR:SetText("no picked players here")
+    out.footR = "no picked players here"
   end
+  return out
+end
+
+function M:RefreshInner()
+  local f = self.frame
+  if not f or not f:IsShown() then return end
+
+  local s = self:Settings()
+  local split = self:Split()
+  local encounters, segLabel = self:Encounters()
+
+  local view
+  if s.metric ~= "threat" or split then
+    view = cachedView(encounters, s.petMode)
+    -- Kept for the hover tooltip, which needs it to explain an empty detail.
+    self.lastView = view
+  end
+
+  -- The second half: its metric and, when drilled in, whose detail it is,
+  -- on its header, with its total where the footer would put it.
+  if split then
+    if (f.body:GetHeight() or 0) ~= self.layoutBodyH then self:LayoutPanes() end
+    local o = self:RenderPane(PANES[2], view, segLabel)
+    local where = (o.seg ~= segLabel) and ("  |cff9d9d9d" .. o.seg .. "|r") or ""
+    self.head2.label:SetText(o.title .. where)
+    self.head2.right:SetText(o.footR or "")
+  end
+
+  if s.metric == "threat" then return self:RefreshThreat() end
+  local o = self:RenderPane(PANES[1], view, segLabel)
+  f.title:SetText(o.title)
+  self:SetSegmentLabel(o.seg)
+  self.footL:SetText(o.footL or "")
+  self.footR:SetText(o.footR or "")
 end
 
 --[[ The meter as a threat meter: the same rows the threat window draws,

@@ -606,6 +606,56 @@ end)
 
 step("meter scrolls", function() UI.meter.list:Scroll(-1) UI.meter.list:Scroll(1) end)
 
+step("meter split: two metrics, each with its own drilldown", function()
+  local M = UI.meter
+  local s = M:Settings()
+  s.metric, s.segment = "damage", "overall"
+  M:SetSplit(true)
+  if not M:Split() then error("split did not turn on") end
+  if not M.head2:IsShown() or not M.list2:IsShown() then error("the second half is not shown") end
+  M:Refresh()
+  local label = M.head2.label:GetText() or ""
+  if not string.find(label, "Healing", 1, true) then error("the second half reads " .. label) end
+  -- Each half ranks its own metric.
+  local top, bottom = M.list.data[1], M.list2.data[1]
+  if not top or not bottom then error("a half is empty") end
+  if top._v == bottom._v and top.key == bottom.key and table.getn(M.list.data) > 1 then
+    error("both halves rank the same thing")
+  end
+  -- Drilling into the lower half leaves the upper alone, and back out.
+  M.drill2 = bottom.key
+  M:Refresh()
+  if M.drill then error("drilling the lower half opened the upper") end
+  if M.list2.data[1] and M.list2.data[1]._rank then error("the lower half did not open the player") end
+  M.head2:GetScript("OnClick")()            -- arg1 is nil: a left-click opens its menu
+  UI.CloseMenu()
+  arg1 = "RightButton"
+  M.head2:GetScript("OnClick")()
+  arg1 = nil
+  if M.drill2 then error("right-click on the lower header did not back out") end
+  -- The second metric's menu sets the second metric, and has no Threat.
+  M:MetricMenu(M.head2, 2)
+  UI.CloseMenu()
+  s.metric2 = "dispels"
+  M:Refresh()
+  -- Threat on top still draws the lower half.
+  s.metric = "threat"
+  M:Refresh()
+  s.metric = "damage"
+  -- A resize lays both halves out again; compact keeps them.
+  M.frame:SetHeight(320)
+  M.frame.OnResize()
+  s.compact = true
+  M:ApplyLayout()
+  s.compact = false
+  M:ApplyLayout()
+  -- The title-bar button turns it off again.
+  M.splitBtn:GetScript("OnClick")()
+  if M:Split() or M.head2:IsShown() or M.list2:IsShown() then error("split did not turn off") end
+  s.metric2, s.segment = "healing", "current"
+  M:Refresh()
+end)
+
 step("meter menus open", function()
   UI.meter:MetricMenu(UI.meter.frame.bar)
   UI.CloseMenu()

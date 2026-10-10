@@ -319,6 +319,12 @@ function S:Create()
       "it away until the fight ends. /wrek shows it",
       "anyway, and closing it yourself always wins." })
 
+  check(self, "Two metrics in the meter",
+    function() return meter:Settings().split == true end,
+    function(v) meter:SetSplit(v) end,
+    { "Splits the meter: its metric on top, a", "second one underneath (healing, to start",
+      "with). Click the lower header to change it.", "Also the 1+2 button on the meter." })
+
   check(self, "Show meter toolbar",
     function() return meter:Settings().showToolbar ~= false end,
     function(v)
