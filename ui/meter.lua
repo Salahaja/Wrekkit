@@ -1172,7 +1172,8 @@ end
 --- Once trimmed there is nothing left over, so it settles at once.
 function M:TrimPartialRow()
   local f = self.frame
-  if not f or f._sizing or self:Settings().fitRows or self:SplitMode() == "stacked" then return end
+  -- Never mid-drag: re-anchoring or resizing a moving frame crashes the client.
+  if not f or f._sizing or f._moving or self:Settings().fitRows or self:SplitMode() == "stacked" then return end
   local rowH = self.list.rowHeight or 18
   local listH = self.list:GetHeight() or 0
   if listH <= rowH then return end
