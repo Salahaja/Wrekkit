@@ -139,6 +139,7 @@ local RULES = {
     { pattern = ":len%(",          msg = "s:len() needs 5.1 string methods - use string.len(s)" },
     { pattern = ":format%(",       msg = "s:format() needs 5.1 string methods - use string.format(s, ...)" },
     { pattern = "math%.fmod",      msg = "math.fmod is Lua 5.1+ - use math.mod" },
+    { pattern = "math%.huge",      msg = "math.huge is Lua 5.1+ - use 1/0 (some addons polyfill it, so it can work by luck)" },
     { pattern = "table%.unpack",   msg = "table.unpack is Lua 5.2+ - use unpack" },
     { pattern = "table%.maxn",     msg = "table.maxn is Lua 5.1+ - not available in vanilla 1.12" },
     { pattern = "select%(",        msg = "select() is Lua 5.1+ - in 5.0 varargs arrive as the `arg` table" },

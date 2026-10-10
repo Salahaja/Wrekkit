@@ -29,6 +29,8 @@ math.mod = math.mod or math.fmod
 string.gfind = string.gfind or string.gmatch
 -- 1.12 has no coroutine library; a call to it must fail here as it does in-game.
 coroutine = nil
+-- Nor math.huge (5.1); another addon may polyfill it in-game, but not reliably.
+math.huge = nil
 table.getn = table.getn or function(t) return #t end
 table.setn = table.setn or function() end
 unpack = unpack or table.unpack
