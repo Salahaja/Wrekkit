@@ -928,8 +928,10 @@ function S:BuildThreat()
   choice(self, "Show them",
     {
       { value = "tank", label = "when tanking" },
-      { value = "everyone", label = "always" },
-    }, get, set)
+      { value = "everyone", label = "DPS and healing too" },
+    }, get, set,
+    { "In every fight, tanking or not. Not tanking,", "a mob on you is red, and with a tank running",
+      "Wrekkit a mob you are close to pulling gets", "a row with your %, red past your warning line." })
 
   stepper(self, "From",
     function() return ts().mobFramesMin end,
