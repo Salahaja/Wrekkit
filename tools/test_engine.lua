@@ -3665,6 +3665,41 @@ UnitExists, UnitIsPlayer = realExists, realIsPlayer
 TL.queue, TL.misses, TL.lastAsk, TL.asking = {}, {}, {}, nil
 SendAddonMessage, GetNumRaidMembers, UnitName, UnitAffectingCombat = realSend, realRaid, realName, realUAC
 
+-- The client's Talents tab only hears answers it can be waiting for: while
+-- open, from the target or yourself. An ask always reaches it (it answers).
+do
+  local got = {}
+  InspectTalentsFrame_HandleMessage = function(m, s) table.insert(got, s .. ":" .. m) end
+  local open = false
+  InspectTalentsFrame = { IsVisible = function() return open end }
+  local realName2 = UnitName
+  UnitName = function(u)
+    if u == "target" then return "Duskii" end
+    if u == "player" then return "Salahaja" end
+    return realName2(u)
+  end
+  TL.inspectHooked = nil
+  TL:HookInspectUI()
+  InspectTalentsFrame_HandleMessage("\tINSTalentEND;", "Khtalla")
+  check("tab shut: a background answer does not reach it", table.getn(got), 0)
+  InspectTalentsFrame_HandleMessage("\tINSTalentShow", "Khtalla")
+  check("  but an ask always does", got[1], "Khtalla:\tINSTalentShow")
+  open = true
+  InspectTalentsFrame_HandleMessage("\tINSTalentEND;", "Khtalla")
+  check("tab open: someone else's answer still does not", table.getn(got), 1)
+  InspectTalentsFrame_HandleMessage("\tINSTalentEND;", "Duskii")
+  check("  the target's does", got[2], "Duskii:\tINSTalentEND;")
+  InspectTalentsFrame_HandleMessage("\tINSTalentEND;", "Salahaja")
+  check("  and your own", got[3], "Salahaja:\tINSTalentEND;")
+  InspectTalentsFrame_HandleMessage("\tINSTransmogs;start", "Khtalla")
+  check("  other messages pass untouched", got[4], "Khtalla:\tINSTransmogs;start")
+  TL:HookInspectUI()
+  InspectTalentsFrame_HandleMessage("\tINSTalentEND;", "Duskii")
+  check("  hooked once, however often asked", table.getn(got), 5)
+  UnitName = realName2
+  InspectTalentsFrame_HandleMessage, InspectTalentsFrame, TL.inspectHooked = nil, nil, nil
+end
+
 -- Your own, from the talent API.
 local realTab = GetTalentTabInfo
 GetTalentTabInfo = function(i)

@@ -280,6 +280,8 @@ end
 
 --- Ask the next player, when nothing is waiting and nobody is fighting.
 function TL:Step()
+  -- Loaded on demand, maybe without an ADDON_LOADED seen: catch it here.
+  if not self.inspectHooked then self:HookInspectUI() end
   local now = GetTime()
   if self.asking and now - self.askedAt > TIMEOUT then
     self.misses = self.misses or {}
@@ -434,6 +436,41 @@ function TL:Inspect(name)
 end
 
 ----------------------------------------------------------------------
+-- the client's own inspect window
+----------------------------------------------------------------------
+
+--[[ The client's Talents tab (Blizzard_InspectUI) is fed by every inspect
+     answer that reaches this client, whoever asked for it. Its handler
+     keeps one player's talents, and on each answer's end it marks them as
+     your current target's. So an answer to a background ask -- Wrekkit's,
+     or ChronicleCompanion's every fifteen minutes -- from someone else
+     left the tab thinking it already had your target: opened, it asked
+     nobody and showed the leftovers, blank for most players.
+
+     So only answers the tab can be waiting for reach it: while it is open,
+     from your target (or yourself). Every other answer still reaches
+     Wrekkit, through its own event. The request itself -- someone asking
+     you -- always goes through: answering it is the same handler. ]]
+function TL:HookInspectUI()
+  if self.inspectHooked or type(InspectTalentsFrame_HandleMessage) ~= "function" then return end
+  self.inspectHooked = true
+  local orig = InspectTalentsFrame_HandleMessage
+  InspectTalentsFrame_HandleMessage = function(message, sender)
+    if TL:ForTab(message, sender) then return orig(message, sender) end
+  end
+end
+
+--- Should an inspect message reach the client's Talents tab?
+function TL:ForTab(message, sender)
+  if type(message) ~= "string" then return true end
+  if string.find(message, "INSTalentShow", 1, true) then return true end   -- an ask: answer it
+  if not string.find(message, "INSTalent", 1, true) then return true end
+  local tab = InspectTalentsFrame
+  if not tab or not tab.IsVisible or not tab:IsVisible() then return false end
+  return sender == UnitName("target") or sender == UnitName("player")
+end
+
+----------------------------------------------------------------------
 -- lifecycle
 ----------------------------------------------------------------------
 
@@ -445,8 +482,13 @@ function TL:Start()
   f:RegisterEvent("CHARACTER_POINTS_CHANGED")
   f:RegisterEvent("PLAYER_ENTERING_WORLD")
   f:RegisterEvent("PLAYER_TARGET_CHANGED")
+  f:RegisterEvent("ADDON_LOADED")
   f:SetScript("OnEvent", function()
-    if event == "PLAYER_TARGET_CHANGED" then
+    if event == "ADDON_LOADED" then
+      if arg1 == "Blizzard_InspectUI" then
+        W.Guard("inspect window", function() TL:HookInspectUI() end)
+      end
+    elseif event == "PLAYER_TARGET_CHANGED" then
       W.Guard("talents target", function() TL:OnTarget() end)
     elseif event == "CHAT_MSG_ADDON" then
       if arg1 == CHANNEL then
