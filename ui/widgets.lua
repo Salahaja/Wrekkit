@@ -985,7 +985,19 @@ function UI.Row(parent, height)
     local subW = math.ceil((subWidth or 64) * scale)
     self.sub:SetWidth(subW)
 
-    local w = self:GetWidth()
+    --[[ The row's width, from its list when it has one. A list re-anchors
+         its rows when the row height changes -- which the stretched row
+         modes do as they fill the window -- and paints them straight after,
+         when the client can still report a row's OLD width: the top bar,
+         meant to span the row, stopped short and left the rest undrawn.
+         The list itself is not re-anchored then, so its width is current;
+         a row spans it less the scrollbar's inset (EnsureRows). ]]
+    local w
+    local list = self._list
+    if list then
+      w = (list:GetWidth() or 0) - (list._anchorW or 0)
+    end
+    if not w or w <= 0 then w = self:GetWidth() end
     if not w or w <= 0 then w = 200 end
     local barW = w * (frac or 0)
     if barW < 1 then barW = 1 end
@@ -1090,6 +1102,8 @@ function UI.ScrollList(parent, rowHeight, makeRow)
     local have = table.getn(self.rows)
     for i = have + 1, n do
       self.rows[i] = self.makeRow(self, self.rowHeight)
+      -- Placed by this list, so it spans it (see the row's SetData).
+      self.rows[i]._list = self
     end
     -- Re-anchor when the layout changed: the scrollbar appearing or
     -- vanishing moves the right inset, and the row height is a live
