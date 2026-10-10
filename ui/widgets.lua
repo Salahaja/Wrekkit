@@ -103,6 +103,66 @@ function UI.ApplySkin()
   local chosen = UI.BarTexturePath(W.db and W.db.barTexture)
   if chosen then UI.media.bar = chosen end
   UI.ApplyColorTheme(W.db and W.db.colorTheme)
+  UI.skinFont = UI.font
+  local face = UI.FontPath(W.db and W.db.font)
+  if face then UI.font = face end
+end
+
+--[[ The text's font, apart from the look. The client's four, and pfUI's
+     own and three of the fonts it ships, offered only with pfUI installed
+     (they live in its folder). "skin" keeps the look's: pfUI's font with
+     the pfUI look and pfUI loaded, the client's otherwise. Numbers keep
+     their narrow face (UI.fontNum) whatever is chosen, so columns line up. ]]
+local PFUI_FONTS = "Interface\\AddOns\\pfUI\\fonts\\"
+local FONTS = {
+  { value = "skin", label = "skin" },
+  { value = "friz", label = "Friz Quadrata", path = "Fonts\\FRIZQT__.TTF" },
+  { value = "arial", label = "Arial Narrow", path = "Fonts\\ARIALN.TTF" },
+  { value = "skurri", label = "Skurri", path = "Fonts\\skurri.ttf" },
+  { value = "morpheus", label = "Morpheus", path = "Fonts\\MORPHEUS.TTF" },
+  { value = "pfui", label = "pfUI's font", pfui = true },
+  { value = "myriad", label = "Myriad Pro", path = PFUI_FONTS .. "Myriad-Pro.ttf", pfui = true },
+  { value = "expressway", label = "Expressway", path = PFUI_FONTS .. "Expressway.ttf", pfui = true },
+  { value = "ptsans", label = "PT Sans Narrow", path = PFUI_FONTS .. "PT-Sans-Narrow-Regular.ttf", pfui = true },
+}
+
+--- The fonts to offer: pfUI's only where pfUI is.
+function UI.FontChoices()
+  local out = {}
+  for _, f in ipairs(FONTS) do
+    if not f.pfui or pfUI then table.insert(out, f) end
+  end
+  return out
+end
+
+--- The file for a font choice, or nil for "use the look's".
+function UI.FontPath(key)
+  for _, f in ipairs(FONTS) do
+    if f.value == key then
+      if f.pfui and not pfUI then return nil end
+      if f.value == "pfui" then return pfUI and pfUI.font_default or nil end
+      return f.path
+    end
+  end
+  return nil
+end
+
+--- Change the font everywhere it is the default face, at once, and
+--- remember the choice. Text set in another face (the numbers) is left --
+--- marked when it was made, not matched by file: Arial Narrow is both a
+--- choice and the numbers' face, and matching by file changed both.
+function UI.SetFont(key)
+  if W.db then W.db.font = key end
+  local old = UI.font
+  UI.font = UI.FontPath(key) or UI.skinFont or UI.font
+  if UI.font == old then return end
+  local scale = UI.FontScale()
+  for _, entry in ipairs(UI.fontObjects) do
+    if entry.default then
+      entry.face = UI.font
+      UI.ApplyFontEntry(entry, scale)
+    end
+  end
 end
 
 --[[ Colours, apart from the look: Blizzard's gold, pfUI's teal, or the
@@ -369,8 +429,9 @@ function UI.FontScale()
 end
 
 --- Track any object with SetFont so it follows the scale. Returns it.
-function UI.RegisterFont(obj, size, face)
-  table.insert(UI.fontObjects, { obj = obj, size = size, face = face })
+--- `default`: set in the default face (UI.font), so a font choice moves it.
+function UI.RegisterFont(obj, size, face, default)
+  table.insert(UI.fontObjects, { obj = obj, size = size, face = face, default = default })
   return obj
 end
 
@@ -380,6 +441,7 @@ local function applyFont(entry, scale)
   if px < 6 then px = 6 elseif px > 32 then px = 32 end
   entry.obj:SetFont(entry.face, px)
 end
+UI.ApplyFontEntry = applyFont
 
 function UI.ApplyFontScale()
   local scale = UI.FontScale()
@@ -391,9 +453,10 @@ end
 function UI.Text(parent, size, color, justify, face)
   local fs = parent:CreateFontString(nil, "OVERLAY")
   size = size or 12
+  local default = (face == nil)
   face = face or UI.font
   applyFont({ obj = fs, size = size, face = face }, UI.FontScale())
-  UI.RegisterFont(fs, size, face)
+  UI.RegisterFont(fs, size, face, default)
   fs:SetTextColor(unpackColor(color or W.color.text))
   fs:SetJustifyH(justify or "LEFT")
   fs:SetShadowColor(0, 0, 0, 0.9)
@@ -765,7 +828,7 @@ function UI.SearchBox(parent, width, onChange, placeholder)
   eb:SetPoint("TOPLEFT", f, "TOPLEFT", 6, -1)
   eb:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -18, 1)
   eb:SetFont(UI.font, 11 * UI.FontScale())
-  UI.RegisterFont(eb, 11, UI.font)
+  UI.RegisterFont(eb, 11, UI.font, true)
   eb:SetTextColor(unpackColor(W.color.text))
   eb:SetAutoFocus(false)
   eb:SetMaxLetters(24)

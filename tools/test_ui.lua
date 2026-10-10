@@ -118,7 +118,8 @@ local function region(kind)
     SetGradientAlpha = function() end,
     SetBlendMode = function() end,
     SetDrawLayer = function() end,
-    SetFont = function() return true end,
+    SetFont = function(self, face, size) self._face, self._size = face, size return true end,
+    GetFont = function(self) return self._face, self._size end,
     SetText = function(self, t) self._text = t end,
     GetText = function(self) return self._text or "" end,
     SetTextColor = function() end,
@@ -660,6 +661,38 @@ step("colours apart from the look, and bar opacity", function()
   Wrekkit.db.barAlpha = nil
   if UI.BarAlpha() ~= 0.55 then error("unset, bars are not the looks' 55%") end
   M:Refresh()
+end)
+
+step("font: changes text at once, leaves the numbers, offers pfUI's only with pfUI", function()
+  local M = UI.meter
+  M:Refresh()
+  local row = M.list.rows[1]
+  local skinFont = UI.skinFont or UI.font
+  -- A number set in the narrow face, to see it is left alone.
+  local num = UI.Text(UIParent, 10, nil, "RIGHT", UI.fontNum)
+  UI.SetFont("arial")
+  if row.name:GetFont() ~= "Fonts\\ARIALN.TTF" then error("the font did not reach an existing name: " .. tostring(row.name:GetFont())) end
+  if Wrekkit.db.font ~= "arial" then error("the font choice was not saved") end
+  UI.SetFont("morpheus")
+  if row.name:GetFont() ~= "Fonts\\MORPHEUS.TTF" then error("a second change did not follow") end
+  if num:GetFont() ~= UI.fontNum then error("the numbers' face was changed") end
+  local fresh = UI.Text(UIParent, 11)
+  if fresh:GetFont() ~= "Fonts\\MORPHEUS.TTF" then error("new text did not get the chosen font") end
+  UI.SetFont("skin")
+  if row.name:GetFont() ~= skinFont then error("skin did not bring the look's font back") end
+  -- pfUI's fonts: only with pfUI.
+  local hadPf = pfUI
+  pfUI = nil
+  for _, f in ipairs(UI.FontChoices()) do
+    if f.pfui then error("a pfUI font was offered without pfUI: " .. f.label) end
+  end
+  if UI.FontPath("myriad") then error("a pfUI font resolved without pfUI") end
+  pfUI = { font_default = "Interface\\AddOns\\pfUI\\fonts\\Myriad-Pro.ttf" }
+  local offered = 0
+  for _, f in ipairs(UI.FontChoices()) do if f.pfui then offered = offered + 1 end end
+  if offered == 0 then error("pfUI's fonts were not offered with pfUI") end
+  if UI.FontPath("pfui") ~= pfUI.font_default then error("pfUI's own font did not resolve") end
+  pfUI = hadPf
 end)
 
 step("class icons: on player rows when asked for, never stale on a reused row", function()

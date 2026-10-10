@@ -276,6 +276,16 @@ function S:Create()
       "amber -- pfUI's colours with Blizzard's", "frames, say. skin: the look's own.",
       "Applies after a /reload." })
 
+  choice(self, "Font", UI.FontChoices(),
+    function() return W.db.font or "skin" end,
+    function(v)
+      UI.SetFont(v)
+      meter:ApplyLayout()
+      S:Layout()
+    end,
+    { "The text's font, whatever the look. pfUI's", "fonts are offered when pfUI is installed.",
+      "Numbers keep their narrow font so columns", "line up. skin: the look's own." })
+
   slider(self, "Bar opacity",
     function() return math.floor(UI.BarAlpha() * 100 + 0.5) end,
     function(v)
