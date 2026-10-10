@@ -272,6 +272,15 @@ function S:Create()
     { "Each player's class icon beside their name,", "in the meter, the report and the threat",
       "window. (Specs are not something 1.12 can", "tell an addon.)" })
 
+  check(self, "Fit meter to its rows",
+    function() return meter:Settings().fitRows == true end,
+    function(v)
+      meter:Settings().fitRows = v and true or false
+      meter:Refresh()
+    end,
+    { "Shrinks the meter to the players it shows,", "with no empty space under them, and grows",
+      "it back as more appear -- never taller than", "you sized it. Not with two over and under." })
+
   check(self, "Compact meter",
     function() return meter:Settings().compact == true end,
     function(v)
@@ -672,6 +681,11 @@ function S:BuildThreat()
       { value = "always", label = "always" },
     }, get, set,
     { "The server only answers in a party or raid,", "so alone the window has nothing to show." })
+
+  get, set = opt("fitRows")
+  check(self, "Fit window to its rows", get, set,
+    { "In its own window: shrinks to the players it", "shows, with no empty space under them, never",
+      "taller than you sized it." })
 
   choice(self, "I'm the tank",
     {

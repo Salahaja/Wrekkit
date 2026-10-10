@@ -1206,6 +1206,8 @@ function UI.Window(name, width, height, title, opts)
   grip:SetScript("OnDragStop", function()
     f._sizing = nil
     f:StopMovingOrSizing()
+    -- Fitted to its rows: what was just dragged is the new most it may grow to.
+    if f._maxH then f._maxH = f:GetHeight() end
     if f.SavePosition then f:SavePosition() end
     if f.OnResize then f:OnResize() end
   end)
@@ -1314,7 +1316,9 @@ function UI.BindGeometry(frame, store)
     store.x = x
     store.y = y
     store.w = self:GetWidth()
-    store.h = self:GetHeight()
+    -- Fitted to its rows (UI.FitHeight), the height on screen is the fit;
+    -- the one to keep is the height the window was sized to.
+    store.h = self._maxH or self:GetHeight()
   end
   frame.RestorePosition = function(self)
     self:ClearAllPoints()
@@ -1324,6 +1328,41 @@ function UI.BindGeometry(frame, store)
     if store.h then self:SetHeight(store.h) end
   end
   frame:RestorePosition()
+end
+
+--[[ Fit a window's height to the rows it is showing (#15: five players in
+     a window sized for eight left a block of empty space under them).
+
+     The height the window was sized to becomes the most it grows to
+     (frame._maxH): it shrinks to the rows, and grows back as more arrive.
+     The window is anchored by its top-left first, so the title bar stays
+     put and only the bottom edge moves. Nothing happens while the grip is
+     held -- the drag is the user's. `n` is the rows wanted; `list` is the
+     ScrollList they go in, everything else in the window being chrome. ]]
+function UI.FitHeight(f, list, n)
+  if not f or not list or f._sizing then return end
+  if not f._maxH then f._maxH = f:GetHeight() end
+  if not f._topAnchored then
+    local left, top = f:GetLeft(), f:GetTop()
+    local ptop = UIParent and UIParent:GetTop()
+    if left and top and ptop then
+      f:ClearAllPoints()
+      f:SetPoint("TOPLEFT", UIParent, "TOPLEFT", left, top - ptop)
+      f._topAnchored = true
+    end
+  end
+  local rowH = list.rowHeight or 18
+  local chrome = (f:GetHeight() or 0) - (list:GetHeight() or 0)
+  local want = chrome + (n > 1 and n or 1) * rowH + 2
+  if want > f._maxH then want = f._maxH end
+  if math.abs((f:GetHeight() or 0) - want) >= 1 then f:SetHeight(want) end
+end
+
+--- Back to the height the window was sized to, fitting switched off.
+function UI.UnfitHeight(f)
+  if not f or not f._maxH then return end
+  f:SetHeight(f._maxH)
+  f._maxH = nil
 end
 
 ----------------------------------------------------------------------

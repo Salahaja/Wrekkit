@@ -45,6 +45,8 @@ M.defaults = {
   -- "show", "fade" or "hide": what the meter does while you are fighting.
   combat = "show",
   locked = false,
+  -- Shrink to the rows shown, up to the height it was sized to (#15).
+  fitRows = false,
   window = { point = "CENTER", x = -320, y = 0, w = 260, h = 200 },
 }
 
@@ -1140,7 +1142,29 @@ end
 --- Repaints run on a ticker, so an error here would fire twice a second and
 --- bury its own first occurrence. Guard reports each distinct one once.
 function M:Refresh()
-  W.Guard("meter refresh", function() M:RefreshInner() end)
+  W.Guard("meter refresh", function()
+    M:RefreshInner()
+    M:Fit()
+  end)
+end
+
+--[[ Fit the window to its rows, when asked to (#15). Side by side, to the
+     longer column. Over and under, each half has its own share of the
+     height, so the window keeps the height it was given. ]]
+function M:Fit()
+  local f = self.frame
+  if not f or not f:IsShown() then return end
+  local mode = self:SplitMode()
+  if not self:Settings().fitRows or mode == "stacked" then
+    UI.UnfitHeight(f)
+    return
+  end
+  local n = table.getn(self.list.data or {})
+  if mode == "side" and self.list2 then
+    local n2 = table.getn(self.list2.data or {})
+    if n2 > n then n = n2 end
+  end
+  UI.FitHeight(f, self.list, n)
 end
 
 --[[ Draw one pane from an already-built view, and say what its labels

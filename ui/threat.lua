@@ -652,7 +652,27 @@ function TW:UpdateVisibility()
 end
 
 function TW:Refresh()
-  W.Guard("threat window", function() TW:RefreshInner() end)
+  W.Guard("threat window", function()
+    TW:RefreshInner()
+    TW:Fit()
+  end)
+end
+
+--- Fit the window to its rows, when asked to (#15). In its own window only:
+--- docked, its height is the meter's business (ApplyLayout).
+function TW:Fit()
+  local f = self.frame
+  if not f or not f:IsShown() then return end
+  local s = T:Settings()
+  if s.display == "docked" then
+    f._maxH = nil
+    return
+  end
+  if not s.fitRows then
+    UI.UnfitHeight(f)
+    return
+  end
+  UI.FitHeight(f, self.list, table.getn(self.list.data or {}))
 end
 
 function TW:RefreshInner()

@@ -197,6 +197,8 @@ CreateFrame = function(kind, name, parent)
     SetBackdropColor = function(self, r, g, b, a) self._bdA = a end,
     SetBackdropBorderColor = function(self, r, g, b, a) self._bdBorderA = a end,
     GetCenter = function() return 400, 300 end,
+    GetLeft = function() return 300 end,
+    GetTop = function() return 600 end,
     GetEffectiveScale = function() return 1 end,
     SetScale = function() end,
     Raise = function() end,
@@ -658,6 +660,52 @@ step("class icons: on player rows when asked for, never stale on a reused row", 
   local p = M.list.rows[1].name._points[1]
   if not p or p[4] ~= 26 then error("the name did not go back to the gutter") end
   M:Settings().segment = "current"
+  M:Refresh()
+end)
+
+step("fit to rows: no empty space under the last row, never taller than sized", function()
+  local M = UI.meter
+  local f = M.frame
+  local s = M:Settings()
+  s.segment = "overall"
+  M:SetSplit("off")
+  f:SetHeight(400)
+  f._maxH, f._topAnchored = nil, nil
+  -- The stub cannot work a height out from anchors: give the list what the
+  -- client would, the window less 60 of chrome.
+  local realGetH = M.list.GetHeight
+  M.list.GetHeight = function() return f:GetHeight() - 60 end
+  s.fitRows = true
+  M:Refresh()
+  local n = table.getn(M.list.data)
+  if n == 0 then error("no rows to fit to") end
+  local want = 60 + n * M.list.rowHeight + 2
+  if math.abs(f:GetHeight() - want) > 1 then
+    error(string.format("fitted to %d, not %d for %d rows", f:GetHeight(), want, n))
+  end
+  if f._maxH ~= 400 then error("the height it was sized to was not kept: " .. tostring(f._maxH)) end
+  local p = f._points[1]
+  if not p or p[1] ~= "TOPLEFT" then error("a fitted window is not held by its top") end
+  -- Saving keeps the sized height, not the fit.
+  f:SavePosition()
+  if s.window.h ~= 400 then error("saving kept the fitted height " .. tostring(s.window.h)) end
+  -- Never taller than sized: a small window stays small.
+  f._maxH = want - 20
+  M:Refresh()
+  if f:GetHeight() > want - 20 + 0.5 then error("grew past the height it was sized to") end
+  -- While the grip is held, the drag is the user's.
+  f._sizing = true
+  f:SetHeight(500)
+  M:Refresh()
+  if f:GetHeight() ~= 500 then error("fitted mid-drag") end
+  f._sizing = nil
+  -- Off: back to the sized height.
+  f._maxH = 400
+  s.fitRows = false
+  M:Refresh()
+  if f:GetHeight() ~= 400 or f._maxH then error("switching it off did not restore the sized height") end
+  M.list.GetHeight = realGetH
+  s.segment = "current"
   M:Refresh()
 end)
 
