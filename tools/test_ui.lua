@@ -627,6 +627,40 @@ step("bar style: changes every bar at once, and back to the skin's", function()
   UI.SetBarTexture("skin")
 end)
 
+step("class icons: on player rows when asked for, never stale on a reused row", function()
+  local M = UI.meter
+  M:Settings().metric, M:Settings().segment = "damage", "overall"
+  M.drill, M.drillAbility = nil, nil
+  Wrekkit.db.classIcons = true
+  M:Refresh()
+  local item = M.list.data[1]
+  if not item then error("the meter has no rows") end
+  local checked = 0
+  for i, it in ipairs(M.list.data) do
+    local row = M.list.rows[i]
+    if row and row:IsShown() and it.isPlayer and UI.CLASS_COORDS[it.class or ""] then
+      if not row.icon:IsShown() then error("no class icon on " .. tostring(it.name)) end
+      local p = row.name._points[1]
+      if not p or p[4] <= 26 then error("the name did not move over for the icon") end
+      checked = checked + 1
+    end
+  end
+  if checked == 0 then error("no player row to check a class icon on") end
+  -- The same row painted as an ability (no class): no icon left behind.
+  M.drill = item.key
+  M:Refresh()
+  if M.list.rows[1].icon:IsShown() then error("an ability row kept a class icon") end
+  M.drill = nil
+  -- Off: gone, and the name back at the gutter.
+  Wrekkit.db.classIcons = false
+  M:Refresh()
+  if M.list.rows[1].icon:IsShown() then error("class icons stayed after being switched off") end
+  local p = M.list.rows[1].name._points[1]
+  if not p or p[4] ~= 26 then error("the name did not go back to the gutter") end
+  M:Settings().segment = "current"
+  M:Refresh()
+end)
+
 step("a narrow row never draws its name over its value", function()
   local realScale = Wrekkit.db.fontScale
   Wrekkit.db.fontScale = 0.7

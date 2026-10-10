@@ -261,6 +261,17 @@ function S:Create()
     { "The bars' texture, whatever the look: flat", "colour, a smooth shade, or Blizzard's status",
       "bar. skin: whatever the look uses." })
 
+  check(self, "Class icons",
+    function() return W.db.classIcons == true end,
+    function(v)
+      W.db.classIcons = v and true or false
+      meter:Refresh()
+      if UI.threat and UI.threat.Refresh then UI.threat:Refresh() end
+      if UI.report and UI.report.frame and UI.report.frame:IsShown() then UI.report:Refresh() end
+    end,
+    { "Each player's class icon beside their name,", "in the meter, the report and the threat",
+      "window. (Specs are not something 1.12 can", "tell an addon.)" })
+
   check(self, "Compact meter",
     function() return meter:Settings().compact == true end,
     function(v)

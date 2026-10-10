@@ -1044,6 +1044,7 @@ local function makePainters(pane)
 
   local function paintActor(row, item, index)
     local color = item._color or W.ClassColor(item.class)
+    if item.isPlayer then row:SetClass(item.class) end
     row:SetData(item._rank, UI.RowName(item, M:Settings().pickedOnly),
       item._text, item._sub, item._frac, color, 58)
     row.tip = function(self) actorTooltip(self, item, metricKey()) end

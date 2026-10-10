@@ -772,6 +772,28 @@ end
 -- width is set so this is never actually reached.
 local MIN_NAME_W = 60
 
+--[[ Class icons, from the character-create sheet -- the one TWThreat draws
+     its class icons from on this client -- at the coordinates pfUI uses
+     for it. 1.12 has no spec API, so a class is as specific as it gets. ]]
+local CLASS_SHEET = "Interface\\Glues\\CharacterCreate\\UI-CharacterCreate-Classes"
+local CLASS_COORDS = {
+  WARRIOR = { 0, 0.25, 0, 0.25 },
+  MAGE    = { 0.25, 0.49609375, 0, 0.25 },
+  ROGUE   = { 0.49609375, 0.7421875, 0, 0.25 },
+  DRUID   = { 0.7421875, 0.98828125, 0, 0.25 },
+  HUNTER  = { 0, 0.25, 0.25, 0.5 },
+  SHAMAN  = { 0.25, 0.49609375, 0.25, 0.5 },
+  PRIEST  = { 0.49609375, 0.7421875, 0.25, 0.5 },
+  WARLOCK = { 0.7421875, 0.98828125, 0.25, 0.5 },
+  PALADIN = { 0, 0.25, 0.5, 0.75 },
+}
+UI.CLASS_COORDS = CLASS_COORDS
+
+--- Are class icons on? A setting, off unless asked for.
+function UI.ClassIcons()
+  return W.db and W.db.classIcons == true
+end
+
 function UI.Row(parent, height)
   local r = CreateFrame("Button", nil, parent)
   r:SetHeight(height or 18)
@@ -788,8 +810,19 @@ function UI.Row(parent, height)
   r.rank:SetPoint("LEFT", r, "LEFT", 0, 0)
   r.rank:SetWidth(20)
 
+  -- A player's class, between the rank and the name, when class icons are
+  -- on (see UI.ClassIcons) and the painter named a class (r:SetClass).
+  r.icon = r:CreateTexture(nil, "ARTWORK")
+  r.icon:SetTexture(CLASS_SHEET)
+  r.icon:SetPoint("LEFT", r, "LEFT", 24, 0)
+  r.icon:Hide()
+
   r.name = UI.Text(r, 11, W.color.text, "LEFT")
   r.name:SetPoint("LEFT", r, "LEFT", 26, 0)
+
+  --- Name the class for the next SetData only. Rows are reused, so a row
+  --- whose painter does not call this shows no icon, never a stale one.
+  r.SetClass = function(self, class) self._nextClass = class end
 
   r.sub = UI.Text(r, 10, W.color.textDim, "RIGHT")
   r.sub:SetPoint("RIGHT", r, "RIGHT", -6, 0)
@@ -815,6 +848,27 @@ function UI.Row(parent, height)
 
   --- Paint one data row. `frac` is 0..1 of the widest bar in the list.
   r.SetData = function(self, rank, name, value, sub, frac, color, subWidth)
+    -- The class icon: shown, sized to the row, and the name moved over for
+    -- it -- or gone, and the name back at the gutter.
+    local coords = UI.ClassIcons() and CLASS_COORDS[self._nextClass or ""]
+    self._nextClass = nil
+    local iconW = 0
+    if coords then
+      local size = (self:GetHeight() or 18) - 4
+      if size < 8 then size = 8 end
+      self.icon:SetWidth(size)
+      self.icon:SetHeight(size)
+      self.icon:SetTexCoord(coords[1], coords[2], coords[3], coords[4])
+      self.icon:Show()
+      iconW = size + 3
+    else
+      self.icon:Hide()
+    end
+    if self._iconW ~= iconW then
+      self._iconW = iconW
+      self.name:ClearAllPoints()
+      self.name:SetPoint("LEFT", self, "LEFT", 26 + iconW, 0)
+    end
     self.rank:SetText(rank and tostring(rank) .. "." or "")
     self.name:SetText(name or "")
     self.value:SetText(value or "")
@@ -852,7 +906,7 @@ function UI.Row(parent, height)
     if valueW < STEP then valueW = STEP end
 
     -- 26 is the rank gutter; 14 covers the gaps either side of the value.
-    local nameW = w - 26 - subW - valueW - 14
+    local nameW = w - 26 - iconW - subW - valueW - 14
     --[[ Too narrow for everything -- a meter split into columns, at a small
          text size. The secondary column (per second, a percentage) goes
          first, and the value moves up to the edge. If the name still does
@@ -862,7 +916,7 @@ function UI.Row(parent, height)
       self.sub:SetText("")
       subW = 1
       self.sub:SetWidth(subW)
-      nameW = w - 26 - subW - valueW - 14
+      nameW = w - 26 - iconW - subW - valueW - 14
     end
     if nameW < 1 then nameW = 1 end
     self.name:SetWidth(nameW)
