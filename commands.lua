@@ -388,9 +388,24 @@ local function handler(msg)
         W.Print(name .. (on and " is marked as a tank: their threat and the mobs they take raise no warnings."
           or " is no longer marked as a tank."))
       else
-        local list = W.threat:Settings().coTanks or ""
-        W.Print("other tanks: " .. (list ~= "" and list or "none") ..
-          ".  /wrek threat cotank [name] adds or removes one (no name: your target).")
+        local s = W.threat:Settings()
+        local list = s.coTanks or ""
+        W.Print("other tanks, marked: " .. (list ~= "" and list or "none") ..
+          ".  /wrek threat cotank [name] adds or removes one (no name: your target)" ..
+          (s.coTankShare and ", for everyone in the group running Wrekkit." or "."))
+        if s.coTankAuto then
+          local found = {}
+          for low, why in pairs(W.threat:DetectedTanks()) do
+            table.insert(found, string.upper(string.sub(low, 1, 1)) .. string.sub(low, 2) ..
+              " (" .. tostring(why) .. (W.threat:IsCoTank(low) and "" or ", unmarked by hand") .. ")")
+          end
+          table.sort(found)
+          W.Print("  found: " .. (table.getn(found) > 0 and table.concat(found, ", ") or
+            "none -- a group member in Defensive Stance, Bear Form or with Righteous Fury"))
+        end
+        if (s.coTanksOff or "") ~= "" then
+          W.Print("  never a tank (unmarked by hand): " .. s.coTanksOff)
+        end
       end
     elseif sub == "role" then
       T:ExplainRole()

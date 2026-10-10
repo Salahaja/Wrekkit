@@ -784,6 +784,16 @@ function S:BuildThreat()
     function() return ts().coTanks end,
     function(v) ts().coTanks = v or "" end)
 
+  get, set = opt("coTankAuto")
+  check(self, "Find the other tanks", get, set,
+    { "A group member in Defensive Stance, Bear", "Form or with Righteous Fury counts as a",
+      "co-tank, addon or not. Unmark one by hand", "and they stay unmarked." })
+
+  get, set = opt("coTankShare")
+  check(self, "Share tanks with the group", get, set,
+    { "Marking or unmarking a tank does it for", "everyone in the party or raid running",
+      "Wrekkit, and their Wrekkit tells yours", "when they are tanking, from any range." })
+
   get, set = opt("tauntPopup")
   check(self, "Taunt popup", get, set,
     { "A button for each mob that got away: click", "to taunt it, right-click to dismiss. Also",

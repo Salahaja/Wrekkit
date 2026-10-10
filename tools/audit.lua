@@ -87,7 +87,7 @@ declare(WOW, [[
   CreateFrame UIParent GetTime GetLocale GetBuildInfo GetRealZoneText
   GetRealmName IsInInstance GetNumRaidMembers GetNumPartyMembers
   GetRaidRosterInfo UnitName UnitClass UnitLevel UnitHealth UnitHealthMax UnitClassification
-  UnitExists UnitIsPlayer UnitIsUnit UnitCanCooperate UnitAffectingCombat
+  UnitExists UnitIsPlayer UnitIsUnit UnitCanCooperate UnitAffectingCombat UnitIsVisible
   SetCVar GetCVar SendChatMessage SendAddonMessage GetAddOnMetadata
   GetNumSavedInstances GetSavedInstanceInfo UnitIsGhost
   GetItemInfo IsInGuild GetCursorPosition Minimap IsShiftKeyDown
@@ -2204,6 +2204,155 @@ step("other tanks: their threat and the mobs they take raise nothing", function(
   STUB.UnitExists, WORLD["target"] = realExists, realTarget
   s.tankMode, s.coTanks = "auto", ""
   T.fired, T.lost, T.taunts, T.tankMobs, T.heldKey = {}, {}, {}, {}, nil
+  if not ok then error(err) end
+end)
+
+step("other tanks: found by stance and shared with the group", function()
+  local T = W.threat
+  local s = T:Settings()
+  local real = {
+    raid = STUB.GetNumRaidMembers, name = STUB.UnitName, buff = STUB.UnitBuff,
+    send = STUB.SendAddonMessage, members = W.capture.groupMembers,
+  }
+  -- A raid of three: Tanky in Defensive Stance, Bear in Dire Bear Form
+  -- (seen by icon alone, as without SuperWoW), Healy in neither.
+  local roster = { raid1 = "Tanky", raid2 = "Healy", raid3 = "Bear" }
+  local buffs = {
+    Tanky = { { "Interface\\Icons\\Ability_Warrior_DefensiveStance", 71 } },
+    Healy = { { "Interface\\Icons\\Spell_Holy_PowerWordFortitude", 10938 } },
+    Bear = { { "Interface\\Icons\\Ability_Racial_BearForm", nil } },
+  }
+  local sent = {}
+  STUB.GetNumRaidMembers = function() return 3 end
+  STUB.UnitName = function(u) return roster[u] or real.name(u) end
+  STUB.UnitBuff = function(u, i)
+    local b = buffs[roster[u] or ""]
+    b = b and b[i]
+    if b then return b[1], 1, b[2] end
+  end
+  STUB.SendAddonMessage = function(p, m, c)
+    if p == T.TANK_PREFIX then table.insert(sent, m .. "@" .. c) end
+  end
+  W.capture.groupMembers = { Tanky = true, Healy = true, Bear = true, Auditor = true }
+  s.coTanks, s.coTanksOff, s.coTankAuto, s.coTankShare = "", "", true, true
+  T.seenTank, T.peerRoles, T.detectedAt, T.lastChannel, T.sentRole = {}, {}, nil, nil, nil
+
+  local ok, err = pcall(function()
+    if not T:IsCoTank("Tanky") then error("Defensive Stance was not found") end
+    if not T:IsCoTank("Bear") then error("Dire Bear Form by icon was not found") end
+    if T:IsCoTank("Healy") then error("a healer was taken for a tank") end
+
+    -- Unmarking a found tank by hand sticks, and is sent to the raid.
+    T:ToggleCoTank("Tanky")
+    T.detectedAt = nil
+    if T:IsCoTank("Tanky") then error("unmarking a found tank did not stick") end
+    if sent[table.getn(sent)] ~= "K:Tanky:0@RAID" then
+      error("the unmark went out as " .. tostring(sent[table.getn(sent)]))
+    end
+    T:ToggleCoTank("Tanky")
+    if not T:IsCoTank("Tanky") or s.coTanksOff ~= "" then error("marking them again failed") end
+
+    -- Someone else marks the healer: applied here, not echoed back.
+    local before = table.getn(sent)
+    T:OnTankMessage("K:healy:1", "Tanky")
+    if not T:IsCoTank("Healy") then error("a mark from the raid was not applied") end
+    if table.getn(sent) ~= before then error("a received mark was sent back out") end
+    -- From outside the group: ignored.
+    T:OnTankMessage("K:Bear:0", "Stranger")
+    if not T:IsCoTank("Bear") then error("a mark from outside the group was applied") end
+    -- Their unmark of a found tank sticks here too.
+    T:OnTankMessage("K:Bear:0", "Healy")
+    T.detectedAt = nil
+    if T:IsCoTank("Bear") then error("an unmark from the raid did not stick") end
+
+    -- A list only adds, and never over a hand unmark.
+    s.coTanks, s.coTanksOff = "", "Bear"
+    T:OnTankMessage("C:Healy,Bear", "Tanky")
+    if not T:IsCoTank("Healy") then error("a shared list did not add a name") end
+    if T:IsCoTank("Bear") then error("a shared list overrode a hand unmark") end
+
+    -- Their Wrekkit says they tank, wherever they are.
+    s.coTanks, s.coTanksOff = "", ""
+    buffs.Healy = {}
+    T:OnTankMessage("R:1", "Healy")
+    if not T:IsCoTank("Healy") then error("a peer's role report was ignored") end
+    T:OnTankMessage("R:0", "Healy")
+    if T:IsCoTank("Healy") then error("a peer's 'not tanking' was ignored") end
+
+    -- Joining asks the raid once, then says our role once.
+    sent = {}
+    T:TankWatch()
+    T:TankWatch()
+    local q, r = 0, 0
+    for _, m in ipairs(sent) do
+      if m == "Q@RAID" then q = q + 1 end
+      if string.sub(m, 1, 2) == "R:" then r = r + 1 end
+    end
+    if q ~= 1 or r ~= 1 then error("joining sent " .. table.concat(sent, " ")) end
+
+    -- The tank button: the warriors, druids and paladins, checked when
+    -- they count as tanks, and a click toggles one.
+    local realRoster, realMenu = STUB.GetRaidRosterInfo, W.ui.Menu
+    local classes = { raid1 = "WARRIOR", raid2 = "PRIEST", raid3 = "DRUID" }
+    STUB.GetRaidRosterInfo = function(i)
+      local u = "raid" .. i
+      return roster[u], 0, 1, 60, classes[u], classes[u]
+    end
+    local shown, pick
+    W.ui.Menu = function(frame, anchor, items, cb)
+      shown, pick = items, cb
+      return realMenu(frame, anchor, items, cb)
+    end
+    local mok, merr = pcall(function()
+      W.ui.threat:Create()
+      if not W.ui.threat.tankBtn then error("the threat window has no tank button") end
+      W.ui.threat.tankBtn:GetScript("OnClick")()
+      local rows = {}
+      for _, it in ipairs(shown or {}) do
+        if it.value and string.sub(it.value, 1, 2) == "t:" then rows[string.sub(it.value, 3)] = it.checked end
+      end
+      if rows.Tanky == nil or rows.Bear == nil then error("the tank menu left out a warrior or druid") end
+      if rows.Healy ~= nil then error("the tank menu listed a priest") end
+      if not rows.Tanky then error("a found tank is not checked in the menu") end
+      pick("t:Bear")
+      if T:IsCoTank("Bear") then error("unticking Bear in the menu did not unmark them") end
+      pick("t:Bear")
+      if not T:IsCoTank("Bear") then error("ticking Bear in the menu did not mark them") end
+    end)
+    STUB.GetRaidRosterInfo, W.ui.Menu = realRoster, realMenu
+    W.ui.CloseMenu()
+    if not mok then error(merr) end
+
+    -- The group disbands: once it has stayed gone, the marks go with it.
+    s.coTanks, s.coTanksOff = "Healy", "Tanky"
+    STUB.GetNumRaidMembers = function() return 0 end
+    T.lastChannel, T.goneAt = "RAID", nil
+    T:TankWatch()
+    if s.coTanks ~= "Healy" then error("marks were cleared on the first empty roster") end
+    T.goneAt = T.goneAt - 5
+    T:TankWatch()
+    if s.coTanks ~= "" or s.coTanksOff ~= "" then error("leaving the group kept the marks") end
+    STUB.GetNumRaidMembers = function() return 3 end
+    T.lastChannel = nil
+
+    -- Detection off: only marks count.
+    s.coTankAuto = false
+    if T:IsCoTank("Tanky") then error("detection still marks with it switched off") end
+    -- Sharing off: nothing goes out and nothing is taken in.
+    s.coTankShare = false
+    sent = {}
+    T:ToggleCoTank("Healy")
+    T:OnTankMessage("K:Tanky:1", "Healy")
+    if table.getn(sent) ~= 0 then error("a mark went out with sharing off") end
+    if T:IsCoTank("Tanky") then error("a mark came in with sharing off") end
+
+    SlashCmdList["WREKKIT"]("threat tanks")
+  end)
+
+  STUB.GetNumRaidMembers, STUB.UnitName, STUB.UnitBuff = real.raid, real.name, real.buff
+  STUB.SendAddonMessage, W.capture.groupMembers = real.send, real.members
+  s.coTanks, s.coTanksOff, s.coTankAuto, s.coTankShare = "", "", true, true
+  T.seenTank, T.peerRoles, T.detectedAt, T.lastChannel, T.sentRole = {}, {}, nil, nil, nil
   if not ok then error(err) end
 end)
 
