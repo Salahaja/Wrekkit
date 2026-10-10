@@ -144,6 +144,7 @@ local function rowTooltip(frame, item)
       LABEL[1], LABEL[2], LABEL[3], 1, 1, 1)
     GameTooltip:AddLine("Shown as the way to pulling, assuming melee", DIM[1], DIM[2], DIM[3])
     GameTooltip:AddLine("range (110%): the earlier of the two lines.", DIM[1], DIM[2], DIM[3])
+    GameTooltip:AddLine("Click: whisper " .. m.name .. " their threat", DIM[1], DIM[2], DIM[3])
     GameTooltip:Show()
     return
   end
@@ -160,6 +161,9 @@ local function rowTooltip(frame, item)
     GameTooltip:AddDoubleLine("To pulling aggro", T.PctText(r.pull), LABEL[1], LABEL[2], LABEL[3], 1, 1, 1)
     GameTooltip:AddLine(r.melee and "In melee range: pulls at 110%." or
       "At range: pulls at 130%.", DIM[1], DIM[2], DIM[3])
+  end
+  if not r.isMe and not r.tank then
+    GameTooltip:AddLine("Click: whisper them their threat", DIM[1], DIM[2], DIM[3])
   end
   if not r.isMe then
     GameTooltip:AddLine(T:IsCoTank(r.name) and "Right-click: no longer a tank" or
@@ -207,6 +211,12 @@ function TW.Paint(row, item, index)
       math.floor(cc[2] * 255), math.floor(cc[3] * 255), m.name)
     local mobName = item.isTarget and ("|cffe0a22c>|r " .. m.creature) or m.creature
     row:SetData(nil, mobName, who, T.PctText(m.pull), item._frac, T:TankColor(m.pull), 40)
+    -- Click: whisper whoever is closest to pulling this mob.
+    local runner, pull, creature = m.name, m.pull, m.creature
+    row:RegisterForClicks("LeftButtonUp")
+    row:SetScript("OnClick", function()
+      W.Guard("threat whisper", function() T:Nudge(runner, pull, creature) end)
+    end)
     return
   end
 
@@ -219,12 +229,20 @@ function TW.Paint(row, item, index)
   end
   if r.isMe then name = "|cffe0a22c>|r " .. name end
 
-  -- Right-click a player to mark or unmark them as one of the tanks.
+  -- Left-click a player to whisper them their threat; right-click to mark
+  -- or unmark them as one of the tanks.
   if not r.isMe and r.name then
     row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-    local who = r.name
+    local who, shown, tanking = r.name, item.shown, r.tank
     row:SetScript("OnClick", function()
-      if arg1 ~= "RightButton" then return end
+      if arg1 ~= "RightButton" then
+        if tanking then return end
+        W.Guard("threat whisper", function()
+          local live = T:Live()
+          T:Nudge(who, shown, live and live.name)
+        end)
+        return
+      end
       W.Guard("co-tank click", function()
         local on = T:ToggleCoTank(who)
         W.Print(who .. (on and " is marked as a tank: their threat and the mobs they take raise no warnings."
@@ -269,6 +287,14 @@ local function paintNote(row, item)
 end
 TW.PaintNote = paintNote
 
+local ROLE_LABEL = { auto = "auto (stance/form)", on = "always", off = "never" }
+local ROLE_TIP = {
+  on = "yes, whatever your stance",
+  auto = "when in Defensive Stance, Bear Form or with Righteous Fury",
+  off = "never",
+}
+local ROLE_TEXT = { on = "TANK", auto = "AUTO", off = "DPS" }
+
 ----------------------------------------------------------------------
 -- window
 ----------------------------------------------------------------------
@@ -299,9 +325,46 @@ function TW:Create()
   tankBtn:SetPoint("RIGHT", cogBtn, "LEFT", -1, 0)
   self.tankBtn = tankBtn
 
+  -- Am I the tank? TANK = yes whatever my stance, AUTO = by stance, form
+  -- or Righteous Fury, DPS = never. Left-click flips TANK <-> AUTO, right-
+  -- click picks DPS.
+  local roleBtn = CreateFrame("Button", nil, f.bar)
+  roleBtn:SetWidth(34)
+  roleBtn:SetHeight(14)
+  roleBtn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+  roleBtn.bg = UI.Fill(roleBtn, T.TANK_COLOR, 0)
+  roleBtn.label = UI.Text(roleBtn, 9, W.color.textFaint, "CENTER")
+  roleBtn.label:SetPoint("CENTER", roleBtn, "CENTER", 0, 0)
+  roleBtn:SetPoint("RIGHT", tankBtn, "LEFT", -2, 0)
+  roleBtn:SetScript("OnClick", function()
+    local button = arg1
+    W.Guard("tank role", function() TW:ToggleRole(button == "RightButton") end)
+  end)
+  roleBtn:SetScript("OnEnter", function()
+    if not GameTooltip then return end
+    GameTooltip:SetOwner(roleBtn, "ANCHOR_TOPLEFT")
+    GameTooltip:AddLine("I'm the tank: " .. (ROLE_TIP[T:Settings().tankMode] or "?"))
+    GameTooltip:AddLine("Left-click: tank / auto-detect.  Right-click: never.", 0.72, 0.75, 0.8)
+    GameTooltip:AddLine("Tanking, you get tank warnings and your group's", 0.72, 0.75, 0.8)
+    GameTooltip:AddLine("Wrekkit counts you as a tank.", 0.72, 0.75, 0.8)
+    GameTooltip:Show()
+  end)
+  roleBtn:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
+  -- A stance changes without any reply arriving, so the button keeps itself
+  -- current: twice a second is plenty for something you look at.
+  roleBtn.wait = 0
+  roleBtn:SetScript("OnUpdate", function()
+    roleBtn.wait = roleBtn.wait - (arg1 or 0)
+    if roleBtn.wait > 0 then return end
+    roleBtn.wait = 0.5
+    TW:PaintRole()
+  end)
+  self.roleBtn = roleBtn
+  self:PaintRole()
+
   local titleHit = CreateFrame("Button", nil, f.bar)
   titleHit:SetPoint("TOPLEFT", f.bar, "TOPLEFT", 0, 0)
-  titleHit:SetPoint("BOTTOMRIGHT", tankBtn, "BOTTOMLEFT", -2, 0)
+  titleHit:SetPoint("BOTTOMRIGHT", roleBtn, "BOTTOMLEFT", -2, 0)
   titleHit:RegisterForClicks("LeftButtonUp", "RightButtonUp")
   titleHit:SetScript("OnClick", function()
     W.Guard("threat menu", function() TW:Menu(titleHit) end)
@@ -413,7 +476,36 @@ function TW:SetOpacity(a)
   if UI.settings and UI.settings.Refresh then UI.settings:Refresh() end
 end
 
-local ROLE_LABEL = { auto = "auto (stance/form)", on = "always", off = "never" }
+
+--- The role button's look: its word for the setting, lit blue while you
+--- count as the tank -- solid when you said so, faint when it was detected.
+function TW:PaintRole()
+  local b = self.roleBtn
+  if not b then return end
+  local mode = T:Settings().tankMode
+  local tank = T:IsTank()
+  b.label:SetText(ROLE_TEXT[mode] or "AUTO")
+  local c = tank and T.TANK_COLOR or W.color.textFaint
+  b.label:SetTextColor(c[1], c[2], c[3], 1)
+  local alpha = (tank and mode == "on" and 0.35) or (tank and 0.15) or 0
+  b.bg:SetVertexColor(T.TANK_COLOR[1], T.TANK_COLOR[2], T.TANK_COLOR[3], alpha)
+end
+
+--- Left-click: TANK <-> AUTO. Right-click (`never`): DPS. Your group's
+--- Wrekkit hears the new role straight away rather than on the next check.
+function TW:ToggleRole(never)
+  local s = T:Settings()
+  if never then
+    s.tankMode = "off"
+  else
+    s.tankMode = (s.tankMode == "on") and "auto" or "on"
+  end
+  T.roleAt = nil
+  T:ShareRole()
+  W.Print("I'm the tank: " .. ROLE_LABEL[s.tankMode] .. ".")
+  self:PaintRole()
+  self:Refresh()
+end
 
 --[[ The tank button's menu: the group's warriors, druids and paladins, a
      check beside each one counted as a tank, and a click to change it.
@@ -496,7 +588,9 @@ function TW:Menu(anchor)
     elseif role then
       s.tankMode = role
       T.roleAt = nil
+      T:ShareRole()
       W.Print("tank alerts: " .. ROLE_LABEL[role] .. ".")
+      TW:PaintRole()
       TW:Refresh()
     elseif col then
       s[col] = not s[col]
@@ -538,7 +632,8 @@ function TW:WantShown()
   if T.demoUntil then return true end
   if s.show == "group" then return T:Channel() ~= nil end
   if s.show == "combat" then
-    return W.encounter:ReallyInCombat() or T:Live() ~= nil
+    -- The group's fight, not only yours: dead, you still see it.
+    return T:Fighting() or T:Live() ~= nil
   end
   return true
 end

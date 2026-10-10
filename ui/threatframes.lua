@@ -756,7 +756,8 @@ function TF:UpdateMeterSwitch()
   local meter = UI.meter
   if not meter.frame then return end
   local ms = meter:Settings()
-  local fighting = s.enabled and s.display == "meter" and W.encounter:ReallyInCombat()
+  -- The group's fight, not only yours: dead, the meter stays on threat.
+  local fighting = s.enabled and s.display == "meter" and T:Fighting()
   if fighting and T:Live() and ms.metric ~= "threat" and not self.switchedFrom then
     self.switchedFrom = ms.metric
     meter:SetMetric("threat")
@@ -782,7 +783,7 @@ local function tick()
   local now = GetTime()
   if now - (TF.lastTick or 0) < TICK then return end
   TF.lastTick = now
-  if UnitAffectingCombat and UnitAffectingCombat("player") then T:ScanGroup() end
+  if T:Fighting() then T:ScanGroup() end
   TF:UpdateAlarm()
   TF:UpdateIndicator()
   TF:UpdatePlates()

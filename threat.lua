@@ -792,7 +792,8 @@ end
        C:<a>,<b>,...    my marks, in answer to Q
        T:<mobs>         a tank's mobs and their runner-ups (see RelayTankMobs);
                         under relayThreat rather than coTankShare
-
+       N:<name>:<p>:<m> <name>: your threat is <p>% on <m>, sent by a click
+                        (see Nudge)
      Accepted only from someone in the group. A K applies as sent, an
      unmark included. A C only adds, and never over a name this player has
      unmarked by hand: a list cannot say what was taken off it. ]]
@@ -847,6 +848,11 @@ function T:OnTankMessage(msg, sender)
     self:OnRelay(string.sub(msg, 3), sender, GetTime())
     return
   end
+  -- Someone in the group clicked to warn us about our threat.
+  if kind == "N" then
+    self:OnNudge(msg, sender)
+    return
+  end
   if not s.coTankShare then return end
 
   if kind == "R" then
@@ -877,6 +883,61 @@ function T:OnTankMessage(msg, sender)
       T:ShareMarks()
     end, "tankAnswer")
   end
+end
+
+--[[ Tell someone they are close to pulling. Only ever from a click on
+     their row in the threat window -- nothing is ever sent on its own.
+
+     Someone running Wrekkit (their role has reached us, so we know) gets
+     it as an alert on their screen -- a raid warning, with the sound --
+     sent over WRKTANK as "N:<name>:<pct>:<mob>" with their name on it.
+     Anyone else gets a plain whisper. Once per person per NUDGE_GAP, so a
+     double-click is one warning. ]]
+local NUDGE_GAP = 5
+T.nudged = {}        -- name -> GetTime() of the last warning sent them
+
+function T:Nudge(name, pct, mobName)
+  if not name or name == "" or name == myName() then return false end
+  local now = GetTime()
+  local last = self.nudged[name]
+  if last and now >= last and now - last < NUDGE_GAP then
+    W.Print("you warned " .. name .. " a moment ago.")
+    return false
+  end
+  self.nudged[name] = now
+
+  local p = math.floor((tonumber(pct) or 0) + 0.5)
+  local mob = string.sub((string.gsub(mobName or "", "[:;,>]", "")), 1, 30)
+  local text = "your threat is " .. p .. "% on " .. (mob ~= "" and mob or "your target") ..
+    " - ease off!"
+  local channel = self:GroupChannel()
+  if self.peerRoles[name] and channel and SendAddonMessage then
+    -- Never "WHISPER" as an addon channel: this client crashes on it.
+    pcall(SendAddonMessage, self.TANK_PREFIX, "N:" .. name .. ":" .. p .. ":" .. mob, channel)
+  elseif SendChatMessage then
+    -- A chat whisper is fine; only the addon one crashes.
+    pcall(SendChatMessage, "[Wrekkit] " .. text, "WHISPER", nil, name)
+  end
+  W.Print("warned " .. name .. ": " .. text)
+  return true
+end
+
+--- A warning someone clicked to send us: up as a danger alert, raid
+--- warning and all.
+function T:OnNudge(msg, sender)
+  local _, _, to, p, mob = string.find(msg, "^N:([^:]+):(%d+):(.*)$")
+  if not to or to ~= myName() then return end
+  self:Alert(sender .. ": your threat is " .. p .. "% on " ..
+    (mob ~= "" and mob or "your target") .. " - ease off!", "danger")
+end
+
+--[[ Is a fight on? You, or anyone in the group, in combat. Not just you:
+     dead, or out of it before the raid is, you still want to see the
+     threat, and the fight is not over for anyone else. ]]
+function T:Fighting()
+  local E = W.encounter
+  if E and E.GroupInCombat then return E:GroupInCombat() and true or false end
+  return UnitAffectingCombat and UnitAffectingCombat("player") and true or false
 end
 
 --- Forget every tank: marks, unmarks, and what was found. They describe
@@ -1543,8 +1604,7 @@ function T:AnythingForPlates()
     return true
   end
   -- In a fight the plates are where loose mobs are found, data or not.
-  local s = self:Settings()
-  return s.watchMobs and UnitAffectingCombat and UnitAffectingCombat("player") and true or false
+  return self:Settings().watchMobs and self:Fighting()
 end
 
 ----------------------------------------------------------------------
@@ -2142,6 +2202,11 @@ local function tick()
   if now - (T.lastPrune or 0) >= 1 then
     T.lastPrune = now
     T:Prune()
+    -- You left combat while the group fought on; now they have stopped.
+    if T.endPending and not T:Fighting() then
+      T.endPending = nil
+      T:OnCombatEnd()
+    end
   end
   -- Readings age out even when nothing new arrives; redraw so a stale
   -- figure disappears instead of hanging on the frame.
@@ -2168,7 +2233,12 @@ function T:Start()
     elseif event == "PLAYER_TARGET_CHANGED" then
       W.Guard("threat target", function() T:OnTargetChanged() end)
     elseif event == "PLAYER_REGEN_ENABLED" then
-      W.Guard("threat combat end", function() T:OnCombatEnd() end)
+      -- YOU are out of combat -- dead, perhaps. The fight is over only
+      -- once the group is out too; until then keep everything, and the
+      -- tick ends it when they are.
+      W.Guard("threat combat end", function()
+        if T:Fighting() then T.endPending = true else T:OnCombatEnd() end
+      end)
     end
   end)
   f:SetScript("OnUpdate", function() W.Guard("threat poll", tick) end)
