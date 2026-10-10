@@ -2497,6 +2497,93 @@ step("the TANK button: say you are the tank, whatever your stance", function()
   if not ok then error(err) end
 end)
 
+step("click to warn someone; dead, the threat stays up while the raid fights", function()
+  local T, TW = W.threat, W.ui.threat
+  local s = T:Settings()
+  local real = { raid = STUB.GetNumRaidMembers, send = STUB.SendAddonMessage,
+                 chat = STUB.SendChatMessage, combat = STUB.UnitAffectingCombat,
+                 members = W.capture.groupMembers, alert = T.Alert }
+  local sent, whispers, alerts = {}, {}, {}
+  STUB.GetNumRaidMembers = function() return 3 end
+  STUB.SendAddonMessage = function(p, m, c) if p == T.TANK_PREFIX then table.insert(sent, m) end end
+  STUB.SendChatMessage = function(m, kind, lang, to) table.insert(whispers, kind .. ":" .. tostring(to) .. ":" .. m) end
+  W.capture.groupMembers = { Tanky = true, Healy = true, Auditor = true }
+  T.Alert = function(self, text, level) table.insert(alerts, text) end
+  T.nudged, T.peerRoles = {}, { Tanky = { tank = false, at = GetTime() } }
+
+  local ok, err = pcall(function()
+    -- Tanky runs Wrekkit: an alert on their screen, not a whisper.
+    T:Nudge("Tanky", 94.6, "Ragefang")
+    if sent[table.getn(sent)] ~= "N:Tanky:95:Ragefang" or table.getn(whispers) ~= 0 then
+      error("a Wrekkit user was warned as " .. tostring(sent[table.getn(sent)]) .. " / " .. table.concat(whispers, ","))
+    end
+    -- Healy does not: a whisper.
+    T:Nudge("Healy", 88, "Ragefang")
+    if table.getn(whispers) ~= 1 or not string.find(whispers[1], "^WHISPER:Healy:", 1) then
+      error("someone without Wrekkit got " .. table.concat(whispers, ","))
+    end
+    -- A double-click is one warning.
+    T:Nudge("Healy", 90, "Ragefang")
+    if table.getn(whispers) ~= 1 then error("a second click inside five seconds warned again") end
+    -- Never yourself.
+    if T:Nudge("Auditor", 99, "Ragefang") then error("you warned yourself") end
+
+    -- On the other end: addressed to us, an alert; to someone else, nothing.
+    T:OnTankMessage("N:Auditor:95:Ragefang", "Tanky")
+    T:OnTankMessage("N:Healy:95:Ragefang", "Tanky")
+    if table.getn(alerts) ~= 1 or not string.find(alerts[1], "Tanky: your threat is 95% on Ragefang", 1, true) then
+      error("received warnings: " .. table.concat(alerts, " / "))
+    end
+
+    -- A click on a player's row is what sends it.
+    T.nudged = {}
+    whispers = {}
+    TW:Create()
+    TW:Refresh()
+    local row = TW.list.rows[1]
+    TW.Paint(row, { row = { name = "Healy", class = "PRIEST", threat = 1, perc = 80, pull = 73 }, shown = 73 })
+    arg1 = "LeftButton"
+    row:GetScript("OnClick")()
+    arg1 = nil
+    if table.getn(whispers) ~= 1 or not string.find(whispers[1], "73%", 1, true) then
+      error("clicking Healy's row sent " .. table.concat(whispers, ","))
+    end
+
+    -- Dead: you leave combat, the raid fights on. Nothing is wiped and the
+    -- window stays; once the raid stops, the fight ends.
+    T.Alert = real.alert
+    s.display, s.show = "window", "combat"
+    STUB.UnitAffectingCombat = function(u) return u ~= "player" and u ~= "pet" end
+    NOW = NOW + 1
+    T.current = { key = "k", low = 1, at = GetTime(), rows = {}, name = "Ragefang" }
+  end)
+
+  local ok2, err2 = pcall(function()
+    if not ok then return end
+    event = "PLAYER_REGEN_ENABLED"
+    T.frame:GetScript("OnEvent")()
+    event = nil
+    if not T.current then error("dying wiped the threat while the raid fought on") end
+    if not T.endPending then error("the fight's end was not held for the raid") end
+    if not TW:WantShown() then error("the window hid when you died mid-fight") end
+    -- The raid stops.
+    STUB.UnitAffectingCombat = function() return false end
+    NOW = NOW + 2
+    T.nextPoll, T.lastPrune = nil, nil
+    T.frame:GetScript("OnUpdate")()
+    if T.current or T.endPending then error("the fight did not end once the raid had stopped") end
+  end)
+
+  event, arg1 = nil, nil
+  STUB.GetNumRaidMembers, STUB.SendAddonMessage = real.raid, real.send
+  STUB.SendChatMessage, STUB.UnitAffectingCombat = real.chat, real.combat
+  W.capture.groupMembers, T.Alert = real.members, real.alert
+  T.nudged, T.peerRoles, T.endPending, T.current = {}, {}, nil, nil
+  s.display, s.show = "window", s.show
+  if not ok then error(err) end
+  if not ok2 then error(err2) end
+end)
+
 step("raids saved to their own files: open, keep, delete from the report", function()
   local A = W.archive
   if not A:Active() then error("the file API stubs should make per-raid files active") end

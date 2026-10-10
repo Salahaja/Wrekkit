@@ -144,6 +144,7 @@ local function rowTooltip(frame, item)
       LABEL[1], LABEL[2], LABEL[3], 1, 1, 1)
     GameTooltip:AddLine("Shown as the way to pulling, assuming melee", DIM[1], DIM[2], DIM[3])
     GameTooltip:AddLine("range (110%): the earlier of the two lines.", DIM[1], DIM[2], DIM[3])
+    GameTooltip:AddLine("Click: whisper " .. m.name .. " their threat", DIM[1], DIM[2], DIM[3])
     GameTooltip:Show()
     return
   end
@@ -160,6 +161,9 @@ local function rowTooltip(frame, item)
     GameTooltip:AddDoubleLine("To pulling aggro", T.PctText(r.pull), LABEL[1], LABEL[2], LABEL[3], 1, 1, 1)
     GameTooltip:AddLine(r.melee and "In melee range: pulls at 110%." or
       "At range: pulls at 130%.", DIM[1], DIM[2], DIM[3])
+  end
+  if not r.isMe and not r.tank then
+    GameTooltip:AddLine("Click: whisper them their threat", DIM[1], DIM[2], DIM[3])
   end
   if not r.isMe then
     GameTooltip:AddLine(T:IsCoTank(r.name) and "Right-click: no longer a tank" or
@@ -207,6 +211,12 @@ function TW.Paint(row, item, index)
       math.floor(cc[2] * 255), math.floor(cc[3] * 255), m.name)
     local mobName = item.isTarget and ("|cffe0a22c>|r " .. m.creature) or m.creature
     row:SetData(nil, mobName, who, T.PctText(m.pull), item._frac, T:TankColor(m.pull), 40)
+    -- Click: whisper whoever is closest to pulling this mob.
+    local runner, pull, creature = m.name, m.pull, m.creature
+    row:RegisterForClicks("LeftButtonUp")
+    row:SetScript("OnClick", function()
+      W.Guard("threat whisper", function() T:Nudge(runner, pull, creature) end)
+    end)
     return
   end
 
@@ -219,12 +229,20 @@ function TW.Paint(row, item, index)
   end
   if r.isMe then name = "|cffe0a22c>|r " .. name end
 
-  -- Right-click a player to mark or unmark them as one of the tanks.
+  -- Left-click a player to whisper them their threat; right-click to mark
+  -- or unmark them as one of the tanks.
   if not r.isMe and r.name then
     row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-    local who = r.name
+    local who, shown, tanking = r.name, item.shown, r.tank
     row:SetScript("OnClick", function()
-      if arg1 ~= "RightButton" then return end
+      if arg1 ~= "RightButton" then
+        if tanking then return end
+        W.Guard("threat whisper", function()
+          local live = T:Live()
+          T:Nudge(who, shown, live and live.name)
+        end)
+        return
+      end
       W.Guard("co-tank click", function()
         local on = T:ToggleCoTank(who)
         W.Print(who .. (on and " is marked as a tank: their threat and the mobs they take raise no warnings."
@@ -614,7 +632,8 @@ function TW:WantShown()
   if T.demoUntil then return true end
   if s.show == "group" then return T:Channel() ~= nil end
   if s.show == "combat" then
-    return W.encounter:ReallyInCombat() or T:Live() ~= nil
+    -- The group's fight, not only yours: dead, you still see it.
+    return T:Fighting() or T:Live() ~= nil
   end
   return true
 end
