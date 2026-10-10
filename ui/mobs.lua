@@ -50,6 +50,24 @@ local nextOrder = 0
 ----------------------------------------------------------------------
 
 --- Is this a living hostile in the fight, as far as the client knows?
+--- A unit's raid marker, 1 (star) to 8 (skull), or nil. With SuperWoW a
+--- guid is a unit, so any mob can be asked, not only your target.
+local function markOf(unit)
+  if not unit or not GetRaidTargetIndex then return nil end
+  local ok, i = pcall(GetRaidTargetIndex, unit)
+  i = ok and tonumber(i) or nil
+  if i and i >= 1 and i <= 8 then return i end
+  return nil
+end
+
+--- Show marker `i` on a texture: the stock icon sheet is four by four.
+local MARK_SHEET = "Interface\\TargetingFrame\\UI-RaidTargetingIcons"
+local function showMark(tex, i)
+  local col, row = math.mod(i - 1, 4), math.floor((i - 1) / 4)
+  tex:SetTexCoord(col * 0.25, (col + 1) * 0.25, row * 0.25, (row + 1) * 0.25)
+  tex:Show()
+end
+
 local function fighting(guid)
   if not UnitExists or not UnitExists(guid) then return false end
   if UnitIsDead and UnitIsDead(guid) then return false end
@@ -73,6 +91,7 @@ local function consider(guid, now)
   end
   m.seen = now
   m.name = UnitName(guid) or m.name or "?"
+  m.mark = markOf(guid)
   m.hp = UnitHealth(guid) or 0
   m.max = UnitHealthMax(guid) or 0
 
@@ -136,6 +155,8 @@ function MF:Collect()
         self.list[key] = m
       end
       m.key, m.unit, m.name, m.hp, m.max = key, g.unit, g.name, g.hp, g.max
+      -- Asked through the token the scan found it by, if it still names it.
+      m.mark = (g.unit and UnitExists(g.unit) and UnitName(g.unit) == g.name) and markOf(g.unit) or nil
       m.who, m.whoClass, m.onMe, m.isTarget = g.who, g.whoClass, g.onMe, g.isTarget
       m.state = g.state
       m.pull, m.share = nil, nil
@@ -220,9 +241,31 @@ local function makeRow(parent, i)
     end
   end
 
+  -- The mob's raid marker, at the left; the name moves over for it.
+  b.mark = b:CreateTexture(nil, "OVERLAY")
+  b.mark:SetTexture(MARK_SHEET)
+  b.mark:SetWidth(ROW_H - 4)
+  b.mark:SetHeight(ROW_H - 4)
+  b.mark:SetPoint("LEFT", b, "LEFT", 4, 0)
+  b.mark:Hide()
+
   b.name = UI.Text(b, 10, W.color.text)
   b.name:SetPoint("LEFT", b, "LEFT", 6, 0)
   b.name:SetWidth(104)
+  b.SetMark = function(self, i)
+    if self.markShown == i then return end
+    self.markShown = i
+    self.name:ClearAllPoints()
+    if i then
+      showMark(self.mark, i)
+      self.name:SetPoint("LEFT", self.mark, "RIGHT", 3, 0)
+      self.name:SetWidth(104 - (ROW_H - 4) - 1)
+    else
+      self.mark:Hide()
+      self.name:SetPoint("LEFT", self, "LEFT", 6, 0)
+      self.name:SetWidth(104)
+    end
+  end
   b.who = UI.Text(b, 10, W.color.text, "RIGHT")
   b.who:SetPoint("RIGHT", b, "RIGHT", -38, 0)
   b.who:SetWidth(66)
@@ -396,6 +439,7 @@ end
 local function paintMob(b, m, tank, s, blink, targetGuid)
   b.mob, b.summary = m, nil
   b:SetSelected(m.selected or m.isTarget or (targetGuid ~= nil and m.guid == targetGuid))
+  b:SetMark(m.mark)
   b.name:SetText(m.name or "?")
   b.hp:Show()
   local frac = (m.max and m.max > 0) and (m.hp / m.max) or 1
@@ -430,6 +474,7 @@ end
 local function paintSummary(b, fine, elsewhere, hidden, tank, total)
   b.mob, b.summary, b.trouble = nil, true, false
   b:SetSelected(false)
+  b:SetMark(nil)
   b.hp:Hide()
   b.alarm:SetVertexColor(0, 0, 0, 0)
   local text

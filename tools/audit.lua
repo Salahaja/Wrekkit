@@ -85,7 +85,7 @@ declare(LUA, [[
 -- UnitBuff is stock 1.12; SuperWoW extends it with the spell id, which is
 -- what Wrekkit reads (C:ScanBuffs) to find buffs older than a /reload.
 declare(WOW, [[
-  UnitBuff
+  UnitBuff GetRaidTargetIndex
   CreateFrame UIParent GetTime GetLocale GetBuildInfo GetRealZoneText
   GetRealmName IsInInstance GetNumRaidMembers GetNumPartyMembers
   GetRaidRosterInfo UnitName UnitClass UnitLevel UnitHealth UnitHealthMax UnitClassification
@@ -1206,6 +1206,34 @@ step("threat meter", function()
   end
   if onPriest ~= 1 or onMe ~= 2 then
     error("mob frames show " .. onMe .. " on you and " .. onPriest .. " on the priest")
+  end
+  -- Raid markers: the skull on Drake 1 shows on its row, nothing on the rest.
+  local realMark = STUB.GetRaidTargetIndex
+  STUB.GetRaidTargetIndex = function(u) if u == drakes[1] then return 8 end end
+  NOW = NOW + 0.1
+  UI.mobs.lastUpdate = nil
+  UI.mobs:Update()
+  local skulls, plain = 0, 0
+  for _, row in ipairs(UI.mobs.rows) do
+    if row:IsShown() and row.mob then
+      if row.mob.guid == drakes[1] then
+        if row.markShown ~= 8 or not row.mark:IsShown() then error("Drake 1's skull is not on its row") end
+        skulls = skulls + 1
+      elseif row.mark:IsShown() then
+        error("an unmarked mob shows a marker: " .. tostring(row.mob.name))
+      else
+        plain = plain + 1
+      end
+    end
+  end
+  if skulls ~= 1 or plain < 2 then error("markers on " .. skulls .. " rows, plain " .. plain) end
+  -- Taken off again, it goes.
+  STUB.GetRaidTargetIndex = realMark
+  NOW = NOW + 0.1
+  UI.mobs.lastUpdate = nil
+  UI.mobs:Update()
+  for _, row in ipairs(UI.mobs.rows) do
+    if row:IsShown() and row.mark:IsShown() then error("a marker stayed after it was cleared") end
   end
   -- Your target is marked, and every row with a reading shows its %.
   local realExistsMF = STUB.UnitExists
