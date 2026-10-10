@@ -26,6 +26,7 @@ R.tabs = {
   { key = "taken", label = "Taken", metric = "taken" },
   { key = "enemies", label = "Enemies", metric = "enemy" },
   { key = "dispels", label = "Dispels", metric = "dispels" },
+  { key = "consumes", label = "Consumes", metric = "consumeCost" },
   { key = "deaths", label = "Deaths" },
 }
 

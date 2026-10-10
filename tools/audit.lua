@@ -87,7 +87,7 @@ declare(LUA, [[
 declare(WOW, [[
   UnitBuff GetRaidTargetIndex GetTalentTabInfo UnitIsConnected
   CreateFrame UIParent GetTime GetLocale GetBuildInfo GetRealZoneText
-  GetRealmName IsInInstance GetNumRaidMembers GetNumPartyMembers
+  GetRealmName IsAddOnLoaded IsInInstance GetNumRaidMembers GetNumPartyMembers
   GetRaidRosterInfo UnitName UnitClass UnitLevel UnitHealth UnitHealthMax UnitClassification
   UnitExists UnitIsPlayer UnitIsUnit UnitCanCooperate UnitAffectingCombat UnitIsVisible
   SetCVar GetCVar SendChatMessage SendAddonMessage GetAddOnMetadata

@@ -719,6 +719,30 @@ function R:Abilities(row, metricKey, ctx)
     a._avg = a.hits > 0 and (a.amount / a.hits) or 0
     a._critPct = a.hits > 0 and (a.crits / a.hits * 100) or 0
   end
+
+  --[[ Priced (Consumes (gold)): each item by what it cost, "3 x 1g 20s"
+       beside it, the dearest first. The bar is the cost too, so one flask
+       outweighs a stack of cheap food the way it does in the bank. ]]
+  if metric.priced and W.prices then
+    local costTotal, costTop = 0, 0
+    for _, a in ipairs(out) do
+      local each = W.prices:Value(a.id)
+      a._cost = each and (each * a.amount) or 0
+      a._value = each and W.Money(a._cost) or "no price"
+      a._note = a.amount .. " x " .. (each and W.Money(each) or "?")
+      costTotal = costTotal + a._cost
+      if a._cost > costTop then costTop = a._cost end
+    end
+    table.sort(out, function(x, y)
+      if x._cost ~= y._cost then return x._cost > y._cost end
+      return x.amount > y.amount
+    end)
+    for _, a in ipairs(out) do
+      a._frac = costTop > 0 and (a._cost / costTop) or 0
+      a._pct = costTotal > 0 and (a._cost / costTotal * 100) or 0
+    end
+    return out, costTotal
+  end
   return out, total
 end
 

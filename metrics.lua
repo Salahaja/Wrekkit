@@ -155,6 +155,29 @@ M.list = {
     integer = true,
   },
   {
+    --[[ The same consumables, priced at the auction house: aux's value for
+         each item, shared scans from other accounts included (W.prices).
+         Live like everything else -- it is the Consumables count times a
+         price, so it moves the moment someone drinks something. Items aux
+         has never seen count for nothing and are flagged rather than
+         guessed at. ]]
+    key = "consumeCost", label = "Consumes (gold)", short = "GOLD", side = "player",
+    value = function(r)
+      local cost = W.prices:Cost(r.consumeItem)
+      return cost
+    end,
+    sub = function(r)
+      local cost, unpriced = W.prices:Cost(r.consumeItem)
+      local n = r.consumes or 0
+      if n == 0 then return "-" end
+      return W.Money(cost) .. (unpriced > 0 and (" |cff9d9d9d+" .. unpriced .. "?|r") or "")
+    end,
+    format = function(v) return W.Money(v) end,
+    color = W.color.accent,
+    detail = "consumeItem",
+    priced = true,
+  },
+  {
     --[[ Uptime of ONE buff, across everybody.
 
          The question is always about a particular buff -- was the flask up,

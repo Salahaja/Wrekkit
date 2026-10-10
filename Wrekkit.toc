@@ -18,6 +18,7 @@ sync.lua
 announce.lua
 threat.lua
 talents.lua
+prices.lua
 
 ui\widgets.lua
 ui\chart.lua

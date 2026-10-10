@@ -813,7 +813,7 @@ local METRIC_GROUPS = {
   { "Damage", { "damage", "dps", "crit" } },
   { "Healing", { "healing", "hps", "healingTotal", "overheal", "healCrit" } },
   { "Survival", { "taken", "absorbed", "deaths" } },
-  { "Utility", { "dispels", "interrupts", "consumes", "uptime" } },
+  { "Utility", { "dispels", "interrupts", "consumes", "consumeCost", "uptime" } },
   { "Enemies", { "enemy", "enemyTaken" } },
 }
 M.METRIC_GROUPS = METRIC_GROUPS

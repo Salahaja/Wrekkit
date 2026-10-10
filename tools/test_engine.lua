@@ -239,6 +239,7 @@ dofile("sync.lua")
 dofile("announce.lua")
 dofile("threat.lua")
 dofile("talents.lua")
+dofile("prices.lua")
 
 WrekkitDB = nil
 Wrekkit.InitDB()
@@ -542,6 +543,60 @@ for _, a in ipairs(consDetail) do
 end
 check("two distinct items", table.getn(consDetail), 2)
 check("the repeated one is counted twice", consDetail[1].amount, 2)
+
+-- Priced at the auction house, through aux (and so through the scans other
+-- accounts share into it). A function of its own: the main chunk is at
+-- Lua's 200 locals.
+;(function()
+  local P = Wrekkit.prices
+  check("no aux, no price", P:Value(13446), nil)
+  check("money: gold and silver", Wrekkit.Money(123456), "12g 34s")
+  check("money: silver and copper", Wrekkit.Money(4510), "45s 10c")
+  check("money: copper", Wrekkit.Money(8), "8c")
+  check("money: nothing", Wrekkit.Money(0), "-")
+
+  -- aux, as its module loader serves it: value by "id:suffix".
+  local asked = {}
+  local history = {
+    value = function(key) table.insert(asked, key) if key == "13446:0" then return 12000 end end,
+    market_value = function(key) if key == "20520:0" then return 300 end end,
+  }
+  local realLoaded, realRequire = IsAddOnLoaded, require
+  IsAddOnLoaded = function(name) return name == "aux-addon" end
+  require = function(name) if name == "aux.core.history" then return history end end
+  P.aux, P.cache = nil, {}
+  check("aux's value for a scanned item", P:Value(13446), 12000)
+  check("  asked by aux's own key", asked[1], "13446:0")
+  check("today's lowest buyout when there is no history yet", P:Value(20520), 300)
+  check("nothing for an item aux never saw", P:Value(99999), nil)
+  history.value = function() return 99 end
+  check("  and a minute's cache, not a lookup per repaint", P:Value(13446), 12000)
+  advance(61)
+  check("  then asked again", P:Value(13446), 99)
+  history.value = function(key) if key == "13446:0" then return 12000 end end
+  P.cache = {}
+
+  local cost = Wrekkit.metrics.Get("consumeCost")
+  check("Consumes (gold): two potions and the cheap item", cost.value(consBy["Fuff"]), 2 * 12000 + 300)
+  check("  shown as money", cost.sub(consBy["Fuff"]), "2g 43s")
+  local priced = Wrekkit.report:Abilities(consBy["Fuff"], "consumeCost")
+  check("  the dearest item first", priced[1].id, 13446)
+  check("  its cost", priced[1]._value, "2g 40s")
+  check("  how many, at what", priced[1]._note, "2 x 1g 20s")
+  -- Something aux has never priced counts for nothing, and says so.
+  P.cache = {}
+  history.market_value = function() return nil end
+  check("an unpriced item is flagged in the row", cost.sub(consBy["Fuff"]), "2g 40s |cff9d9d9d+1?|r")
+  local unpriced = Wrekkit.report:Abilities(consBy["Fuff"], "consumeCost")
+  check("  and in the detail", unpriced[2]._value, "no price")
+  -- Saved pulls keep their items as a list: priced the same.
+  P.cache = {}
+  check("a saved pull's item list is priced too",
+    P:Cost({ { id = 13446, name = "Potion", amount = 3 } }), 36000)
+
+  IsAddOnLoaded, require = realLoaded, realRequire
+  P.aux, P.cache = nil, {}
+end)()
 
 ----------------------------------------------------------------------
 -- combat time cannot run away
