@@ -85,7 +85,7 @@ declare(LUA, [[
 -- UnitBuff is stock 1.12; SuperWoW extends it with the spell id, which is
 -- what Wrekkit reads (C:ScanBuffs) to find buffs older than a /reload.
 declare(WOW, [[
-  UnitBuff GetRaidTargetIndex
+  UnitBuff GetRaidTargetIndex GetTalentTabInfo UnitIsConnected
   CreateFrame UIParent GetTime GetLocale GetBuildInfo GetRealZoneText
   GetRealmName IsInInstance GetNumRaidMembers GetNumPartyMembers
   GetRaidRosterInfo UnitName UnitClass UnitLevel UnitHealth UnitHealthMax UnitClassification
@@ -119,7 +119,7 @@ declare(NAMPOWER, [[
 -- Other addons Wrekkit cooperates with when they are there, and never
 -- needs: their nameplates get threat drawn on them.
 declare(OPTIONAL, [[
-  ShaguPlates pfUI
+  ShaguPlates pfUI ChronicleLog
 ]])
 
 -- Globals the addon defines itself. Reading one before it is written would

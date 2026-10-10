@@ -267,7 +267,7 @@ function TW.Paint(row, item, index)
   local color = W.ClassColor(r.class)
   if r.isMe and not r.tank then color = T:Color(item.shown) end
 
-  row:SetClass(r.class)
+  row:SetClass(r.class, UI.SpecIconFor(r.name, r.class))
   row:SetData(item._rank, name, value, r.tank and "tank" or T.PctText(item.shown),
     item._frac, color, 40)
 end

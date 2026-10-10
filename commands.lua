@@ -43,6 +43,7 @@ local HELP = {
   { "/wrek compact", "toggle the small meter layout" },
   { "/wrek status", "diagnose why nothing is being recorded" },
   { "/wrek layout", "the meter's sizes, to report a drawing problem" },
+  { "/wrek specs", "your group's talent specs, and where each came from" },
   { "/wrek who", "list every actor and how it was classified" },
   { "/wrek mode <metric>", "set the meter metric (dps, healing, taken, ...)" },
   { "/wrek segment <what>", "current, last, back2..back5 or overall" },
@@ -117,6 +118,9 @@ local function handler(msg)
 
   elseif cmd == "layout" then
     W.ui.meter:DescribeLayout()
+
+  elseif cmd == "specs" or cmd == "spec" then
+    W.talents:Report()
 
   elseif cmd == "who" then
     W.Who()

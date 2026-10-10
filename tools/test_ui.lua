@@ -378,6 +378,7 @@ dofile("archive.lua")
 dofile("sync.lua")
 dofile("announce.lua")
 dofile("threat.lua")
+dofile("talents.lua")
 dofile("ui/widgets.lua")
 dofile("ui/chart.lua")
 dofile("ui/meter.lua")
@@ -695,6 +696,28 @@ step("font: changes text at once, leaves the numbers, offers pfUI's only with pf
   if offered == 0 then error("pfUI's fonts were not offered with pfUI") end
   if UI.FontPath("pfui") ~= pfUI.font_default then error("pfUI's own font did not resolve") end
   pfUI = hadPf
+end)
+
+step("spec icons: a known spec shows its tree, else the class", function()
+  local row = UI.Row(UIParent, 18)
+  row:SetWidth(240)
+  Wrekkit.db.classIcons = true
+  Wrekkit.db.specIcons = nil   -- on unless switched off
+  row:SetClass("PALADIN", "Interface\\Icons\\Spell_Holy_AuraOfLight")
+  row:SetData(1, "Pempuk", "1.0k", "", 1, { 1, 1, 1 }, 58)
+  if row.icon:GetTexture() ~= "Interface\\Icons\\Spell_Holy_AuraOfLight" then
+    error("a known spec did not show its tree: " .. tostring(row.icon:GetTexture()))
+  end
+  -- Unknown spec: the class icon.
+  row:SetClass("PALADIN", nil)
+  row:SetData(1, "Moras", "1.0k", "", 1, { 1, 1, 1 }, 58)
+  if row.icon:GetTexture() == "Interface\\Icons\\Spell_Holy_AuraOfLight" then error("an unknown spec kept the last spec icon") end
+  -- Spec icons off: the class even where the spec is known.
+  Wrekkit.db.specIcons = false
+  row:SetClass("PALADIN", "Interface\\Icons\\Spell_Holy_AuraOfLight")
+  row:SetData(1, "Pempuk", "1.0k", "", 1, { 1, 1, 1 }, 58)
+  if row.icon:GetTexture() == "Interface\\Icons\\Spell_Holy_AuraOfLight" then error("spec icons stayed on when switched off") end
+  Wrekkit.db.specIcons, Wrekkit.db.classIcons = nil, false
 end)
 
 step("class icons: on player rows when asked for, never stale on a reused row", function()

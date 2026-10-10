@@ -20,6 +20,7 @@ f:SetScript("OnEvent", function()
     W.capture:Start()
     W.sync:Start()
     W.threat:Start()
+    W.talents:Start()
     W.ui.threatFrames:Start()
     W.minimap:Update()
 

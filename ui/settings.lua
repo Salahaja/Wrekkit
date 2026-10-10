@@ -313,7 +313,19 @@ function S:Create()
       if UI.report and UI.report.frame and UI.report.frame:IsShown() then UI.report:Refresh() end
     end,
     { "Each player's class icon beside their name,", "in the meter, the report and the threat",
-      "window. (Specs are not something 1.12 can", "tell an addon.)" })
+      "window." })
+
+  check(self, "Spec icons where known",
+    function() return W.db.specIcons ~= false end,
+    function(v)
+      W.db.specIcons = v and true or false
+      meter:Refresh()
+      if UI.threat and UI.threat.Refresh then UI.threat:Refresh() end
+      if UI.report and UI.report.frame and UI.report.frame:IsShown() then UI.report:Refresh() end
+    end,
+    { "With class icons on: a player's spec -- Holy,", "Protection, Retribution -- instead of their",
+      "class, where it is known. Specs come from the", "server's talent inspect (ChronicleCompanion's,",
+      "or Wrekkit's own), or a guess from a deep", "talent they cast. Hover a row to see which." })
 
   check(self, "Fit meter to its rows",
     function() return meter:Settings().fitRows == true end,

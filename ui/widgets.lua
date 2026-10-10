@@ -919,6 +919,17 @@ function UI.ClassIcons()
   return W.db and W.db.classIcons == true
 end
 
+--- With class icons on, show a player's spec instead where it is known?
+--- On unless switched off.
+function UI.SpecIcons()
+  return W.db and W.db.specIcons ~= false
+end
+
+--- The spec icon for a player, or nil: for SetClass's second argument.
+function UI.SpecIconFor(name, class)
+  return W.talents and W.talents:Icon(name, class) or nil
+end
+
 function UI.Row(parent, height)
   local r = CreateFrame("Button", nil, parent)
   r:SetHeight(height or 18)
@@ -947,7 +958,11 @@ function UI.Row(parent, height)
 
   --- Name the class for the next SetData only. Rows are reused, so a row
   --- whose painter does not call this shows no icon, never a stale one.
-  r.SetClass = function(self, class) self._nextClass = class end
+  --- `specIcon`, when known, is shown in place of the class icon (see
+  --- UI.SpecIcons). Both for the next SetData only.
+  r.SetClass = function(self, class, specIcon)
+    self._nextClass, self._nextSpec = class, specIcon
+  end
 
   r.sub = UI.Text(r, 10, W.color.textDim, "RIGHT")
   r.sub:SetPoint("RIGHT", r, "RIGHT", -6, 0)
@@ -975,15 +990,28 @@ function UI.Row(parent, height)
   r.SetData = function(self, rank, name, value, sub, frac, color, subWidth)
     -- The class icon: shown, sized to the row, and the name moved over for
     -- it -- or gone, and the name back at the gutter.
+    -- A spec's tree icon where the spec is known and spec icons are on;
+    -- else the class's.
     local coords = UI.ClassIcons() and CLASS_COORDS[self._nextClass or ""]
-    self._nextClass = nil
+    local spec = coords and UI.SpecIcons() and self._nextSpec
+    self._nextClass, self._nextSpec = nil, nil
     local iconW = 0
     if coords then
       local size = (self:GetHeight() or 18) - 4
       if size < 8 then size = 8 end
       self.icon:SetWidth(size)
       self.icon:SetHeight(size)
-      self.icon:SetTexCoord(coords[1], coords[2], coords[3], coords[4])
+      local tex = spec or CLASS_SHEET
+      if self._iconTex ~= tex then
+        self._iconTex = tex
+        self.icon:SetTexture(tex)
+      end
+      if spec then
+        -- An ability icon, trimmed of its border like the stock buttons.
+        self.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+      else
+        self.icon:SetTexCoord(coords[1], coords[2], coords[3], coords[4])
+      end
       self.icon:Show()
       iconW = size + 3
     else

@@ -238,6 +238,7 @@ dofile("archive.lua")
 dofile("sync.lua")
 dofile("announce.lua")
 dofile("threat.lua")
+dofile("talents.lua")
 
 WrekkitDB = nil
 Wrekkit.InitDB()
@@ -3488,6 +3489,104 @@ E:LeftCombat()
 advance(6)
 E:Finish()
 IN_COMBAT = IN
+end
+
+----------------------------------------------------------------------
+print("\n-- talents: specs from the server's inspect, or a guess --")
+----------------------------------------------------------------------
+do
+local TL = Wrekkit.talents
+TL.specs, TL.pending, TL.queue, TL.asking = {}, {}, {}, nil
+
+-- An inspection answer, as it arrives: the server leads each line with a tab.
+local function answer(name, a, b, c)
+  TL:OnMessage("TW_CHAT_MSG_WHISPER", "\tINSTalentTabInfo;1;Holy;14;" .. a, name)
+  TL:OnMessage("TW_CHAT_MSG_WHISPER", "\tINSTalentInfo;1;1;Divine Strength;1;2;5;5;1", name)
+  TL:OnMessage("TW_CHAT_MSG_WHISPER", "\tINSTalentTabInfo;2;Protection;15;" .. b, name)
+  TL:OnMessage("TW_CHAT_MSG_WHISPER", "\tINSTalentTabInfo;3;Retribution;15;" .. c, name)
+  TL:OnMessage("TW_CHAT_MSG_WHISPER", "\tINSTalentEND", name)
+end
+answer("Pempuk", 5, 11, 35)
+local sp = TL:Spec("Pempuk")
+check("an inspection gives the spec", sp and sp.tree, "Retribution")
+check("  with its points", TL:Describe("Pempuk"), "Retribution (5/11/35)")
+check("  and the tree's icon", TL:Icon("Pempuk", "PALADIN"), "Interface\\Icons\\Spell_Holy_AuraOfLight")
+answer("Albintank", 0, 31, 20)
+check("a Protection paladin's shield is the paladin's", TL:Icon("Albintank", "PALADIN"),
+  "Interface\\Icons\\Spell_Holy_DevotionAura")
+check("  a Protection warrior's is the warrior's", TL:Icon("Albintank", "WARRIOR"),
+  "Interface\\Icons\\INV_Shield_06")
+-- Another addon's messages on other prefixes are not answers.
+TL:OnMessage("WREKKIT", "INSTalentTabInfo;1;Arms;15;31", "Nobody")
+TL:OnMessage("WREKKIT", "INSTalentEND", "Nobody")
+check("other prefixes are ignored", TL:Spec("Nobody"), nil)
+
+-- A guess from a deep talent cast, for a group member not yet inspected.
+local realInfo, realGroup = SpellInfo, Wrekkit.capture.groupMembers
+SpellInfo = function(id)
+  if id == 21553 then return "Mortal Strike", "Rank 4", "x" end
+  if id == 20066 then return "Repentance", nil, "x" end
+  return realInfo(id)
+end
+Wrekkit.capture.groupMembers = { Rogue = true, Pempuk = true }
+WORLD["0xGuess"] = { name = "Rogue", class = "WARRIOR", isPlayer = true }
+Wrekkit.capture.units["0xGuess"] = nil
+TL:OnCast("0xGuess", 21553)
+check("a deep talent cast guesses the spec", TL:Describe("Rogue"), "Arms (guessed: Mortal Strike)")
+-- An inspection replaces a guess; a guess never replaces an inspection.
+WORLD["0xPemp"] = { name = "Pempuk", class = "PALADIN", isPlayer = true }
+TL:OnCast("0xPemp", 21553)
+check("a cast does not overrule an inspection", TL:Spec("Pempuk").tree, "Retribution")
+TL:OnMessage("TW_CHAT_MSG_WHISPER", "\tINSTalentTabInfo;1;Arms;18;31", "Rogue")
+TL:OnMessage("TW_CHAT_MSG_WHISPER", "\tINSTalentTabInfo;2;Fury;17;20", "Rogue")
+TL:OnMessage("TW_CHAT_MSG_WHISPER", "\tINSTalentTabInfo;3;Protection;17;0", "Rogue")
+TL:OnMessage("TW_CHAT_MSG_WHISPER", "\tINSTalentEND", "Rogue")
+check("an inspection replaces a guess", TL:Describe("Rogue"), "Arms (31/20/0)")
+-- Someone outside the group is not guessed at.
+WORLD["0xStranger"] = { name = "Stranger", class = "PALADIN", isPlayer = true }
+TL:OnCast("0xStranger", 20066)
+check("no guesses about strangers", TL:Spec("Stranger"), nil)
+SpellInfo, Wrekkit.capture.groupMembers = realInfo, realGroup
+
+-- Asking: only without ChronicleCompanion, never in combat, one at a time.
+local sent = {}
+local realSend, realRaid, realName, realUAC = SendAddonMessage, GetNumRaidMembers, UnitName, UnitAffectingCombat
+SendAddonMessage = function(p, m, c) table.insert(sent, p .. "|" .. m .. "|" .. c) end
+GetNumRaidMembers = function() return 2 end
+UnitName = function(u)
+  if u == "raid1" then return "Moras" end
+  if u == "raid2" then return "Shejian" end
+  return realName(u)
+end
+UnitAffectingCombat = function() return false end
+TL.specs, TL.queue, TL.asking = {}, {}, nil
+ChronicleLog = { QueueTalentInspection = function() end }
+TL:Step()
+check("with ChronicleCompanion asking, Wrekkit does not", table.getn(sent), 0)
+ChronicleLog = nil
+UnitAffectingCombat = function() return true end
+TL:Step()
+check("  nor in combat", table.getn(sent), 0)
+UnitAffectingCombat = function() return false end
+TL:Step()
+check("without it, the first player is asked", sent[1], "TW_CHAT_MSG_WHISPER<Moras>|INSTalentShow|GUILD")
+TL:Step()
+check("  one at a time", table.getn(sent), 1)
+advance(11)
+TL:Step()
+check("  and the next after a timeout", sent[2], "TW_CHAT_MSG_WHISPER<Shejian>|INSTalentShow|GUILD")
+SendAddonMessage, GetNumRaidMembers, UnitName, UnitAffectingCombat = realSend, realRaid, realName, realUAC
+
+-- Your own, from the talent API.
+local realTab = GetTalentTabInfo
+GetTalentTabInfo = function(i)
+  local t = { { "Holy", "x", 0 }, { "Protection", "x", 15 }, { "Retribution", "x", 36 } }
+  return t[i][1], t[i][2], t[i][3]
+end
+TL:ReadOwn()
+check("your own spec comes from the talent API", TL:Describe(UnitName("player")), "Retribution (0/15/36)")
+GetTalentTabInfo = realTab
+TL.specs, TL.pending, TL.queue, TL.asking = {}, {}, {}, nil
 end
 
 ----------------------------------------------------------------------
