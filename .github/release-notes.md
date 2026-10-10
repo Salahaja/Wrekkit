@@ -1,18 +1,19 @@
-**A TANK button, click a player to warn them, and the threat meter stays up when you die.**
+**Show two metrics at once, like damage and healing, over and under or side by side.**
 
 ## New
-- **TANK button.** It's in the threat window's title bar and shows **TANK** (you're the tank, whatever your stance), **AUTO** (detected from stance, form or Righteous Fury) or **DPS** (never). Left-click switches between TANK and AUTO, and right-click picks DPS. It's lit blue while you count as the tank, and your group's Wrekkit is told right away.
-- **Click to warn.** Left-click a player in the threat window, or a mob's row while tanking, to tell them their threat: "your threat is 94% on Ragefang - ease off!"
-  - Someone running Wrekkit gets a big on-screen alert with the raid-warning sound.
-  - Anyone else gets a whisper.
-  - It's only sent when you click, and at most once per person every 5 seconds.
+- **Two metrics in the meter.** The **1+2** button on the meter's title bar steps through the layouts:
+  - **1+2:** one metric, as before.
+  - **1/2:** two metrics, one over the other.
+  - **1|2:** two metrics, side by side.
+
+  The second metric starts as Healing. Click a half's header to pick its metric, and right-click it to back out of a drilldown. Each half drills into players and abilities on its own. The layouts are also in the meter's right-click title menu, and under Settings → Metrics in the meter.
 
 ## Fixed
-- **Dead, you still see the threat.** Dying used to clear the threat meter, hide its window and stop it watching for mobs going loose, as if the fight were over. It now keeps going while anyone in your group is still fighting.
+- **Narrow rows no longer draw names over numbers.** A row that's too narrow now drops its per-second column first, then shortens the name.
 
 ## Install
 
-Download `Wrekkit-0.9.6.zip` and extract it into `<your client>\Interface\AddOns\`. You should end up with `Interface\AddOns\Wrekkit\Wrekkit.toc`. Do **not** use the "Source code" links. **Fully restart the client** after installing. `/wrek status` should then report **v0.9.6**.
+Download `Wrekkit-0.9.7.zip` and extract it into `<your client>\Interface\AddOns\`. You should end up with `Interface\AddOns\Wrekkit\Wrekkit.toc`. Do **not** use the "Source code" links. **Fully restart the client** after installing. `/wrek status` should then report **v0.9.7**.
 
 ## Requirements
 
