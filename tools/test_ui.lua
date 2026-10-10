@@ -870,6 +870,10 @@ step("rows: fixed, stretched to fill, or a set number filling the window", funct
   end)
   M.list.GetHeight = realGetH
   s.rowMode, s.rowCount, s.fitRows = "fixed", 8, false
+  M:Refresh()
+  if not ok then error(err) end
+end)
+
 step("a window being moved is never re-anchored or resized (that crashes 1.12)", function()
   local M = UI.meter
   local f = M.frame
