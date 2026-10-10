@@ -1247,7 +1247,20 @@ step("threat meter", function()
     for _, row in ipairs(MF.rows) do
       if row.nameW ~= MF:NameWidth() then error("a row's name column did not follow the width") end
     end
-    if MF:NameWidth() <= 104 then error("a wider frame gave the name no more room") end
+    if MF:NameWidth() <= 83 then error("a wider frame gave the name no more room") end
+    -- 60/40: the mob and its % on the left, the player at the right edge.
+    local split = MF:Columns(300)
+    local function at(frame, point, target, rel, x)
+      for _, p in ipairs(frame._points or {}) do
+        if p[1] == point and p[2] == target and p[3] == rel and p[4] == x then return true end
+      end
+      return false
+    end
+    local r1 = MF.rows[1]
+    if split ~= math.floor((300 - 4 - 2 * (MF.pad or 0)) * 0.6) then error("the split is not at 60%") end
+    if not at(r1.who, "RIGHT", r1, "RIGHT", -4) then error("the player is not at the right edge") end
+    if not at(r1.pct, "RIGHT", r1, "LEFT", split - 4) then error("the mob's % is not at the end of its 60%") end
+    if not at(r1.whoBtn, "TOPLEFT", r1, "TOPLEFT", split) then error("the player button does not start at 60%") end
     MF:SetWidth(1000)
     if T:Settings().mobFramesWidth ~= 420 then error("the width is not held to 420") end
     MF:SetWidth(10)
@@ -1268,7 +1281,8 @@ step("threat meter", function()
       error("a redraw mid-drag snapped the frames back to " .. MF.frame:GetWidth())
     end
     for _, row in ipairs(MF.rows) do
-      if row.nameW ~= 340 - 4 - 2 * (MF.pad or 0) - 112 then error("mid-drag, a row's name column did not follow") end
+      local _, liveName = MF:Columns(340)
+      if row.nameW ~= liveName then error("mid-drag, a row's name column did not follow") end
     end
     MF.grip:GetScript("OnDragStop")()
     if T:Settings().mobFramesWidth ~= 340 then error("letting go of the grip did not save the width") end

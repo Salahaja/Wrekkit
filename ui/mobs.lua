@@ -39,9 +39,6 @@ local T = W.threat
 
 local ROW_H = 18
 local WIDTH = 220      -- default; the setting is mobFramesWidth
--- Everything on a row but the name: its left inset, the "who" column, the
--- % column and the gaps. The name gets the rest of the row.
-local ROW_FIXED = 112
 local MIN_W, MAX_W = 160, 420
 local UPDATE = 0.2
 
@@ -338,6 +335,9 @@ local function makeRow(parent, i)
       end
     end)
   end)
+  -- Columns at the current width (see MF:Columns).
+  local split, nameW, whoW = MF:Columns()
+  MF.LayoutRow(b, split, nameW, whoW)
   b:Hide()
   return b
 end
@@ -463,13 +463,49 @@ function MF:Width()
   return T:Settings().mobFramesWidth or WIDTH
 end
 
---- What a row leaves for the mob's name: the row less its insets and the
---- fixed columns. 104 at the default width.
-function MF:NameWidth()
-  local w = self:Width() - 4 - 2 * (self.pad or 0) - ROW_FIXED
-  if w < 40 then w = 40 end
-  return w
+--[[ A row's columns at frame width `w`: the mob on the left 60% -- its
+     name, then its threat % at the right of that -- and the player it is
+     hitting on the right 40%, the part that is clicked to heal them.
+     Returns the split (from the row's left), the name's width and the
+     player column's width. ]]
+local SPLIT = 0.6
+local PCT_W = 34
+
+function MF:Columns(w)
+  local rowW = (w or self:Width()) - 4 - 2 * (self.pad or 0)
+  local split = math.floor(rowW * SPLIT)
+  local nameW = split - 6 - PCT_W - 6
+  if nameW < 30 then nameW = 30 end
+  local whoW = rowW - split - 4
+  if whoW < 30 then whoW = 30 end
+  return split, nameW, whoW
 end
+
+--- What a row leaves for the mob's name, at the saved width.
+function MF:NameWidth()
+  local _, nameW = self:Columns()
+  return nameW
+end
+
+--- Put one row's columns where `w` puts them.
+local function layoutRow(b, split, nameW, whoW)
+  b.split = split
+  b.nameW = nameW
+  b.pct:ClearAllPoints()
+  b.pct:SetPoint("RIGHT", b, "LEFT", split - 4, 0)
+  -- The player, right up against the row's right edge.
+  b.who:ClearAllPoints()
+  b.who:SetPoint("RIGHT", b, "RIGHT", -4, 0)
+  b.who:SetWidth(whoW)
+  b.whoBtn:ClearAllPoints()
+  b.whoBtn:SetPoint("TOPLEFT", b, "TOPLEFT", split, 0)
+  b.whoBtn:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", 0, 0)
+  -- Re-lay the name, with or without a marker beside it.
+  local mark = b.markShown
+  b.markShown = -1
+  b:SetMark(mark)
+end
+MF.LayoutRow = layoutRow
 
 --- Set the width (dragged, or from settings), within its limits.
 function MF:SetWidth(w)
@@ -495,16 +531,9 @@ function MF:ApplyWidth()
   elseif math.abs((f:GetWidth() or 0) - w) >= 1 then
     f:SetWidth(w)
   end
-  local nameW = w - 4 - 2 * (self.pad or 0) - ROW_FIXED
-  if nameW < 40 then nameW = 40 end
+  local split, nameW, whoW = self:Columns(w)
   for _, b in ipairs(self.rows or {}) do
-    if b.nameW ~= nameW then
-      b.nameW = nameW
-      -- Re-lay the name, with or without a marker beside it.
-      local mark = b.markShown
-      b.markShown = -1
-      b:SetMark(mark)
-    end
+    if b.split ~= split or b.nameW ~= nameW then layoutRow(b, split, nameW, whoW) end
   end
 end
 
