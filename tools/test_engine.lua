@@ -3691,6 +3691,8 @@ do
   check("  the target's does", got[2], "Duskii:\tINSTalentEND;")
   InspectTalentsFrame_HandleMessage("\tINSTalentEND;", "Salahaja")
   check("  and your own", got[3], "Salahaja:\tINSTalentEND;")
+  check("  each answer's end is traced for /wrek specs", TL.log[table.getn(TL.log)],
+    string.format("%.0f", GetTime()) .. "s tab: Salahaja 1 in, 0 held; talents shown no, in range no")
   InspectTalentsFrame_HandleMessage("\tINSTransmogs;start", "Khtalla")
   check("  other messages pass untouched", got[4], "Khtalla:\tINSTransmogs;start")
   TL:HookInspectUI()

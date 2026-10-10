@@ -223,7 +223,7 @@ end
 function TL:Note(text)
   self.log = self.log or {}
   table.insert(self.log, string.format("%.0f", GetTime()) .. "s " .. text)
-  while table.getn(self.log) > 8 do table.remove(self.log, 1) end
+  while table.getn(self.log) > 16 do table.remove(self.log, 1) end
 end
 
 --- The player's own spec, from the talent API.
@@ -456,7 +456,43 @@ function TL:HookInspectUI()
   self.inspectHooked = true
   local orig = InspectTalentsFrame_HandleMessage
   InspectTalentsFrame_HandleMessage = function(message, sender)
-    if TL:ForTab(message, sender) then return orig(message, sender) end
+    local pass, why = TL:ForTab(message, sender)
+    local r
+    if pass then r = orig(message, sender) end
+    TL:TabTrace(message, sender, pass, why)
+    return r
+  end
+  -- The tab opening, for the trace.
+  if type(InspectTalentsFrame_OnShow) == "function" then
+    local origShow = InspectTalentsFrame_OnShow
+    InspectTalentsFrame_OnShow = function()
+      TL:Note("tab opened on " .. tostring(UnitName("target")))
+      return origShow()
+    end
+  end
+end
+
+--[[ What reached the tab, an answer at a time: the lines let through and
+     held back, and at its end whether the client then showed the talents
+     (it does only when it can inspect the target). For /wrek specs. ]]
+function TL:TabTrace(message, sender, pass, why)
+  if type(message) ~= "string" or not sender then return end
+  if string.find(message, "INSTalentShow", 1, true) then return end
+  if not string.find(message, "INSTalent", 1, true) then return end
+  self.tabLines = self.tabLines or {}
+  local t = self.tabLines[sender]
+  if not t then
+    t = { pass = 0, held = 0 }
+    self.tabLines[sender] = t
+  end
+  if pass then t.pass = t.pass + 1 else t.held = t.held + 1 t.why = why end
+  if string.find(message, "INSTalentEND", 1, true) then
+    self.tabLines[sender] = nil
+    local shown = TWTalentFrame and TWTalentFrame.IsVisible and TWTalentFrame:IsVisible()
+    local can = CanInspect and CanInspect("target")
+    self:Note("tab: " .. sender .. " " .. t.pass .. " in, " .. t.held .. " held" ..
+      (t.why and (" (" .. t.why .. ")") or "") ..
+      "; talents shown " .. (shown and "yes" or "no") .. ", in range " .. (can and "yes" or "no"))
   end
 end
 
@@ -466,8 +502,9 @@ function TL:ForTab(message, sender)
   if string.find(message, "INSTalentShow", 1, true) then return true end   -- an ask: answer it
   if not string.find(message, "INSTalent", 1, true) then return true end
   local tab = InspectTalentsFrame
-  if not tab or not tab.IsVisible or not tab:IsVisible() then return false end
-  return sender == UnitName("target") or sender == UnitName("player")
+  if not tab or not tab.IsVisible or not tab:IsVisible() then return false, "tab shut" end
+  if sender == UnitName("target") or sender == UnitName("player") then return true end
+  return false, "not your target"
 end
 
 ----------------------------------------------------------------------
