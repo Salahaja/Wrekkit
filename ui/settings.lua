@@ -78,8 +78,15 @@ end
      probed for with `control.Refresh`, because asking a frame whether it has
      a method is indistinguishable from calling one that does not exist --
      the caller already knows which controls are live. ]]
+--[[ A column's width: half of what is INSIDE the border. It was half of the
+     whole window, and the Blizzard look's dialog border takes a good bite
+     either side, so the right column's values ran out past the border on
+     every tab. Full-width controls were fine: they are anchored to both
+     edges of the body, not given a width. ]]
 local function columnWidth()
-  return (windowWidth() - PAD * 2 - COL_GAP * (COLS - 1)) / COLS
+  local f = S.frame
+  local inset = (f and f.inset) or 1
+  return (windowWidth() - inset * 2 - PAD * 2 - COL_GAP * (COLS - 1)) / COLS
 end
 
 --- Close the row being filled, if any, and drop to the next one.

@@ -1187,6 +1187,9 @@ function UI.Window(name, width, height, title, opts)
   local kind = opts.skin or "window"
   local f = UI.Panel(UIParent, W.color.bg, W.color.border, name, kind)
   local inset = f._skinned and UI.SkinInset(kind) or 1
+  -- Kept: what is inside the border is the window less this on each side,
+  -- and a layout sized to the whole window spills out of a thick one.
+  f.inset = inset
   f:SetWidth(width) f:SetHeight(height)
   f:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
 
