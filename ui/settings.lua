@@ -767,6 +767,11 @@ function S:BuildThreat()
     }, get, set,
     { "The server only answers in a party or raid,", "so alone the window has nothing to show." })
 
+  get, set = opt("groupOnly")
+  check(self, "Hide when not in a group", get, set,
+    { "Never shown solo, whichever moment is picked", "above: with \"in combat\", only your group's",
+      "fights. Also keeps \"in meter\" on its metric." })
+
   get, set = opt("fitRows")
   check(self, "Fit window to its rows", get, set,
     { "In its own window: shrinks to the players it", "shows, with no empty space under them, never",

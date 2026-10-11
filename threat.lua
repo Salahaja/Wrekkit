@@ -83,6 +83,7 @@ T.defaults = {
   display = "docked",      -- "window" | "docked" | "meter" | "off"
   lastWindow = "docked",   -- where "/wrek threat" brings it back to
   show = "group",          -- window shown "always" | "group" | "combat"
+  groupOnly = false,       -- and never solo, whatever `show` says ("combat" alone shows solo fights)
   rows = 8,
   fitRows = false,         -- own window: shrink to the rows shown (#15)
   showThreat = true,

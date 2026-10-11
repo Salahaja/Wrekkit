@@ -632,6 +632,9 @@ function TW:WantShown()
   if not s.enabled then return false end
   if s.display ~= "window" and s.display ~= "docked" then return false end
   if T.demoUntil then return true end
+  -- "Hide when not in a group": on top of whichever moment was picked, so
+  -- "in combat" can mean the group's fights and not a solo one too.
+  if s.groupOnly and T:Channel() == nil then return false end
   if s.show == "group" then return T:Channel() ~= nil end
   if s.show == "combat" then
     -- The group's fight, not only yours: dead, you still see it.
