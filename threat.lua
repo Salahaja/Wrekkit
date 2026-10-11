@@ -1689,7 +1689,13 @@ function T:WatchMob(id, mobName, unit, tunit)
   if not w.confirmed and now - w.since >= LOOSE_CONFIRM then
     w.confirmed = true
     if state == "loose" then self:QueueTaunt(guid, w.name, who, "loose", w.unit) end
-    if state == "loose" and s.warnLostAggro then
+    --[[ Solo, every mob you fight is on you: an "AGGRO!" for each one says
+         nothing and was firing all through questing. The state is still
+         kept -- the mob window marks the row -- only the shout waits for a
+         group. ("loose" needs a group member to be loose on anyway.) ]]
+    if self:Channel() == nil then
+      -- no warning
+    elseif state == "loose" and s.warnLostAggro then
       self:Alert("LOOSE: " .. (w.name or "a mob") .. " on " .. (who or "?"), "danger")
     elseif state == "onme" and s.warnPulled and not (self.current and self.current.guid == guid) then
       -- Your target says so through its own table; this is for the rest.
