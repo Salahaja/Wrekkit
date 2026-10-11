@@ -3547,6 +3547,44 @@ IN_COMBAT = IN
 end
 
 ----------------------------------------------------------------------
+print("\n-- mob watch: no AGGRO shouts when solo --")
+----------------------------------------------------------------------
+;(function()
+  local T = Wrekkit.threat
+  local alerts = {}
+  local real = { Alert = T.Alert, IsTank = T.IsTank, UAC = UnitAffectingCombat, UCA = UnitCanAttack,
+                 UE = UnitExists, UIU = UnitIsUnit, party = GetNumPartyMembers, raid = GetNumRaidMembers }
+  T.Alert = function(self, text) table.insert(alerts, text) end
+  T.IsTank = function() return false end
+  UnitAffectingCombat = function() return true end
+  UnitCanAttack = function() return true end
+  UnitExists = function(u) return u == "0xMob1target" or u == "0xMob2target" end
+  UnitIsUnit = function(a, b) return b == "player" end
+  GetNumRaidMembers = function() return 0 end
+  GetNumPartyMembers = function() return 0 end
+  T.watch = {}
+
+  -- Solo: a mob on you is marked (the mob window uses it), but nothing shouts.
+  T:WatchMob("0xMob1", "Defias Thug")
+  advance(1.5)
+  local state = T:WatchMob("0xMob1", "Defias Thug")
+  check("solo, a mob on you is still marked", state, "onme")
+  check("  but raises no AGGRO warning", table.getn(alerts), 0)
+
+  -- In a party the same thing is worth a shout.
+  GetNumPartyMembers = function() return 4 end
+  T:WatchMob("0xMob2", "Defias Pillager")
+  advance(1.5)
+  T:WatchMob("0xMob2", "Defias Pillager")
+  check("in a group, a mob turning on you warns", alerts[1], "AGGRO! Defias Pillager is on you")
+
+  T.Alert, T.IsTank = real.Alert, real.IsTank
+  UnitAffectingCombat, UnitCanAttack, UnitExists, UnitIsUnit = real.UAC, real.UCA, real.UE, real.UIU
+  GetNumPartyMembers, GetNumRaidMembers = real.party, real.raid
+  T.watch = {}
+end)()
+
+----------------------------------------------------------------------
 print("\n-- talents: specs from the server's inspect, or a guess --")
 ----------------------------------------------------------------------
 do
