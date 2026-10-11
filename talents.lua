@@ -5,8 +5,11 @@ Who is specced what: Holy, Protection, Retribution.
 1.12 has no API for another player's talents, but this server's clients
 can. Sent on the TW_CHAT_MSG_WHISPER addon channel (it reaches one named
 player), "INSTalentShow" is answered by that player's client -- when it has
-the answering half, which about half the clients here do not -- with a line
-per tree and per talent, and then the end:
+the answering half, which most clients here do not: the built-in
+Turtle_General addon passes the ask on, and OctoWoW's client download leaves
+out its Interface\AddOns\Turtle_General folder, so the game reports it
+MISSING and never loads it. Older builds answer "INSShowTalents" instead,
+so both are sent. The answer is a line per tree and per talent, then the end:
 
   INSTalentTabInfo;tree;tabName;a;b      (a tree's name; b is NOT its points)
   INSTalentInfo;tree;idx;name;tier;col;currRank;maxRank;...   (per talent)
@@ -16,10 +19,10 @@ each as an addon message from the inspected player under the prefix
 TW_CHAT_MSG_WHISPER, its text led by a tab. A tree's points are its
 talents' ranks added up; the three totals are the spec.
 
-Wrekkit asks whoever you target, at once: on this server most players
-only answer while they are your target. Besides that it goes round the
+Wrekkit asks whoever you target, at once, and besides that goes round the
 group, one player at a time, never in combat, each again after fifteen
-minutes, for the few who answer anyway. ChronicleCompanion asks the same way, and its answers
+minutes; a player who never answers is asked less and less often.
+ChronicleCompanion asks the same way, and its answers
 arrive here too, so whoever it inspected lately is not asked again.
 
 The player's own spec comes straight from GetTalentTabInfo.
@@ -223,7 +226,7 @@ end
 function TL:Note(text)
   self.log = self.log or {}
   table.insert(self.log, string.format("%.0f", GetTime()) .. "s " .. text)
-  while table.getn(self.log) > 8 do table.remove(self.log, 1) end
+  while table.getn(self.log) > 16 do table.remove(self.log, 1) end
 end
 
 --- The player's own spec, from the talent API.
@@ -280,6 +283,8 @@ end
 
 --- Ask the next player, when nothing is waiting and nobody is fighting.
 function TL:Step()
+  -- Loaded on demand, maybe without an ADDON_LOADED seen: catch it here.
+  if not self.inspectHooked then self:HookInspectUI() end
   local now = GetTime()
   if self.asking and now - self.askedAt > TIMEOUT then
     self.misses = self.misses or {}
@@ -305,14 +310,30 @@ function TL:Ask(name, why)
   self.lastAsk[name] = now
   self.pending[name] = nil
   self:Note("asked " .. name .. (why and (" (" .. why .. ")") or ""))
-  -- The addressee is in the prefix: this channel reaches that one player.
-  -- No ">" may appear in the text, and none does.
-  pcall(SendAddonMessage, CHANNEL .. "<" .. name .. ">", "INSTalentShow", "GUILD")
+  TL:SendAsk(name)
 end
 
---[[ A player targeted: ask them now. On this server an ask goes through
-     while its player is your target -- asked untargeted, most never answer
-     (tried in game, 2026-10-10) -- so targeting is the moment. In combat
+--[[ The ask, in both its forms. Two client builds are about: the current
+     one answers "INSTalentShow" (Turtle_General hands it to
+     Blizzard_InspectUI), an older one only "INSShowTalents" (its FrameXML
+     answered by itself). Each ignores the other's, and both answer the
+     same way, so both are sent and whichever is understood is answered.
+     Tried in game: players silent to one answered the other. ]]
+local ASKS = { "INSTalentShow", "INSShowTalents" }
+
+function TL:SendAsk(name)
+  if not name or not SendAddonMessage then return end
+  -- The addressee is in the prefix: this channel reaches that one player.
+  -- No ">" may appear in the text, and none does.
+  for _, ask in ipairs(ASKS) do
+    pcall(SendAddonMessage, CHANNEL .. "<" .. name .. ">", ask, "GUILD")
+  end
+end
+
+--[[ A player targeted: ask them now -- the moment you show interest, rather
+     than waiting for the round to reach them. (Targeting is NOT what makes
+     a client answer, as was once thought here: whether it can answer at
+     all is down to its Turtle_General; see the top of this file.) In combat
      too: it is one message, and a healer targets the whole raid. Not
      again for someone known within the refresh, nor within the wait for
      an answer; an unfinished ask from the round gives way. ]]
@@ -429,8 +450,87 @@ function TL:Inspect(name)
   table.insert(self.queue, 1, name)
   if self.lastAsk then self.lastAsk[name] = nil end
   if self.misses then self.misses[name] = nil end
-  W.Print("asking " .. name .. " for their talents -- /wrek specs in a moment for the answer." ..
-    ((UnitName("target") ~= name) and " Most only answer while they are your target." or ""))
+  W.Print("asking " .. name .. " for their talents -- /wrek specs in a moment for the answer.")
+end
+
+----------------------------------------------------------------------
+-- the client's own inspect window
+----------------------------------------------------------------------
+
+--[[ The client's Talents tab (Blizzard_InspectUI) is fed by every inspect
+     answer that reaches this client, whoever asked for it. Its handler
+     keeps one player's talents, and on each answer's end it marks them as
+     your current target's. So an answer to a background ask -- Wrekkit's,
+     or ChronicleCompanion's every fifteen minutes -- from someone else
+     left the tab thinking it already had your target: opened, it asked
+     nobody and showed the leftovers, blank for most players.
+
+     So only answers the tab can be waiting for reach it: while it is open,
+     from your target (or yourself). Every other answer still reaches
+     Wrekkit, through its own event. The request itself -- someone asking
+     you -- always goes through: answering it is the same handler. ]]
+function TL:HookInspectUI()
+  if self.inspectHooked or type(InspectTalentsFrame_HandleMessage) ~= "function" then return end
+  self.inspectHooked = true
+  local orig = InspectTalentsFrame_HandleMessage
+  InspectTalentsFrame_HandleMessage = function(message, sender)
+    local pass, why = TL:ForTab(message, sender)
+    local r
+    if pass then r = orig(message, sender) end
+    TL:TabTrace(message, sender, pass, why)
+    return r
+  end
+  -- The tab opening, for the trace.
+  if type(InspectTalentsFrame_OnShow) == "function" then
+    local origShow = InspectTalentsFrame_OnShow
+    InspectTalentsFrame_OnShow = function()
+      local name = UnitName("target")
+      TL:Note("tab opened on " .. tostring(name))
+      local r = origShow()
+      -- The tab asks in the current form only; ask in the older one too,
+      -- for the clients that only know that.
+      if name and SendAddonMessage then
+        pcall(SendAddonMessage, CHANNEL .. "<" .. name .. ">", "INSShowTalents", "GUILD")
+      end
+      return r
+    end
+  end
+end
+
+--[[ What reached the tab, an answer at a time: the lines let through and
+     held back, and at its end whether the client then showed the talents
+     (it does only when it can inspect the target). For /wrek specs. ]]
+function TL:TabTrace(message, sender, pass, why)
+  if type(message) ~= "string" or not sender then return end
+  if string.find(message, "INSTalentShow", 1, true) then return end
+  if not string.find(message, "INSTalent", 1, true) then return end
+  self.tabLines = self.tabLines or {}
+  local t = self.tabLines[sender]
+  if not t then
+    t = { pass = 0, held = 0 }
+    self.tabLines[sender] = t
+  end
+  if pass then t.pass = t.pass + 1 else t.held = t.held + 1 t.why = why end
+  if string.find(message, "INSTalentEND", 1, true) then
+    self.tabLines[sender] = nil
+    local shown = TWTalentFrame and TWTalentFrame.IsVisible and TWTalentFrame:IsVisible()
+    local can = CanInspect and CanInspect("target")
+    self:Note("tab: " .. sender .. " " .. t.pass .. " in, " .. t.held .. " held" ..
+      (t.why and (" (" .. t.why .. ")") or "") ..
+      "; talents shown " .. (shown and "yes" or "no") .. ", in range " .. (can and "yes" or "no"))
+  end
+end
+
+--- Should an inspect message reach the client's Talents tab?
+function TL:ForTab(message, sender)
+  if type(message) ~= "string" then return true end
+  if string.find(message, "INSTalentShow", 1, true) then return true end   -- an ask: answer it
+  if string.find(message, "INSShowTalents", 1, true) then return true end
+  if not string.find(message, "INSTalent", 1, true) then return true end
+  local tab = InspectTalentsFrame
+  if not tab or not tab.IsVisible or not tab:IsVisible() then return false, "tab shut" end
+  if sender == UnitName("target") or sender == UnitName("player") then return true end
+  return false, "not your target"
 end
 
 ----------------------------------------------------------------------
@@ -445,8 +545,13 @@ function TL:Start()
   f:RegisterEvent("CHARACTER_POINTS_CHANGED")
   f:RegisterEvent("PLAYER_ENTERING_WORLD")
   f:RegisterEvent("PLAYER_TARGET_CHANGED")
+  f:RegisterEvent("ADDON_LOADED")
   f:SetScript("OnEvent", function()
-    if event == "PLAYER_TARGET_CHANGED" then
+    if event == "ADDON_LOADED" then
+      if arg1 == "Blizzard_InspectUI" then
+        W.Guard("inspect window", function() TL:HookInspectUI() end)
+      end
+    elseif event == "PLAYER_TARGET_CHANGED" then
       W.Guard("talents target", function() TL:OnTarget() end)
     elseif event == "CHAT_MSG_ADDON" then
       if arg1 == CHANNEL then

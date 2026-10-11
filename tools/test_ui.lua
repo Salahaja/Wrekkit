@@ -379,6 +379,7 @@ dofile("sync.lua")
 dofile("announce.lua")
 dofile("threat.lua")
 dofile("talents.lua")
+dofile("prices.lua")
 dofile("ui/widgets.lua")
 dofile("ui/chart.lua")
 dofile("ui/meter.lua")
@@ -3185,6 +3186,37 @@ step("threat: docked window hangs under the meter", function()
     error("back in its own window it still hangs off the meter")
   end
   T:StopDemo()
+end)
+
+step("threat: 'hide when not in a group' holds in every mode", function()
+  local T = Wrekkit.threat
+  local s = T:Settings()
+  local realFighting, realParty = T.Fighting, GetNumPartyMembers
+  T.Fighting = function() return true end
+  UI.threat:SetDisplay("window")
+  s.show = "combat"
+  s.groupOnly = false
+  UI.threat:UpdateVisibility()
+  if not UI.threat.frame:IsShown() then error("'in combat' alone should show a solo fight") end
+  s.groupOnly = true
+  UI.threat:UpdateVisibility()
+  if UI.threat.frame:IsShown() then error("hide-when-solo left the window up in a solo fight") end
+  GetNumPartyMembers = function() return 4 end
+  UI.threat:UpdateVisibility()
+  if not UI.threat.frame:IsShown() then error("in a party's fight the window did not come back") end
+  GetNumPartyMembers = realParty
+  -- In meter mode the meter stays on its own metric when solo.
+  UI.meter:SetMetric("healing")
+  UI.threat:SetDisplay("meter")
+  T:Demo(30)
+  UI.threatFrames:UpdateMeterSwitch()
+  if UI.meter:Settings().metric ~= "healing" then error("meter switched to threat while solo") end
+  T:StopDemo()
+  UI.threatFrames:UpdateMeterSwitch()
+  T.Fighting = realFighting
+  s.show, s.groupOnly = "group", false
+  UI.threat:SetDisplay("window")
+  UI.meter:SetMetric("damage")
 end)
 
 step("threat: meter mode switches the meter for the fight and back", function()

@@ -239,6 +239,7 @@ dofile("sync.lua")
 dofile("announce.lua")
 dofile("threat.lua")
 dofile("talents.lua")
+dofile("prices.lua")
 
 WrekkitDB = nil
 Wrekkit.InitDB()
@@ -542,6 +543,60 @@ for _, a in ipairs(consDetail) do
 end
 check("two distinct items", table.getn(consDetail), 2)
 check("the repeated one is counted twice", consDetail[1].amount, 2)
+
+-- Priced at the auction house, through aux (and so through the scans other
+-- accounts share into it). A function of its own: the main chunk is at
+-- Lua's 200 locals.
+;(function()
+  local P = Wrekkit.prices
+  check("no aux, no price", P:Value(13446), nil)
+  check("money: gold and silver", Wrekkit.Money(123456), "12g 34s")
+  check("money: silver and copper", Wrekkit.Money(4510), "45s 10c")
+  check("money: copper", Wrekkit.Money(8), "8c")
+  check("money: nothing", Wrekkit.Money(0), "-")
+
+  -- aux, as its module loader serves it: value by "id:suffix".
+  local asked = {}
+  local history = {
+    value = function(key) table.insert(asked, key) if key == "13446:0" then return 12000 end end,
+    market_value = function(key) if key == "20520:0" then return 300 end end,
+  }
+  local realLoaded, realRequire = IsAddOnLoaded, require
+  IsAddOnLoaded = function(name) return name == "aux-addon" end
+  require = function(name) if name == "aux.core.history" then return history end end
+  P.aux, P.cache = nil, {}
+  check("aux's value for a scanned item", P:Value(13446), 12000)
+  check("  asked by aux's own key", asked[1], "13446:0")
+  check("today's lowest buyout when there is no history yet", P:Value(20520), 300)
+  check("nothing for an item aux never saw", P:Value(99999), nil)
+  history.value = function() return 99 end
+  check("  and a minute's cache, not a lookup per repaint", P:Value(13446), 12000)
+  advance(61)
+  check("  then asked again", P:Value(13446), 99)
+  history.value = function(key) if key == "13446:0" then return 12000 end end
+  P.cache = {}
+
+  local cost = Wrekkit.metrics.Get("consumeCost")
+  check("Consumes (gold): two potions and the cheap item", cost.value(consBy["Fuff"]), 2 * 12000 + 300)
+  check("  shown as money", cost.sub(consBy["Fuff"]), "2g 43s")
+  local priced = Wrekkit.report:Abilities(consBy["Fuff"], "consumeCost")
+  check("  the dearest item first", priced[1].id, 13446)
+  check("  its cost", priced[1]._value, "2g 40s")
+  check("  how many, at what", priced[1]._note, "2 x 1g 20s")
+  -- Something aux has never priced counts for nothing, and says so.
+  P.cache = {}
+  history.market_value = function() return nil end
+  check("an unpriced item is flagged in the row", cost.sub(consBy["Fuff"]), "2g 40s |cff9d9d9d+1?|r")
+  local unpriced = Wrekkit.report:Abilities(consBy["Fuff"], "consumeCost")
+  check("  and in the detail", unpriced[2]._value, "no price")
+  -- Saved pulls keep their items as a list: priced the same.
+  P.cache = {}
+  check("a saved pull's item list is priced too",
+    P:Cost({ { id = 13446, name = "Potion", amount = 3 } }), 36000)
+
+  IsAddOnLoaded, require = realLoaded, realRequire
+  P.aux, P.cache = nil, {}
+end)()
 
 ----------------------------------------------------------------------
 -- combat time cannot run away
@@ -3576,7 +3631,11 @@ SpellInfo, Wrekkit.capture.groupMembers = realInfo, realGroup
 -- Asking: never in combat, one at a time, ChronicleCompanion or not.
 local sent = {}
 local realSend, realRaid, realName, realUAC = SendAddonMessage, GetNumRaidMembers, UnitName, UnitAffectingCombat
-SendAddonMessage = function(p, m, c) table.insert(sent, p .. "|" .. m .. "|" .. c) end
+local oldForm = {}
+SendAddonMessage = function(p, m, c)
+  if m == "INSShowTalents" then table.insert(oldForm, p) return end
+  table.insert(sent, p .. "|" .. m .. "|" .. c)
+end
 GetNumRaidMembers = function() return 2 end
 UnitName = function(u)
   if u == "raid1" then return "Moras" end
@@ -3591,6 +3650,7 @@ check("  nor in combat", table.getn(sent), 0)
 UnitAffectingCombat = function() return false end
 TL:Step()
 check("without it, the first player is asked", sent[1], "TW_CHAT_MSG_WHISPER<Moras>|INSTalentShow|GUILD")
+check("  in the older form too, for older clients", oldForm[1], "TW_CHAT_MSG_WHISPER<Moras>")
 TL:Step()
 check("  one at a time", table.getn(sent), 1)
 advance(11)
@@ -3664,6 +3724,56 @@ UnitAffectingCombat = function() return false end
 UnitExists, UnitIsPlayer = realExists, realIsPlayer
 TL.queue, TL.misses, TL.lastAsk, TL.asking = {}, {}, {}, nil
 SendAddonMessage, GetNumRaidMembers, UnitName, UnitAffectingCombat = realSend, realRaid, realName, realUAC
+
+-- The client's Talents tab only hears answers it can be waiting for: while
+-- open, from the target or yourself. An ask always reaches it (it answers).
+-- (A function of its own: the file's main chunk is at Lua's 200 locals.)
+;(function()
+  local got = {}
+  InspectTalentsFrame_HandleMessage = function(m, s) table.insert(got, s .. ":" .. m) end
+  local open = false
+  InspectTalentsFrame = { IsVisible = function() return open end }
+  local realName2 = UnitName
+  UnitName = function(u)
+    if u == "target" then return "Duskii" end
+    if u == "player" then return "Salahaja" end
+    return realName2(u)
+  end
+  local shown, asked = 0, {}
+  InspectTalentsFrame_OnShow = function() shown = shown + 1 end
+  local realSend2 = SendAddonMessage
+  SendAddonMessage = function(p, m) table.insert(asked, p .. "|" .. m) end
+  TL.inspectHooked = nil
+  TL:HookInspectUI()
+  InspectTalentsFrame_OnShow()
+  check("opening the tab still runs the client's own", shown, 1)
+  check("  and asks the target in the older form too", asked[1], "TW_CHAT_MSG_WHISPER<Duskii>|INSShowTalents")
+  SendAddonMessage = realSend2
+  InspectTalentsFrame_HandleMessage("\tINSShowTalents", "Khtalla")
+  check("an older-form ask reaches it too", got[1], "Khtalla:\tINSShowTalents")
+  got = {}
+  InspectTalentsFrame_HandleMessage("\tINSTalentEND;", "Khtalla")
+  check("tab shut: a background answer does not reach it", table.getn(got), 0)
+  InspectTalentsFrame_HandleMessage("\tINSTalentShow", "Khtalla")
+  check("  but an ask always does", got[1], "Khtalla:\tINSTalentShow")
+  open = true
+  InspectTalentsFrame_HandleMessage("\tINSTalentEND;", "Khtalla")
+  check("tab open: someone else's answer still does not", table.getn(got), 1)
+  InspectTalentsFrame_HandleMessage("\tINSTalentEND;", "Duskii")
+  check("  the target's does", got[2], "Duskii:\tINSTalentEND;")
+  InspectTalentsFrame_HandleMessage("\tINSTalentEND;", "Salahaja")
+  check("  and your own", got[3], "Salahaja:\tINSTalentEND;")
+  check("  each answer's end is traced for /wrek specs", TL.log[table.getn(TL.log)],
+    string.format("%.0f", GetTime()) .. "s tab: Salahaja 1 in, 0 held; talents shown no, in range no")
+  InspectTalentsFrame_HandleMessage("\tINSTransmogs;start", "Khtalla")
+  check("  other messages pass untouched", got[4], "Khtalla:\tINSTransmogs;start")
+  TL:HookInspectUI()
+  InspectTalentsFrame_HandleMessage("\tINSTalentEND;", "Duskii")
+  check("  hooked once, however often asked", table.getn(got), 5)
+  UnitName = realName2
+  InspectTalentsFrame_HandleMessage, InspectTalentsFrame, TL.inspectHooked = nil, nil, nil
+  InspectTalentsFrame_OnShow = nil
+end)()
 
 -- Your own, from the talent API.
 local realTab = GetTalentTabInfo

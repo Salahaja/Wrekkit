@@ -759,6 +759,7 @@ function TF:UpdateMeterSwitch()
   local ms = meter:Settings()
   -- The group's fight, not only yours: dead, the meter stays on threat.
   local fighting = s.enabled and s.display == "meter" and T:Fighting()
+    and not (s.groupOnly and T:Channel() == nil)
   if fighting and T:Live() and ms.metric ~= "threat" and not self.switchedFrom then
     self.switchedFrom = ms.metric
     meter:SetMetric("threat")
