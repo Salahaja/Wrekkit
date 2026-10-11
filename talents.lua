@@ -5,8 +5,11 @@ Who is specced what: Holy, Protection, Retribution.
 1.12 has no API for another player's talents, but this server's clients
 can. Sent on the TW_CHAT_MSG_WHISPER addon channel (it reaches one named
 player), "INSTalentShow" is answered by that player's client -- when it has
-the answering half, which about half the clients here do not -- with a line
-per tree and per talent, and then the end:
+the answering half, which most clients here do not: the built-in
+Turtle_General addon passes the ask on, and OctoWoW's client download leaves
+out its Interface\AddOns\Turtle_General folder, so the game reports it
+MISSING and never loads it. Older builds answer "INSShowTalents" instead,
+so both are sent. The answer is a line per tree and per talent, then the end:
 
   INSTalentTabInfo;tree;tabName;a;b      (a tree's name; b is NOT its points)
   INSTalentInfo;tree;idx;name;tier;col;currRank;maxRank;...   (per talent)
@@ -16,10 +19,10 @@ each as an addon message from the inspected player under the prefix
 TW_CHAT_MSG_WHISPER, its text led by a tab. A tree's points are its
 talents' ranks added up; the three totals are the spec.
 
-Wrekkit asks whoever you target, at once: on this server most players
-only answer while they are your target. Besides that it goes round the
+Wrekkit asks whoever you target, at once, and besides that goes round the
 group, one player at a time, never in combat, each again after fifteen
-minutes, for the few who answer anyway. ChronicleCompanion asks the same way, and its answers
+minutes; a player who never answers is asked less and less often.
+ChronicleCompanion asks the same way, and its answers
 arrive here too, so whoever it inspected lately is not asked again.
 
 The player's own spec comes straight from GetTalentTabInfo.
@@ -327,9 +330,10 @@ function TL:SendAsk(name)
   end
 end
 
---[[ A player targeted: ask them now. On this server an ask goes through
-     while its player is your target -- asked untargeted, most never answer
-     (tried in game, 2026-10-10) -- so targeting is the moment. In combat
+--[[ A player targeted: ask them now -- the moment you show interest, rather
+     than waiting for the round to reach them. (Targeting is NOT what makes
+     a client answer, as was once thought here: whether it can answer at
+     all is down to its Turtle_General; see the top of this file.) In combat
      too: it is one message, and a healer targets the whole raid. Not
      again for someone known within the refresh, nor within the wait for
      an answer; an unfinished ask from the round gives way. ]]
@@ -446,8 +450,7 @@ function TL:Inspect(name)
   table.insert(self.queue, 1, name)
   if self.lastAsk then self.lastAsk[name] = nil end
   if self.misses then self.misses[name] = nil end
-  W.Print("asking " .. name .. " for their talents -- /wrek specs in a moment for the answer." ..
-    ((UnitName("target") ~= name) and " Most only answer while they are your target." or ""))
+  W.Print("asking " .. name .. " for their talents -- /wrek specs in a moment for the answer.")
 end
 
 ----------------------------------------------------------------------
