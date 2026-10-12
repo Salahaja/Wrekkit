@@ -3585,6 +3585,57 @@ print("\n-- mob watch: no AGGRO shouts when solo --")
 end)()
 
 ----------------------------------------------------------------------
+print("\n-- click spells on players outside the group --")
+----------------------------------------------------------------------
+;(function()
+  local T = Wrekkit.threat
+  local s = T:Settings()
+  local casts = {}
+  local real = { cast = CastSpellByName, target = TargetUnit, byName = TargetByName, assist = UnitCanAssist,
+                 info = SpellInfo, exists = UnitExists, name = UnitName, last = TargetLastTarget,
+                 party = GetNumPartyMembers, raid = GetNumRaidMembers }
+  CastSpellByName = function(spell, unit) table.insert(casts, spell .. "@" .. tostring(unit)) end
+  GetNumPartyMembers = function() return 0 end
+  GetNumRaidMembers = function() return 0 end
+  local friendly = true
+  UnitCanAssist = function() return friendly end
+
+  -- Off (the default): not in the group, nothing cast.
+  s.castOutsideGroup = false
+  check("off by default", T:CastOn("Stranger", "Flash of Light", "0xFriend"), false)
+  check("  and nothing was cast", table.getn(casts), 0)
+
+  -- On, with SuperWoW: straight at the guid the mob frame read.
+  s.castOutsideGroup = true
+  SpellInfo = SpellInfo or function() return "x" end
+  check("on: cast on someone outside the group", T:CastOn("Stranger", "Flash of Light", "0xFriend"), true)
+  check("  at their guid", casts[1], "Flash of Light@0xFriend")
+
+  -- Never at someone you cannot help.
+  friendly = false
+  check("never on a player you can't help", T:CastOn("Hostile", "Flash of Light", "0xFoe"), false)
+  check("  nothing cast", table.getn(casts), 1)
+  friendly = true
+
+  -- No guid (no SuperWoW): by name, then the old target back.
+  local targeted, backed = nil, false
+  local current = "Mob"
+  TargetByName = function(n) targeted = n current = n end
+  UnitExists = function(u) if u == "target" then return current ~= nil end return real.exists(u) end
+  UnitName = function(u) if u == "target" then return current end return real.name(u) end
+  TargetLastTarget = function() backed = true current = "Mob" end
+  check("without a guid: by name", T:CastOn("Stranger", "Renew", nil), true)
+  check("  targeted by name", targeted, "Stranger")
+  check("  cast on the target", casts[2], "Renew@nil")
+  check("  and the old target came back", backed, true)
+
+  CastSpellByName, TargetUnit, TargetByName, UnitCanAssist = real.cast, real.target, real.byName, real.assist
+  SpellInfo, UnitExists, UnitName, TargetLastTarget = real.info, real.exists, real.name, real.last
+  GetNumPartyMembers, GetNumRaidMembers = real.party, real.raid
+  s.castOutsideGroup = false
+end)()
+
+----------------------------------------------------------------------
 print("\n-- talents: specs from the server's inspect, or a guess --")
 ----------------------------------------------------------------------
 do

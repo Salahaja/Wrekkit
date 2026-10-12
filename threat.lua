@@ -144,6 +144,7 @@ T.defaults = {
   mobWhoLeft = "",
   mobWhoRight = "",
   mobWhoShift = "",
+  castOutsideGroup = false,  -- click spells also reach players outside your group
   -- Collapsed, mobs that are fine share one line ("All 10 on you") and
   -- only the ones in trouble get a row.
   mobFramesCollapse = "auto",  -- "auto" | "always" | "never"
@@ -2211,11 +2212,15 @@ end
      Without, they are targeted, the spell is cast, and your previous target
      comes back -- a heal cast with a mob targeted would otherwise land on
      you. Returns whether a cast or a target change went out. ]]
-function T:CastOn(name, spell)
+function T:CastOn(name, spell, guid)
   local unit = self:UnitFor(name)
   if not unit then
-    W.Print(tostring(name) .. " is not in your group.")
-    return false
+    if not self:Settings().castOutsideGroup then
+      W.Print(tostring(name) .. " is not in your group. (Frames & plates -> Mob frames: " ..
+        "\"Cast on players outside your group\" allows it.)")
+      return false
+    end
+    return self:CastOutside(name, spell, guid)
   end
   if not spell or spell == "" then
     return TargetUnit and pcall(TargetUnit, unit) or false
@@ -2231,6 +2236,51 @@ function T:CastOn(name, spell)
   if had and TargetLastTarget then pcall(TargetLastTarget)
   elseif not had and ClearTarget then pcall(ClearTarget) end
   return ok
+end
+
+--[[ The same, on someone outside your group (castOutsideGroup): a passer-by
+     a mob has turned on, a player from another group in the same fight.
+
+     With SuperWoW the mob's target came with a guid, which works as a unit:
+     the spell goes straight at it and your target stays. Without, they are
+     targeted by name, the spell cast, and your old target brought back.
+     Only ever someone you can help -- a heal is never thrown at a hostile
+     player, whatever the setting. ]]
+function T:CastOutside(name, spell, guid)
+  local unit = (type(guid) == "string" and string.sub(guid, 1, 2) == "0x") and guid or nil
+  if unit and UnitCanAssist and not UnitCanAssist("player", unit) then
+    W.Print(tostring(name) .. " is not someone you can help.")
+    return false
+  end
+  if unit and SpellInfo then
+    if not spell or spell == "" then
+      return TargetUnit and pcall(TargetUnit, unit) or false
+    end
+    if CastSpellByName and pcall(CastSpellByName, spell, unit) then return true end
+  end
+  -- No guid to cast at: by name, the way the stock /target does.
+  if not TargetByName then
+    W.Print("Can't reach " .. tostring(name) .. " without SuperWoW.")
+    return false
+  end
+  local had = UnitExists("target")
+  pcall(TargetByName, name, true)
+  if not UnitExists("target") or UnitName("target") ~= name then
+    -- Nobody by that name in sight; put things back.
+    if had and TargetLastTarget then pcall(TargetLastTarget) end
+    W.Print("Can't find " .. tostring(name) .. " to cast on.")
+    return false
+  end
+  if UnitCanAssist and not UnitCanAssist("player", "target") then
+    if had and TargetLastTarget then pcall(TargetLastTarget) elseif ClearTarget then pcall(ClearTarget) end
+    W.Print(tostring(name) .. " is not someone you can help.")
+    return false
+  end
+  if not spell or spell == "" then return true end   -- targeting them was the point
+  local ok = CastSpellByName and pcall(CastSpellByName, spell)
+  if had and TargetLastTarget then pcall(TargetLastTarget)
+  elseif not had and ClearTarget then pcall(ClearTarget) end
+  return ok and true or false
 end
 
 --- For the keybinding and /wrek taunt.

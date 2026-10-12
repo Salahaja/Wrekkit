@@ -1212,6 +1212,10 @@ function S:BuildThreat()
   self.whoSlots.shift = spellSlot(self, "Shift-click player",
     function() return ts().mobWhoShift end,
     function(v) ts().mobWhoShift = v or "" end)
+  get, set = opt("castOutsideGroup")
+  check(self, "Cast on players outside your group", get, set,
+    { "The click spells also reach someone not in", "your party or raid -- a passer-by a mob",
+      "turned on. Only players you can help." })
 
   stepper(self, "From",
     function() return ts().mobFramesMin end,
