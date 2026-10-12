@@ -682,6 +682,9 @@ function UI.CloseMenu()
   if menuCatcher then menuCatcher:Hide() end
 end
 
+--- The menu frame, open or not (tests click its rows).
+function UI.MenuFrame() return menuFrame end
+
 local ROW_H = 18
 local MENU_PAD = 4
 -- Room inside a skinned border; read when the menu is first built.

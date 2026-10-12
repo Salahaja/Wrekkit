@@ -712,6 +712,145 @@ local function textField(self, label, get, set)
   return place(self, f, true, false)
 end
 
+--[[ Which spell the client is dragging. 1.12 has no way to ask what is on
+     the cursor, but every spell dragged out of the spellbook goes through
+     PickupSpell, so it is noted there. Wrapped once, passing everything on
+     untouched. ]]
+if type(PickupSpell) == "function" and not S.pickupWrapped then
+  S.pickupWrapped = true
+  local pickup = PickupSpell
+  PickupSpell = function(id, book)
+    local name = GetSpellName and GetSpellName(id, book)
+    S.cursorSpell = name and { name = name, at = GetTime and GetTime() or 0 } or nil
+    return pickup(id, book)
+  end
+end
+
+--- The spell being dragged from the spellbook, if it is still on the cursor.
+function S.DraggedSpell()
+  if not S.cursorSpell then return nil end
+  if CursorHasSpell and not CursorHasSpell() then return nil end
+  return S.cursorSpell.name
+end
+
+--[[ A click spell, picked rather than typed (a typed name failed silently
+     on a typo, a capital letter or a rank). The button shows the spell's
+     icon and name, or "target them" when empty:
+       click        pick from your spellbook, a tab at a time
+       drag         a spell from the spellbook onto it, like an action bar
+       right-click  clear it
+     A name that is not in your spellbook -- typed before, or another
+     character's -- shows red so it is noticed. ]]
+local function spellSlot(self, label, get, set)
+  local T = W.threat
+  local f = CreateFrame("Frame", nil, self.body)
+  f:SetHeight(20)
+  local text = UI.Text(f, 11, W.color.text)
+  text:SetPoint("LEFT", f, "LEFT", 0, 0)
+  text:SetText(label)
+
+  local box = UI.Panel(f, W.color.bg, W.color.border)
+  box:SetWidth(130)
+  box:SetHeight(20)
+  box:SetPoint("RIGHT", f, "RIGHT", 0, 0)
+  local b = CreateFrame("Button", nil, box)
+  b:SetAllPoints(box)
+  b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+  local icon = b:CreateTexture(nil, "ARTWORK")
+  icon:SetWidth(16) icon:SetHeight(16)
+  icon:SetPoint("LEFT", b, "LEFT", 2, 0)
+  icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+  local name = UI.Text(b, 11, W.color.text)
+  name:SetPoint("LEFT", icon, "RIGHT", 4, 0)
+  name:SetPoint("RIGHT", b, "RIGHT", -4, 0)
+  name:SetJustifyH("LEFT")
+  f.button, f.icon, f.label = b, icon, name
+
+  local function refresh()
+    local v = get() or ""
+    if v == "" then
+      icon:Hide()
+      name:SetPoint("LEFT", b, "LEFT", 6, 0)
+      name:SetText("target them")
+      name:SetTextColor(unpack(W.color.textFaint))
+      return
+    end
+    local tex = T:SpellIcon(v)
+    icon:SetTexture(tex or "Interface\\Icons\\INV_Misc_QuestionMark")
+    icon:Show()
+    name:SetPoint("LEFT", icon, "RIGHT", 4, 0)
+    name:SetText(v)
+    if tex then name:SetTextColor(unpack(W.color.text))
+    else name:SetTextColor(1, 0.35, 0.3) end
+  end
+  local function choose(v)
+    set(v or "")
+    refresh()
+  end
+
+  -- A spell dropped or clicked in from the spellbook.
+  local function take()
+    local dragged = S.DraggedSpell()
+    if not dragged then return false end
+    choose(dragged)
+    S.cursorSpell = nil
+    if ClearCursor then ClearCursor() end
+    return true
+  end
+
+  local function spellMenu(tab)
+    local items = { { text = tab.name, header = true } }
+    local cur = get()
+    for _, sp in ipairs(tab.spells) do
+      table.insert(items, { text = sp.name, value = sp.name, checked = (sp.name == cur) })
+    end
+    UI.Menu(b, b, items, function(v) choose(v) end, 170)
+  end
+
+  local function tabMenu()
+    local book = T:SpellBook()
+    local items = { { text = "Your spellbook", header = true } }
+    for i, tab in ipairs(book) do
+      table.insert(items, { text = tab.name .. "  |cff9d9d9d" .. table.getn(tab.spells) .. "|r", value = i })
+    end
+    if table.getn(book) == 0 then
+      table.insert(items, { text = "(no spells found)", disabled = true })
+    end
+    table.insert(items, { text = "", header = true })
+    table.insert(items, { text = "Target them (no spell)", value = "none", checked = (get() or "") == "" })
+    UI.Menu(b, b, items, function(v)
+      if v == "none" then choose("") return end
+      if book[v] then spellMenu(book[v]) end
+    end, 170)
+  end
+
+  b:SetScript("OnReceiveDrag", function() take() end)
+  b:SetScript("OnClick", function()
+    if take() then return end
+    if arg1 == "RightButton" then choose("") return end
+    tabMenu()
+  end)
+  b:SetScript("OnEnter", function()
+    if not GameTooltip then return end
+    GameTooltip:SetOwner(b, "ANCHOR_RIGHT")
+    GameTooltip:AddLine(label)
+    local v = get() or ""
+    if v ~= "" and not T:SpellIcon(v) then
+      GameTooltip:AddLine("\"" .. v .. "\" is not in your spellbook.", 1, 0.35, 0.3)
+    end
+    GameTooltip:AddLine("Click: pick from your spellbook", 0.72, 0.75, 0.8)
+    GameTooltip:AddLine("Drag a spell from the spellbook here", 0.72, 0.75, 0.8)
+    GameTooltip:AddLine("Right-click: clear (click targets them)", 0.72, 0.75, 0.8)
+    GameTooltip:Show()
+  end)
+  b:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
+
+  f.Refresh = refresh
+  f.Take, f.Choose = take, choose   -- for tests
+  return place(self, f, true, false)
+end
+S.spellSlot = spellSlot
+
 function S:BuildThreat()
   local T = W.threat
   local function ts() return T:Settings() end
@@ -1062,13 +1201,15 @@ function S:BuildThreat()
     function(v) return v .. "px" end)
 
   -- Clicking the player a mob is on: a spell each, or empty to target them.
-  textField(self, "Click player: cast",
+  -- Picked from the spellbook or dragged in; see spellSlot.
+  self.whoSlots = {}
+  self.whoSlots.left = spellSlot(self, "Click player",
     function() return ts().mobWhoLeft end,
     function(v) ts().mobWhoLeft = v or "" end)
-  textField(self, "Right-click player",
+  self.whoSlots.right = spellSlot(self, "Right-click player",
     function() return ts().mobWhoRight end,
     function(v) ts().mobWhoRight = v or "" end)
-  textField(self, "Shift-click player",
+  self.whoSlots.shift = spellSlot(self, "Shift-click player",
     function() return ts().mobWhoShift end,
     function(v) ts().mobWhoShift = v or "" end)
 

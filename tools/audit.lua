@@ -96,6 +96,7 @@ declare(WOW, [[
   WorldFrame PlaySound UnitIsDead UnitCanAttack getglobal
   GetNumShapeshiftForms GetShapeshiftFormInfo
   GetSpellName GetSpellTexture GetSpellCooldown CastSpell CastSpellByName
+  GetNumSpellTabs GetSpellTabInfo IsPassiveSpell CursorHasSpell ClearCursor PickupSpell
   GetPlayerBuff GetPlayerBuffTexture
   TargetUnit TargetByName TargetLastTarget ClearTarget
   this event arg1 arg2 arg3 arg4 arg5 arg6 arg7 arg8 arg9

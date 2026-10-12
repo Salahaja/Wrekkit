@@ -122,7 +122,7 @@ local function region(kind)
     GetFont = function(self) return self._face, self._size end,
     SetText = function(self, t) self._text = t end,
     GetText = function(self) return self._text or "" end,
-    SetTextColor = function() end,
+    SetTextColor = function(self, r, g, b, a) self._color = { r, g, b, a } end,
     SetJustifyH = function() end,
     SetJustifyV = function() end,
     SetShadowColor = function() end,
@@ -318,6 +318,8 @@ GetNumPartyMembers = function() return 0 end
 GetRaidRosterInfo = function() return nil end
 SetCVar = function() end
 GetCVar = function() return "1" end
+-- The spellbook drag: settings wraps it to note what is on the cursor.
+PickupSpell = function() end
 IsInInstance = function() return 1, "raid" end
 GetAddOnMetadata = function() return "test" end
 GetBuildInfo = function() return "1.12.1", "5875", "2006" end
@@ -3299,6 +3301,93 @@ end)
      window -- it only grew the labels inside a window that stayed 310px. At
      180% the longest label wanted 259px of a column that would not give it,
      and it ran into the value beside it. ]]
+
+step("click spells: picked from the spellbook or dragged in, not typed", function()
+  -- A small paladin spellbook: a General tab, and Holy with two ranks of
+  -- one heal and a passive that must not be offered.
+  local book = {
+    { "Attack", "Interface\\Icons\\Attack" },
+    { "Holy Light", "Interface\\Icons\\Spell_Holy_HolyBolt" },
+    { "Holy Light", "Interface\\Icons\\Spell_Holy_HolyBolt" },
+    { "Blessing of Protection", "Interface\\Icons\\Spell_Holy_SealOfProtection" },
+    { "Illumination", "Interface\\Icons\\Spell_Holy_GreaterHeal" },
+  }
+  local real = { GetNumSpellTabs, GetSpellTabInfo, GetSpellName, GetSpellTexture, IsPassiveSpell,
+                 CursorHasSpell, ClearCursor }
+  GetNumSpellTabs = function() return 2 end
+  GetSpellTabInfo = function(t)
+    if t == 1 then return "General", "x", 0, 1 end
+    return "Holy", "x", 1, 4
+  end
+  GetSpellName = function(i) return book[i] and book[i][1] end
+  GetSpellTexture = function(i) return book[i] and book[i][2] end
+  IsPassiveSpell = function(i) return i == 5 end
+  local onCursor = false
+  CursorHasSpell = function() return onCursor end
+  ClearCursor = function() onCursor = false end
+
+  local ts = Wrekkit.threat:Settings()
+  ts.mobWhoLeft, ts.mobWhoRight, ts.mobWhoShift = "", "", ""
+  UI.settings:Show("plates")
+  local slots = UI.settings.whoSlots
+  if not (slots and slots.left and slots.left.button) then error("no click-spell slots in settings") end
+  slots.left:Refresh()
+  if slots.left.label:GetText() ~= "target them" then error("an empty slot does not say 'target them'") end
+
+  -- The spellbook: tabs first, passives and duplicate ranks left out.
+  local tabs = Wrekkit.threat:SpellBook()
+  if table.getn(tabs) ~= 2 or table.getn(tabs[2].spells) ~= 2 then
+    error("spellbook read wrong: " .. table.getn(tabs) .. " tabs, " ..
+      (tabs[2] and table.getn(tabs[2].spells) or 0) .. " Holy spells")
+  end
+
+  -- Click: the tab menu; pick Holy, then Holy Light.
+  arg1 = "LeftButton"
+  slots.left.button:GetScript("OnClick")()
+  -- The rows of the open menu, found by their label.
+  local function clickMenu(label)
+    local f = UI.MenuFrame()
+    for _, r in ipairs((f and f.rows) or {}) do
+      if r:IsShown() and r.label:GetText() and string.find(r.label:GetText(), label, 1, true) then
+        r:GetScript("OnClick")()
+        return true
+      end
+    end
+    error("no menu row '" .. label .. "'")
+  end
+  clickMenu("Holy")
+  clickMenu("Holy Light")
+  if ts.mobWhoLeft ~= "Holy Light" then error("picking from the menu set " .. tostring(ts.mobWhoLeft)) end
+  if slots.left.label:GetText() ~= "Holy Light" or not slots.left.icon:IsShown() then
+    error("the slot does not show the picked spell")
+  end
+
+  -- Drag: a spell picked up from the spellbook and dropped on a slot.
+  PickupSpell(4, "spell")
+  onCursor = true
+  slots.right.button:GetScript("OnReceiveDrag")()
+  if ts.mobWhoRight ~= "Blessing of Protection" then error("dragging in set " .. tostring(ts.mobWhoRight)) end
+  if onCursor then error("the dragged spell was left on the cursor") end
+
+  -- Right-click clears.
+  arg1 = "RightButton"
+  slots.right.button:GetScript("OnClick")()
+  if ts.mobWhoRight ~= "" then error("right-click did not clear the slot") end
+
+  -- A name from before, not in this spellbook: shown, in red.
+  ts.mobWhoShift = "Flash of Ligth"
+  slots.shift:Refresh()
+  local r = slots.shift.label._color or { slots.shift.label:GetTextColor() }
+  if slots.shift.label:GetText() ~= "Flash of Ligth" then error("an unknown name was not shown") end
+  if not (r[1] and r[1] > 0.9 and r[2] < 0.5) then error("an unknown spell is not shown in red") end
+
+  arg1 = nil
+  UI.CloseMenu()
+  ts.mobWhoLeft, ts.mobWhoRight, ts.mobWhoShift = "", "", ""
+  GetNumSpellTabs, GetSpellTabInfo, GetSpellName, GetSpellTexture, IsPassiveSpell,
+    CursorHasSpell, ClearCursor = real[1], real[2], real[3], real[4], real[5], real[6], real[7]
+  UI.settings.frame:Hide()
+end)
 
 step("the settings window widens with the text size", function()
   local real = Wrekkit.db.fontScale

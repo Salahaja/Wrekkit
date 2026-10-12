@@ -2153,6 +2153,56 @@ function T:UnitFor(name)
   return nil
 end
 
+--[[ Your spellbook, for picking a click spell: each tab with the spells you
+     can cast in it, one entry per spell (later entries are higher ranks and
+     replace earlier ones; the name casts the highest anyway), passives left
+     out. ]]
+function T:SpellBook()
+  local tabs = {}
+  if not (GetNumSpellTabs and GetSpellTabInfo and GetSpellName) then return tabs end
+  for t = 1, GetNumSpellTabs() or 0 do
+    local tabName, _, offset, num = GetSpellTabInfo(t)
+    local spells, at = {}, {}
+    for i = (offset or 0) + 1, (offset or 0) + (num or 0) do
+      local name = GetSpellName(i, "spell")
+      local passive = false
+      if IsPassiveSpell then
+        local ok, p = pcall(IsPassiveSpell, i, "spell")
+        passive = ok and p and p ~= 0
+      end
+      if name and not passive then
+        if at[name] then
+          spells[at[name]].index = i
+        else
+          table.insert(spells, { name = name, index = i })
+          at[name] = table.getn(spells)
+        end
+      end
+    end
+    if table.getn(spells) > 0 then
+      table.insert(tabs, { name = tabName or ("Tab " .. t), spells = spells })
+    end
+  end
+  return tabs
+end
+
+--- A spell's icon, if it is in your spellbook; nil when it is not (a typo,
+--- another class's spell, or one not learned yet).
+function T:SpellIcon(name)
+  if not name or name == "" or not GetSpellName then return nil end
+  local want, icon = string.lower(name), nil
+  local i = 1
+  while true do
+    local n = GetSpellName(i, "spell")
+    if not n then break end
+    if string.lower(n) == want then
+      icon = (GetSpellTexture and GetSpellTexture(i, "spell")) or "Interface\\Icons\\INV_Misc_QuestionMark"
+    end
+    i = i + 1
+  end
+  return icon
+end
+
 --[[ Act on the player a mob is hitting, from a click on their name in the
      mob frames: cast `spell` on them, or target them when no spell is set.
      A healer's way to answer "who has it" with the heal or the bubble.
