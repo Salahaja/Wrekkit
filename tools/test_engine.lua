@@ -3728,16 +3728,18 @@ print("\n-- prices: own scans, guild sharing, the auction scan --")
   Wrekkit.db.priceShare = nil
   Wrekkit.sync.Send, IsInGuild = realSend, realGuild
 
-  -- What to scan: what the recorded pulls used, plus the Dream Shard the
-  -- tea and Dreamtonic are priced by -- never the derived items themselves.
+  -- What to scan: every consumable, on any character -- a bank alt with no
+  -- raids recorded included -- plus the Dream Shard the tea and Dreamtonic
+  -- are priced by; never the derived items, nor conjured food and water.
   local realEncs = Wrekkit.db.encounters
-  Wrekkit.db.encounters = { { actors = { x = { consumeItem = { [13446] = { name = "Major Healing Potion", amount = 2 },
-                                                              [61675] = { name = "Nordanaar Herbal Tea", amount = 1 } } } } } }
+  Wrekkit.db.encounters = {}
   local targets, byId = A:Targets(), {}
   for _, t in ipairs(targets) do byId[t.id] = t.name end
-  check("scans what the pulls used", byId[13446], "Major Healing Potion")
-  check("  and the Small Dream Shard behind the tea", byId[61198] ~= nil, true)
+  check("with no raids recorded, still every consumable", table.getn(targets) > 300, true)
+  check("  Major Healing Potion among them", byId[13446], "Major Healing Potion")
+  check("  and the Small Dream Shard behind the tea", byId[61198], "Small Dream Shard")
   check("  not the tea itself", byId[61675], nil)
+  check("  nor conjured water", byId[8079], nil)
   Wrekkit.db.encounters = realEncs
 
   -- The scan, against a stub auction house: two pages of potions with a
@@ -3782,6 +3784,27 @@ print("\n-- prices: own scans, guild sharing, the auction scan --")
   check("an item with nothing listed keeps its old price", Wrekkit.db.prices[13452].p, 7777)
   check("  and the scan finished", A.running, false)
   check("  having priced one of two", A.priced, 1)
+
+  -- It never spins silently. The client holding every search back...
+  A.Targets = function() return { { id = 1, name = "A" }, { id = 2, name = "B" }, { id = 3, name = "C" },
+                                  { id = 4, name = "D" }, { id = 5, name = "E" } } end
+  CanSendAuctionQuery = function() return false end
+  A:Start()
+  A:Tick()
+  advance(21)
+  A:Tick()
+  check("a search the client will not send stops the scan", A.running, false)
+  -- ...or searches going out and nothing coming back (the session ended).
+  CanSendAuctionQuery = function() return true end
+  QueryAuctionItems = function() end
+  A:Start()
+  for _ = 1, 6 do
+    A:Tick()
+    advance(9)
+    A:Tick()
+  end
+  check("three searches unanswered in a row stop it too", A.running, false)
+  check("  having tried three, not all five", A.done, 2)
 
   P.Share, A.Targets = realShare, nil
   AuctionFrame, CanSendAuctionQuery, QueryAuctionItems = real.AuctionFrame, real.Can, real.Query

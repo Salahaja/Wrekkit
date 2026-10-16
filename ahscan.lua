@@ -8,10 +8,19 @@ is open, so this is a button on it (and /wrek scan) rather than something that
 runs in the background. It never starts by itself: a scan fights any search
 of your own for the same query slot, so it runs when asked.
 
-What it scans: every consumable used in your recorded pulls, plus the items
-other prices are derived from (the Small Dream Shard behind the tea and
-Dreamtonic) -- a few dozen items, not the whole table. With no pulls recorded
-yet it falls back to every consumable it knows.
+What it scans: every consumable it knows (W.consumesDB), plus the items other
+prices are derived from (the Small Dream Shard behind the tea and
+Dreamtonic) -- on any character, raided or not, so a bank alt standing at
+the auction house can price the lot. Conjured food and water are skipped;
+they are never listed. With AuctionQueryThrottle.dll in the client a search
+is answered in about a second, so the ~380 items take a few minutes.
+
+It never spins silently. The auction house stops answering when its session
+ends -- the window closed, or the stock AuctionFrame hidden, which closes the
+server session while QueryAuctionItems goes on accepting calls and doing
+nothing -- so a search the client will not let go out for GATE_GIVE_UP, or
+TIMEOUTS_GIVE_UP searches in a row with no answer, end the scan with a
+reason. /wrek scan status says where a running scan is.
 
 Each item is searched by name, every page read (up to MAX_PAGES), and only
 listings that are that exact item counted, per unit (buyout / stack size).
@@ -25,6 +34,8 @@ local A = W.ahscan
 
 local MAX_PAGES = 5         -- 250 listings of one consumable is plenty
 local QUERY_TIMEOUT = 8     -- seconds before an unanswered query is skipped
+local GATE_GIVE_UP = 20     -- seconds the client may refuse to send before we stop
+local TIMEOUTS_GIVE_UP = 3  -- unanswered searches in a row before we stop
 local TICK = 0.2
 
 A.queue, A.running = {}, false
@@ -42,11 +53,7 @@ end
 function A:Targets()
   local names = tableNames()
   local want = {}
-  for _, enc in ipairs((W.db and W.db.encounters) or {}) do
-    for _, a in pairs(enc.actors or {}) do
-      W.report.eachAbility(a.consumeItem, function(id) want[tonumber(id) or 0] = true end)
-    end
-  end
+  for id in pairs(names) do want[id] = true end
   -- The source of a derived price, by name: it is not a consumable, so the
   -- table does not know it and the client may not have it cached.
   for _, d in pairs(W.prices.DERIVED) do
@@ -55,12 +62,6 @@ function A:Targets()
   end
   -- Derived items are priced from their source, never searched themselves.
   for id in pairs(W.prices.DERIVED) do want[id] = nil end
-
-  local any = false
-  for id in pairs(want) do if id > 0 then any = true break end end
-  if not any then
-    for id in pairs(names) do want[id] = true end
-  end
 
   local out = {}
   for id in pairs(want) do
@@ -83,6 +84,7 @@ function A:Start()
   self.queue = self:Targets()
   self.total = table.getn(self.queue)
   self.done, self.priced = 0, 0
+  self.timeouts, self.gateSince = 0, nil
   self.running = true
   self:Next()
   self:Paint()
@@ -122,19 +124,58 @@ end
 function A:Tick()
   local cur = self.cur
   if not cur then return end
+  local now = GetTime()
   if self.sent then
     if self.got then
+      self.timeouts = 0
       self:Read()
-    elseif GetTime() - self.sent > QUERY_TIMEOUT then
+    elseif now - self.sent > QUERY_TIMEOUT then
+      -- No answer. Once is a dropped packet; several in a row is an auction
+      -- house that has stopped listening (its session ended).
+      self.timeouts = (self.timeouts or 0) + 1
+      if self.timeouts >= TIMEOUTS_GIVE_UP then
+        self:Stop("the auction house stopped answering -- close and reopen it, then scan again")
+        return
+      end
       self:Finish()
     end
     return
   end
   if CanSendAuctionQuery and CanSendAuctionQuery() then
+    self.gateSince = nil
     self.got = false
-    self.sent = GetTime()
+    self.sent = now
+    self.lastQuery = cur.name .. " p" .. cur.page
     QueryAuctionItems(cur.name, "", "", nil, nil, nil, cur.page, nil, nil)
+  else
+    -- The client is holding the search back. Normal for a moment between
+    -- searches; for long, it will not let one go at all.
+    self.gateSince = self.gateSince or now
+    if now - self.gateSince > GATE_GIVE_UP then
+      self:Stop("the auction house would not take a search for " .. GATE_GIVE_UP ..
+        "s -- close and reopen it, then scan again")
+    end
   end
+end
+
+--- /wrek scan status: where a scan is, and what the client says.
+function A:Status()
+  local can = CanSendAuctionQuery and CanSendAuctionQuery()
+  local aux = getglobal and getglobal("aux_frame")
+  W.Print("auction scan: " .. (self.running and "running" or "not running") ..
+    (self.running and string.format(" -- %.0f of %.0f done, %.0f priced", self.done or 0,
+      self.total or 0, self.priced or 0) or ""))
+  if self.cur then
+    W.Print("  on: " .. self.cur.name .. " (page " .. self.cur.page .. ")" ..
+      (self.sent and string.format(", searched %.1fs ago, answer %s", GetTime() - self.sent,
+        self.got and "in" or "not yet") or ", waiting to search"))
+  end
+  W.Print("  client allows a search now: " .. (can and "yes" or "no") ..
+    (self.gateSince and string.format(" (held back %.0fs)", GetTime() - self.gateSince) or ""))
+  W.Print("  auction house open: " .. (self.ahOpen and "yes" or "no") ..
+    "; stock window " .. ((AuctionFrame and AuctionFrame:IsVisible()) and "shown" or "hidden") ..
+    "; aux " .. ((aux and aux:IsVisible()) and "shown" or "hidden"))
+  if self.lastQuery then W.Print("  last search: " .. self.lastQuery) end
 end
 
 --- One page of results: the cheapest unit price of exactly this item.
