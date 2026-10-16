@@ -141,8 +141,12 @@ end
 IN_COMBAT = true
 UnitAffectingCombat = function(unit) return IN_COMBAT end
 GetItemInfo = function(id)
-  local items = { [13446] = "Major Healing Potion", [20520] = "Dark Rune" }
-  return items[id]
+  -- name, link, quality, level, type: the type tells a potion from a weapon.
+  local items = { [13446] = "Major Healing Potion", [20520] = "Dark Rune",
+                  [61277] = "Fist of the Forgotten Order" }
+  local types = { [61277] = "Weapon" }
+  if not items[id] then return nil end
+  return items[id], "item:" .. id, 1, 60, types[id] or "Consumable"
 end
 GetRealZoneText = function() return "Onyxia's Lair" end
 GetNumRaidMembers = function() return 0 end
@@ -228,6 +232,7 @@ end
 SendChatMessage = function(msg) table.insert(WIRE, { chat = msg }) end
 
 dofile("core.lua")
+dofile("consumes_db.lua")
 dofile("capture.lua")
 dofile("encounter.lua")
 dofile("metrics.lua")
@@ -510,16 +515,17 @@ Wrekkit.capture.groupMembers = {}
 
 print("\n-- consumables --")
 
---[[ SPELL_GO carries the item that triggered a cast as its FIRST argument:
-     zero for an ordinary spell, non-zero for a potion, elixir, flask,
-     scroll, bandage or food. That one field is the entire tracker, so the
-     test that matters is that a zero itemId is ignored. ]]
+--[[ A consumable is known by the spell it casts. SPELL_GO's item is
+     filled in for your own casts -- procs included -- and left 0 for
+     everyone else's, as this client really sends them. ]]
 Wrekkit.encounter.live = enc          -- re-open the finished pull
-fire("SPELL_GO_SELF", 13446, 11390, "0xP1", "0xP1")   -- a potion, twice
-fire("SPELL_GO_SELF", 13446, 11390, "0xP1", "0xP1")
-fire("SPELL_GO_SELF", 20520, 24707, "0xP1", "0xP1")   -- a different item
+fire("SPELL_GO_SELF", 13446, 17534, "0xP1", "0xP1")   -- your potion, twice
+fire("SPELL_GO_SELF", 13446, 17534, "0xP1", "0xP1")
+fire("SPELL_GO_SELF", 20520, 27869, "0xP1", "0xP1")   -- a different item
 fire("SPELL_GO_SELF", 0, 11267, "0xP1", "0xBoss")     -- a plain spell cast
-fire("SPELL_GO_OTHER", 13446, 11390, "0xP2", "0xP2")  -- someone else's potion
+fire("SPELL_GO_SELF", 61277, 20007, "0xP1", "0xP1")   -- a weapon's Crusader proc
+fire("SPELL_GO_OTHER", 0, 17534, "0xP2", "0xP2")      -- someone else's potion: no item
+fire("SPELL_GO_OTHER", 0, 17534, "0xBoss", "0xBoss")  -- a mob casting the same spell
 Wrekkit.encounter.live = nil
 
 local consView = Wrekkit.report:View({ enc }, { petMode = "merge" })
@@ -535,6 +541,16 @@ check("counted three items for the rogue", consBy["Fuff"] and consBy["Fuff"].con
 check("and one for the priest", consBy["Elfpriest"] and consBy["Elfpriest"].consumes, 1)
 check("a plain spell cast is NOT a consumable",
   consBy["Fuff"] and consBy["Fuff"].consumes ~= 4, true)
+check("nor is a weapon's proc, though an item came with it",
+  consBy["Fuff"] and consBy["Fuff"].consumes, 3)
+check("another player's potion, with no item, is known by its spell",
+  consBy["Elfpriest"] and consBy["Elfpriest"].consumes, 1)
+check("a mob casting a potion's spell is not a consumer", consBy["Onyxia"] and consBy["Onyxia"].consumes or 0, 0)
+check("your own use teaches the spell", Wrekkit.db.consumeSpells and Wrekkit.db.consumeSpells[17534], 13446)
+check("a shared spell goes to the original item",
+  Wrekkit.capture:ConsumableItem(0, 17531, "0xP2"), 13444)
+check("named from the table when the client has not cached it",
+  Wrekkit.capture:Item(13444, 17531), "Major Mana Potion")
 
 -- The drilldown separates them by item, not one lumped total.
 local consDetail = Wrekkit.report:Abilities(consBy["Fuff"], "consumes")

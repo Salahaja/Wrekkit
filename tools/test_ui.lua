@@ -370,6 +370,7 @@ end
 ----------------------------------------------------------------------
 
 dofile("core.lua")
+dofile("consumes_db.lua")
 dofile("capture.lua")
 dofile("encounter.lua")
 dofile("metrics.lua")

@@ -535,6 +535,14 @@ function C:Item(itemId, spellId)
     return name
   end
 
+  -- Not in the client's cache (someone else's potion): the table's name.
+  local known = W.consumesDB and spellId and W.consumesDB[spellId]
+  if known then
+    for i = 1, table.getn(known), 2 do
+      if known[i] == itemId then return known[i + 1] end
+    end
+  end
+
   local spellName = self:Spell(spellId)
   if spellName and spellName ~= "Melee" then return spellName end
   return "Item " .. tostring(itemId)
@@ -805,19 +813,65 @@ function C:ENVIRONMENTAL(unit, damageType, damage, absorb, resist)
   W.encounter:Environmental(unit, damageType, damage, num(absorb), num(resist))
 end
 
---[[ SPELL_GO fires for every cast, and its FIRST argument is the item that
-     triggered it -- zero for an ordinary spell, non-zero for a potion,
-     elixir, flask, scroll, bandage or food.
+--[[ Which consumable a cast was, or nil if it was not one.
 
-     That single field is the whole consumable tracker. A spell-id whitelist
-     would need constant maintenance and would miss anything this server added
-     itself; "did a cast come from an item" is true by construction. ]]
+     SPELL_GO's first argument, the item behind a cast, turned out to be
+     two-faced. It IS filled in for your own casts -- but for every one: a
+     weapon's Crusader proc, Hand of Justice's extra swing and a trinket's
+     proc all arrive tagged with the item, and so do hearthstones. And it is
+     NOT filled in for anyone else's: another player's potion is a bare
+     cast of 17534 with item 0. Counted on "an item was behind it", the
+     tracker counted your procs and nobody's potions.
+
+     So a consumable is known by the spell it casts:
+       an item came with it   yours. Kept only if that item is a consumable
+                              (in the table, or the client calls it one) --
+                              and its spell is learned, for when others cast it
+       no item                matched by spell: what you have learned, then
+                              W.consumesDB (tools/make_consumes.lua, built from
+                              the client's item cache). Players only.
+     A spell several items cast (Drink, Food, a server's joke potion reusing
+     Major Healing Potion's) is credited to the first, the lowest item id --
+     the original -- unless your own use taught which. ]]
+function C:ConsumableItem(itemId, spellId, casterGuid)
+  local db = W.consumesDB or {}
+  if itemId ~= 0 then
+    local known = db[spellId]
+    local isConsumable = false
+    if known then
+      for i = 1, table.getn(known), 2 do
+        if known[i] == itemId then isConsumable = true end
+      end
+    end
+    if not isConsumable and GetItemInfo then
+      local _, _, _, _, itemType = GetItemInfo(itemId)
+      isConsumable = (itemType == "Consumable")
+    end
+    if not isConsumable then return nil end
+    if W.db then
+      W.db.consumeSpells = W.db.consumeSpells or {}
+      W.db.consumeSpells[spellId] = itemId
+    end
+    return itemId
+  end
+  -- Someone else's (or an untagged cast): by spell, players only.
+  local u = self.units[casterGuid] or self:Unit(casterGuid)
+  if not u or not u.isPlayer then return nil end
+  local learned = W.db and W.db.consumeSpells and W.db.consumeSpells[spellId]
+  if learned then return learned end
+  local known = db[spellId]
+  return known and known[1] or nil
+end
+
+--[[ SPELL_GO fires for every cast; a consumable is told apart by the spell
+     it casts (ConsumableItem). ]]
 function C:SPELL_GO(itemId, spellId, casterGuid, targetGuid)
   -- Every cast: a deep-talent ability says what the caster is specced.
   if W.talents then W.talents:OnCast(casterGuid, spellId) end
-  itemId = num(itemId)
-  if itemId == 0 then return end
-  W.encounter:Consumable(casterGuid, itemId, num(spellId))
+  spellId = num(spellId)
+  local item = self:ConsumableItem(num(itemId), spellId, casterGuid)
+  if not item then return end
+  W.encounter:Consumable(casterGuid, item, spellId)
 end
 
 ----------------------------------------------------------------------
