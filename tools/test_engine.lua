@@ -3806,6 +3806,21 @@ print("\n-- prices: own scans, guild sharing, the auction scan --")
   check("three searches unanswered in a row stop it too", A.running, false)
   check("  having tried three, not all five", A.done, 2)
 
+  -- Paced by the server: an answer is read and the next search sent at
+  -- once, in the event, with no tick in between.
+  local asked = {}
+  QueryAuctionItems = function(name, _, _, _, _, _, page) table.insert(asked, name .. "#" .. page) cur = { total = 0 } end
+  A.Targets = function() return { { id = 1, name = "X" }, { id = 2, name = "Y" } } end
+  A:StartEvents()
+  A:Start()                                   -- the first search goes out on start
+  check("the first search goes out at once", asked[1], "X#0")
+  local was = event
+  event = "AUCTION_ITEM_LIST_UPDATE"
+  A.frame:GetScript("OnEvent")()              -- X answered
+  event = was
+  check("its answer sends the next search straight away", asked[2], "Y#0")
+  A:Stop()
+
   P.Share, A.Targets = realShare, nil
   AuctionFrame, CanSendAuctionQuery, QueryAuctionItems = real.AuctionFrame, real.Can, real.Query
   GetNumAuctionItems, GetAuctionItemInfo, GetAuctionItemLink = real.Num, real.Info, real.Link

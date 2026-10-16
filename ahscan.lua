@@ -15,6 +15,10 @@ the auction house can price the lot. Conjured food and water are skipped;
 they are never listed. With AuctionQueryThrottle.dll in the client a search
 is answered in about a second, so the ~380 items take a few minutes.
 
+Paced by the server, not by us: each answer is read the moment it arrives
+and the next search sent at once (AUCTION_ITEM_LIST_UPDATE); the 0.2s tick
+only covers the first search, the waits and the timeouts.
+
 It never spins silently. The auction house stops answering when its session
 ends -- the window closed, or the stock AuctionFrame hidden, which closes the
 server session while QueryAuctionItems goes on accepting calls and doing
@@ -280,7 +284,18 @@ function A:StartEvents()
   f:RegisterEvent("AUCTION_ITEM_LIST_UPDATE")
   f:SetScript("OnEvent", function()
     if event == "AUCTION_ITEM_LIST_UPDATE" then
-      if A.running and A.sent then A.got = true end
+      --[[ Read the answer the moment it lands and send the next search in
+           the same breath, rather than waiting for the tick: AuctionQueryThrottle
+           opens the client's gate BEFORE this event fires, so a search can go
+           straight back out and a scan runs at the server's own pace. The
+           0.2s tick remains for the first search, the waits and the timeouts. ]]
+      if A.running and A.sent then
+        A.got = true
+        W.Guard("auction scan", function()
+          A:Tick()                                   -- read this page
+          if A.running and not A.sent then A:Tick() end   -- and ask for the next
+        end)
+      end
     elseif event == "AUCTION_HOUSE_SHOW" then
       A.ahOpen = true
       W.Guard("auction scan button", function()
