@@ -97,10 +97,14 @@ local function consider(guid, now)
   m.max = UnitHealthMax(guid) or 0
 
   local tok = guid .. "target"
-  m.who, m.onMe, m.whoClass = nil, false, nil
-  if UnitExists(tok) then
+  m.who, m.onMe, m.whoClass, m.whoGuid = nil, false, nil, nil
+  local exists, whoGuid = UnitExists(tok)
+  if exists then
     m.onMe = UnitIsUnit(tok, "player") and true or false
     m.who = UnitName(tok)
+    -- SuperWoW hands back the guid: how a click reaches someone outside
+    -- the group, who has no raid or party unit to cast at.
+    if type(whoGuid) == "string" then m.whoGuid = whoGuid end
     local _, class = UnitClass(tok)
     m.whoClass = class
   end
@@ -446,7 +450,7 @@ function MF:ClickWho(b, button)
     end
     return
   end
-  T:CastOn(name, whoAction(button))
+  T:CastOn(name, whoAction(button), b.mob and b.mob.whoGuid)
 end
 
 function MF:WhoTooltip(b)

@@ -155,8 +155,9 @@ M.list = {
     integer = true,
   },
   {
-    --[[ The same consumables, priced at the auction house: aux's value for
-         each item, shared scans from other accounts included (W.prices).
+    --[[ The same consumables, priced at the auction house: the latest
+         lowest buyout aux has seen for each item, kept while it is out of
+         stock, shared scans from other accounts included (W.prices).
          Live like everything else -- it is the Consumables count times a
          price, so it moves the moment someone drinks something. Items aux
          has never seen count for nothing and are flagged rather than

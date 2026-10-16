@@ -7,6 +7,7 @@
 ## SavedVariables: WrekkitDB
 
 core.lua
+consumes_db.lua
 capture.lua
 encounter.lua
 metrics.lua
@@ -19,6 +20,7 @@ announce.lua
 threat.lua
 talents.lua
 prices.lua
+ahscan.lua
 
 ui\widgets.lua
 ui\chart.lua

@@ -563,6 +563,16 @@ function S:OnMessage(prefix, msg, channel, sender)
   if to and to ~= "*" and to ~= UnitName("player") then return end
 
   ------------------------------------------------------------------
+  -- consumable prices (W.prices): Q~*~id:copper:time,...
+  ------------------------------------------------------------------
+  -- From guildmates only, and only while price sharing is on; that switch
+  -- is separate from log sharing, which is about your recordings.
+  if kind == "Q" then
+    if channel == "GUILD" and W.prices then W.prices:OnShared(f[3], sender) end
+    return
+  end
+
+  ------------------------------------------------------------------
   -- live totals
   ------------------------------------------------------------------
   -- M~to~name~class~dmg~petDmg~heal~taken~petTaken~active~activeOwn~ago~dur~pid~foe

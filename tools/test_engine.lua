@@ -141,8 +141,12 @@ end
 IN_COMBAT = true
 UnitAffectingCombat = function(unit) return IN_COMBAT end
 GetItemInfo = function(id)
-  local items = { [13446] = "Major Healing Potion", [20520] = "Dark Rune" }
-  return items[id]
+  -- name, link, quality, level, type: the type tells a potion from a weapon.
+  local items = { [13446] = "Major Healing Potion", [20520] = "Dark Rune",
+                  [61277] = "Fist of the Forgotten Order" }
+  local types = { [61277] = "Weapon" }
+  if not items[id] then return nil end
+  return items[id], "item:" .. id, 1, 60, types[id] or "Consumable"
 end
 GetRealZoneText = function() return "Onyxia's Lair" end
 GetNumRaidMembers = function() return 0 end
@@ -228,6 +232,7 @@ end
 SendChatMessage = function(msg) table.insert(WIRE, { chat = msg }) end
 
 dofile("core.lua")
+dofile("consumes_db.lua")
 dofile("capture.lua")
 dofile("encounter.lua")
 dofile("metrics.lua")
@@ -240,6 +245,7 @@ dofile("announce.lua")
 dofile("threat.lua")
 dofile("talents.lua")
 dofile("prices.lua")
+dofile("ahscan.lua")
 
 WrekkitDB = nil
 Wrekkit.InitDB()
@@ -510,16 +516,17 @@ Wrekkit.capture.groupMembers = {}
 
 print("\n-- consumables --")
 
---[[ SPELL_GO carries the item that triggered a cast as its FIRST argument:
-     zero for an ordinary spell, non-zero for a potion, elixir, flask,
-     scroll, bandage or food. That one field is the entire tracker, so the
-     test that matters is that a zero itemId is ignored. ]]
+--[[ A consumable is known by the spell it casts. SPELL_GO's item is
+     filled in for your own casts -- procs included -- and left 0 for
+     everyone else's, as this client really sends them. ]]
 Wrekkit.encounter.live = enc          -- re-open the finished pull
-fire("SPELL_GO_SELF", 13446, 11390, "0xP1", "0xP1")   -- a potion, twice
-fire("SPELL_GO_SELF", 13446, 11390, "0xP1", "0xP1")
-fire("SPELL_GO_SELF", 20520, 24707, "0xP1", "0xP1")   -- a different item
+fire("SPELL_GO_SELF", 13446, 17534, "0xP1", "0xP1")   -- your potion, twice
+fire("SPELL_GO_SELF", 13446, 17534, "0xP1", "0xP1")
+fire("SPELL_GO_SELF", 20520, 27869, "0xP1", "0xP1")   -- a different item
 fire("SPELL_GO_SELF", 0, 11267, "0xP1", "0xBoss")     -- a plain spell cast
-fire("SPELL_GO_OTHER", 13446, 11390, "0xP2", "0xP2")  -- someone else's potion
+fire("SPELL_GO_SELF", 61277, 20007, "0xP1", "0xP1")   -- a weapon's Crusader proc
+fire("SPELL_GO_OTHER", 0, 17534, "0xP2", "0xP2")      -- someone else's potion: no item
+fire("SPELL_GO_OTHER", 0, 17534, "0xBoss", "0xBoss")  -- a mob casting the same spell
 Wrekkit.encounter.live = nil
 
 local consView = Wrekkit.report:View({ enc }, { petMode = "merge" })
@@ -535,6 +542,16 @@ check("counted three items for the rogue", consBy["Fuff"] and consBy["Fuff"].con
 check("and one for the priest", consBy["Elfpriest"] and consBy["Elfpriest"].consumes, 1)
 check("a plain spell cast is NOT a consumable",
   consBy["Fuff"] and consBy["Fuff"].consumes ~= 4, true)
+check("nor is a weapon's proc, though an item came with it",
+  consBy["Fuff"] and consBy["Fuff"].consumes, 3)
+check("another player's potion, with no item, is known by its spell",
+  consBy["Elfpriest"] and consBy["Elfpriest"].consumes, 1)
+check("a mob casting a potion's spell is not a consumer", consBy["Onyxia"] and consBy["Onyxia"].consumes or 0, 0)
+check("your own use teaches the spell", Wrekkit.db.consumeSpells and Wrekkit.db.consumeSpells[17534], 13446)
+check("a shared spell goes to the original item",
+  Wrekkit.capture:ConsumableItem(0, 17531, "0xP2"), 13444)
+check("named from the table when the client has not cached it",
+  Wrekkit.capture:Item(13444, 17531), "Major Mana Potion")
 
 -- The drilldown separates them by item, not one lumped total.
 local consDetail = Wrekkit.report:Abilities(consBy["Fuff"], "consumes")
@@ -555,25 +572,39 @@ check("the repeated one is counted twice", consDetail[1].amount, 2)
   check("money: copper", Wrekkit.Money(8), "8c")
   check("money: nothing", Wrekkit.Money(0), "-")
 
-  -- aux, as its module loader serves it: value by "id:suffix".
+  -- aux, as its module loader serves it, by "id:suffix": today's lowest
+  -- buyout, and one data point per earlier day it was listed, newest first.
+  -- Its weighted "Value" is deliberately not used: it lags the market.
   local asked = {}
+  local today = { ["20520:0"] = 300, ["13444:0"] = 9000, ["61198:0"] = 50000, ["61675:0"] = 999999 }
+  local days = {
+    -- Out of stock today: the latest day it WAS listed, not an older one.
+    ["13446:0"] = { { value = 12000, time = 2 }, { value = 15000, time = 1 } },
+    ["13444:0"] = { { value = 5000, time = 2 } },
+  }
   local history = {
-    value = function(key) table.insert(asked, key) if key == "13446:0" then return 12000 end end,
-    market_value = function(key) if key == "20520:0" then return 300 end end,
+    market_value = function(key) table.insert(asked, key) return today[key] end,
+    data_points = function(key) return days[key] or {} end,
+    value = function() return 777777 end,
   }
   local realLoaded, realRequire = IsAddOnLoaded, require
   IsAddOnLoaded = function(name) return name == "aux-addon" end
   require = function(name) if name == "aux.core.history" then return history end end
   P.aux, P.cache = nil, {}
-  check("aux's value for a scanned item", P:Value(13446), 12000)
+  check("not listed today: the latest day's price, kept while out of stock", P:Value(13446), 12000)
   check("  asked by aux's own key", asked[1], "13446:0")
-  check("today's lowest buyout when there is no history yet", P:Value(20520), 300)
+  check("listed today: today's lowest buyout", P:Value(20520), 300)
+  check("today's price beats an older day's", P:Value(13444), 9000)
   check("nothing for an item aux never saw", P:Value(99999), nil)
-  history.value = function() return 99 end
+  -- Nordanaar Herbal Tea and Dreamtonic are valued by the Small Dream
+  -- Shard, whatever their own listings say.
+  check("Nordanaar Herbal Tea: a fifth of a Small Dream Shard", P:Value(61675), 10000)
+  check("Dreamtonic: one Small Dream Shard", P:Value(61423), 50000)
+  days["13446:0"] = { { value = 99, time = 3 } }
   check("  and a minute's cache, not a lookup per repaint", P:Value(13446), 12000)
   advance(61)
   check("  then asked again", P:Value(13446), 99)
-  history.value = function(key) if key == "13446:0" then return 12000 end end
+  days["13446:0"] = { { value = 12000, time = 2 } }
   P.cache = {}
 
   local cost = Wrekkit.metrics.Get("consumeCost")
@@ -3582,6 +3613,170 @@ print("\n-- mob watch: no AGGRO shouts when solo --")
   UnitAffectingCombat, UnitCanAttack, UnitExists, UnitIsUnit = real.UAC, real.UCA, real.UE, real.UIU
   GetNumPartyMembers, GetNumRaidMembers = real.party, real.raid
   T.watch = {}
+end)()
+
+----------------------------------------------------------------------
+print("\n-- prices: own scans, guild sharing, the auction scan --")
+----------------------------------------------------------------------
+;(function()
+  local P, A = Wrekkit.prices, Wrekkit.ahscan
+  local realDB = Wrekkit.db.prices
+  Wrekkit.db.prices, P.cache, P.aux = {}, {}, false   -- no aux: only our own record
+
+  -- The newest sighting wins; an older one arriving late does not.
+  check("a price is recorded", P:Record(13446, 12000, 1000, "Me"), true)
+  check("  and used", P:Value(13446), 12000)
+  check("an older sighting does not replace it", P:Record(13446, 9000, 900, "Bob"), false)
+  P.cache = {}
+  check("  the price stands", P:Value(13446), 12000)
+  check("a newer one does", P:Record(13446, 11000, 1100, "Bob"), true)
+  check("  and is used", P:Value(13446), 11000)
+
+  -- Against aux: whichever was seen later.
+  local history = { market_value = function() return nil end,
+                    data_points = function(k) if k == "13446:0" then return { { value = 15000, time = 1200 } } end return {} end }
+  P.aux, P.cache = history, {}
+  check("aux's newer day beats an older own record", P:Value(13446), 15000)
+  P:Record(13446, 10000, 1300, "Me")
+  check("an own scan newer than aux's day beats it", P:Value(13446), 10000)
+  P.aux, P.cache = false, {}
+
+  -- Guild sharing: only your own sightings go out, as Q~*~id:copper:time.
+  local sent = {}
+  local realSend, realGuild = Wrekkit.sync.Send, IsInGuild
+  Wrekkit.sync.Send = function(self, to, body, channel) table.insert(sent, { to, body, channel }) return true end
+  IsInGuild = function() return 1 end
+  Wrekkit.db.prices = {}
+  local now = time()
+  P:Record(13446, 12000, now, UnitName("player"))
+  P:Record(13444, 9000, now, "SomeoneElse")   -- told to us: never re-sent
+  check("shares your own sightings", P:Share(), 1)
+  check("  to the guild", sent[1] and sent[1][3], "GUILD")
+  check("  as id:copper:time", sent[1] and sent[1][2], string.format("Q~13446:12000:%.0f", now))
+  -- And the other way: a guildmate's message, through the sync dispatcher.
+  local inbound = string.format("Q~*~20520:300:%.0f,13446:1:%.0f", now, now - 99999)
+  Wrekkit.sync:OnMessage("WREKKIT", inbound, "GUILD", "Guildie")
+  P.cache = {}
+  check("a guildmate's price is taken", P:Value(20520), 300)
+  check("  but not an older one than yours", P:Value(13446), 12000)
+  Wrekkit.db.priceShare = false
+  check("switched off, nothing is shared", P:Share(), 0)
+  Wrekkit.sync:OnMessage("WREKKIT", string.format("Q~*~9155:7:%.0f", now), "GUILD", "Guildie")
+  P.cache = {}
+  check("  nor taken", P:Value(9155), nil)
+  Wrekkit.db.priceShare = nil
+  Wrekkit.sync.Send, IsInGuild = realSend, realGuild
+
+  -- What to scan: what the recorded pulls used, plus the Dream Shard the
+  -- tea and Dreamtonic are priced by -- never the derived items themselves.
+  local realEncs = Wrekkit.db.encounters
+  Wrekkit.db.encounters = { { actors = { x = { consumeItem = { [13446] = { name = "Major Healing Potion", amount = 2 },
+                                                              [61675] = { name = "Nordanaar Herbal Tea", amount = 1 } } } } } }
+  local targets, byId = A:Targets(), {}
+  for _, t in ipairs(targets) do byId[t.id] = t.name end
+  check("scans what the pulls used", byId[13446], "Major Healing Potion")
+  check("  and the Small Dream Shard behind the tea", byId[61198] ~= nil, true)
+  check("  not the tea itself", byId[61675], nil)
+  Wrekkit.db.encounters = realEncs
+
+  -- The scan, against a stub auction house: two pages of potions with a
+  -- stack and a lookalike, then an item with nothing listed.
+  local listings = {
+    ["Major Healing Potion"] = {
+      [0] = { { 13446, 5, 50000 }, { 13447, 1, 100 }, { 13446, 1, 0 } },   -- 10000 each; a different item; bid only
+      [1] = { { 13446, 2, 16000 } },                                       -- 8000 each: the cheapest
+    },
+    ["Elixir of the Mongoose"] = { [0] = {} },
+  }
+  local cur, queries = {}, {}
+  local real = { AuctionFrame = AuctionFrame, Can = CanSendAuctionQuery, Query = QueryAuctionItems,
+                 Num = GetNumAuctionItems, Info = GetAuctionItemInfo, Link = GetAuctionItemLink }
+  AuctionFrame = { IsVisible = function() return true end }
+  CanSendAuctionQuery = function() return true end
+  QueryAuctionItems = function(name, _, _, _, _, _, page)
+    table.insert(queries, name .. "#" .. page)
+    local all = listings[name] or {}
+    cur = all[page] or {}
+    local total = 0
+    for _, p in pairs(all) do total = total + table.getn(p) end
+    cur.total = (name == "Major Healing Potion") and 60 or total
+    A.got = true
+  end
+  GetNumAuctionItems = function() return table.getn(cur), cur.total end
+  GetAuctionItemLink = function(_, i) return cur[i] and ("|Hitem:" .. cur[i][1] .. ":0:0:0|h") end
+  GetAuctionItemInfo = function(_, i)
+    local l = cur[i]
+    return "x", "tex", l[2], 1, 1, 60, 0, 0, l[3]
+  end
+  Wrekkit.db.prices = {}
+  P:Record(13452, 7777, 1, "Me")           -- Mongoose, from long ago
+  A.Targets = function() return { { id = 13446, name = "Major Healing Potion" },
+                                  { id = 13452, name = "Elixir of the Mongoose" } } end
+  local realShare = P.Share
+  P.Share = function() return 0 end
+  A:Start()
+  for _ = 1, 20 do if A.running then A:Tick() end end
+  check("the scan read every page", queries[2], "Major Healing Potion#1")
+  check("  and kept the cheapest unit price of exactly that item", Wrekkit.db.prices[13446] and Wrekkit.db.prices[13446].p, 8000)
+  check("an item with nothing listed keeps its old price", Wrekkit.db.prices[13452].p, 7777)
+  check("  and the scan finished", A.running, false)
+  check("  having priced one of two", A.priced, 1)
+
+  P.Share, A.Targets = realShare, nil
+  AuctionFrame, CanSendAuctionQuery, QueryAuctionItems = real.AuctionFrame, real.Can, real.Query
+  GetNumAuctionItems, GetAuctionItemInfo, GetAuctionItemLink = real.Num, real.Info, real.Link
+  Wrekkit.db.prices, P.cache, P.aux = realDB, {}, nil
+end)()
+
+----------------------------------------------------------------------
+print("\n-- click spells on players outside the group --")
+----------------------------------------------------------------------
+;(function()
+  local T = Wrekkit.threat
+  local s = T:Settings()
+  local casts = {}
+  local real = { cast = CastSpellByName, target = TargetUnit, byName = TargetByName, assist = UnitCanAssist,
+                 info = SpellInfo, exists = UnitExists, name = UnitName, last = TargetLastTarget,
+                 party = GetNumPartyMembers, raid = GetNumRaidMembers }
+  CastSpellByName = function(spell, unit) table.insert(casts, spell .. "@" .. tostring(unit)) end
+  GetNumPartyMembers = function() return 0 end
+  GetNumRaidMembers = function() return 0 end
+  local friendly = true
+  UnitCanAssist = function() return friendly end
+
+  -- Off (the default): not in the group, nothing cast.
+  s.castOutsideGroup = false
+  check("off by default", T:CastOn("Stranger", "Flash of Light", "0xFriend"), false)
+  check("  and nothing was cast", table.getn(casts), 0)
+
+  -- On, with SuperWoW: straight at the guid the mob frame read.
+  s.castOutsideGroup = true
+  SpellInfo = SpellInfo or function() return "x" end
+  check("on: cast on someone outside the group", T:CastOn("Stranger", "Flash of Light", "0xFriend"), true)
+  check("  at their guid", casts[1], "Flash of Light@0xFriend")
+
+  -- Never at someone you cannot help.
+  friendly = false
+  check("never on a player you can't help", T:CastOn("Hostile", "Flash of Light", "0xFoe"), false)
+  check("  nothing cast", table.getn(casts), 1)
+  friendly = true
+
+  -- No guid (no SuperWoW): by name, then the old target back.
+  local targeted, backed = nil, false
+  local current = "Mob"
+  TargetByName = function(n) targeted = n current = n end
+  UnitExists = function(u) if u == "target" then return current ~= nil end return real.exists(u) end
+  UnitName = function(u) if u == "target" then return current end return real.name(u) end
+  TargetLastTarget = function() backed = true current = "Mob" end
+  check("without a guid: by name", T:CastOn("Stranger", "Renew", nil), true)
+  check("  targeted by name", targeted, "Stranger")
+  check("  cast on the target", casts[2], "Renew@nil")
+  check("  and the old target came back", backed, true)
+
+  CastSpellByName, TargetUnit, TargetByName, UnitCanAssist = real.cast, real.target, real.byName, real.assist
+  SpellInfo, UnitExists, UnitName, TargetLastTarget = real.info, real.exists, real.name, real.last
+  GetNumPartyMembers, GetNumRaidMembers = real.party, real.raid
+  s.castOutsideGroup = false
 end)()
 
 ----------------------------------------------------------------------

@@ -93,11 +93,13 @@ declare(WOW, [[
   SetCVar GetCVar SendChatMessage SendAddonMessage GetAddOnMetadata
   GetNumSavedInstances GetSavedInstanceInfo UnitIsGhost
   GetItemInfo IsInGuild GetCursorPosition Minimap IsShiftKeyDown
+  QueryAuctionItems CanSendAuctionQuery GetNumAuctionItems GetAuctionItemInfo GetAuctionItemLink AuctionFrame
   WorldFrame PlaySound UnitIsDead UnitCanAttack getglobal
   GetNumShapeshiftForms GetShapeshiftFormInfo
   GetSpellName GetSpellTexture GetSpellCooldown CastSpell CastSpellByName
+  GetNumSpellTabs GetSpellTabInfo IsPassiveSpell CursorHasSpell ClearCursor PickupSpell
   GetPlayerBuff GetPlayerBuffTexture
-  TargetUnit TargetByName TargetLastTarget ClearTarget
+  TargetUnit TargetByName TargetLastTarget ClearTarget UnitCanAssist
   this event arg1 arg2 arg3 arg4 arg5 arg6 arg7 arg8 arg9
 ]])
 
