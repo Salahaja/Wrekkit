@@ -585,6 +585,18 @@ check("the repeated one is counted twice", consDetail[1].amount, 2)
   check("  asked by aux's own key", asked[1], "13446:0")
   check("today's lowest buyout when there is no history yet", P:Value(20520), 300)
   check("nothing for an item aux never saw", P:Value(99999), nil)
+  -- Nordanaar Herbal Tea is valued at a fifth of a Small Dream Shard,
+  -- whatever its own listings say.
+  local shard = history.value
+  history.value = function(key)
+    if key == "61198:0" then return 50000 end
+    if key == "61675:0" then return 999999 end
+    return shard(key)
+  end
+  P.cache = {}
+  check("Nordanaar Herbal Tea: a fifth of a Small Dream Shard", P:Value(61675), 10000)
+  history.value = shard
+  P.cache = {}
   history.value = function() return 99 end
   check("  and a minute's cache, not a lookup per repaint", P:Value(13446), 12000)
   advance(61)

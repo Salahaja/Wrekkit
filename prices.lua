@@ -40,10 +40,23 @@ function P:Aux()
   return self.aux or nil
 end
 
+--[[ Items priced from another item rather than from their own auctions:
+     itemId -> { item it is valued by, how many of it one is worth }.
+       Nordanaar Herbal Tea   1/5 of a Small Dream Shard -- what it costs
+                              to come by, whatever its own listings say. ]]
+P.DERIVED = {
+  [61675] = { from = 61198, share = 1 / 5 },
+}
+
 --- What one of an item costs, in copper, or nil when nothing knows.
 function P:Value(itemId)
   itemId = tonumber(itemId)
   if not itemId or itemId <= 0 then return nil end
+  local derived = self.DERIVED[itemId]
+  if derived then
+    local base = self:Value(derived.from)
+    return base and base * derived.share or nil
+  end
   local now = GetTime()
   local c = self.cache[itemId]
   if c and now - c.at < CACHE then return c.value or nil end
