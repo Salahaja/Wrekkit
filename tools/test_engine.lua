@@ -245,6 +245,7 @@ dofile("announce.lua")
 dofile("threat.lua")
 dofile("talents.lua")
 dofile("prices.lua")
+dofile("ahscan.lua")
 
 WrekkitDB = nil
 Wrekkit.InitDB()
@@ -3612,6 +3613,119 @@ print("\n-- mob watch: no AGGRO shouts when solo --")
   UnitAffectingCombat, UnitCanAttack, UnitExists, UnitIsUnit = real.UAC, real.UCA, real.UE, real.UIU
   GetNumPartyMembers, GetNumRaidMembers = real.party, real.raid
   T.watch = {}
+end)()
+
+----------------------------------------------------------------------
+print("\n-- prices: own scans, guild sharing, the auction scan --")
+----------------------------------------------------------------------
+;(function()
+  local P, A = Wrekkit.prices, Wrekkit.ahscan
+  local realDB = Wrekkit.db.prices
+  Wrekkit.db.prices, P.cache, P.aux = {}, {}, false   -- no aux: only our own record
+
+  -- The newest sighting wins; an older one arriving late does not.
+  check("a price is recorded", P:Record(13446, 12000, 1000, "Me"), true)
+  check("  and used", P:Value(13446), 12000)
+  check("an older sighting does not replace it", P:Record(13446, 9000, 900, "Bob"), false)
+  P.cache = {}
+  check("  the price stands", P:Value(13446), 12000)
+  check("a newer one does", P:Record(13446, 11000, 1100, "Bob"), true)
+  check("  and is used", P:Value(13446), 11000)
+
+  -- Against aux: whichever was seen later.
+  local history = { market_value = function() return nil end,
+                    data_points = function(k) if k == "13446:0" then return { { value = 15000, time = 1200 } } end return {} end }
+  P.aux, P.cache = history, {}
+  check("aux's newer day beats an older own record", P:Value(13446), 15000)
+  P:Record(13446, 10000, 1300, "Me")
+  check("an own scan newer than aux's day beats it", P:Value(13446), 10000)
+  P.aux, P.cache = false, {}
+
+  -- Guild sharing: only your own sightings go out, as Q~*~id:copper:time.
+  local sent = {}
+  local realSend, realGuild = Wrekkit.sync.Send, IsInGuild
+  Wrekkit.sync.Send = function(self, to, body, channel) table.insert(sent, { to, body, channel }) return true end
+  IsInGuild = function() return 1 end
+  Wrekkit.db.prices = {}
+  local now = time()
+  P:Record(13446, 12000, now, UnitName("player"))
+  P:Record(13444, 9000, now, "SomeoneElse")   -- told to us: never re-sent
+  check("shares your own sightings", P:Share(), 1)
+  check("  to the guild", sent[1] and sent[1][3], "GUILD")
+  check("  as id:copper:time", sent[1] and sent[1][2], string.format("Q~13446:12000:%.0f", now))
+  -- And the other way: a guildmate's message, through the sync dispatcher.
+  local inbound = string.format("Q~*~20520:300:%.0f,13446:1:%.0f", now, now - 99999)
+  Wrekkit.sync:OnMessage("WREKKIT", inbound, "GUILD", "Guildie")
+  P.cache = {}
+  check("a guildmate's price is taken", P:Value(20520), 300)
+  check("  but not an older one than yours", P:Value(13446), 12000)
+  Wrekkit.db.priceShare = false
+  check("switched off, nothing is shared", P:Share(), 0)
+  Wrekkit.sync:OnMessage("WREKKIT", string.format("Q~*~9155:7:%.0f", now), "GUILD", "Guildie")
+  P.cache = {}
+  check("  nor taken", P:Value(9155), nil)
+  Wrekkit.db.priceShare = nil
+  Wrekkit.sync.Send, IsInGuild = realSend, realGuild
+
+  -- What to scan: what the recorded pulls used, plus the Dream Shard the
+  -- tea and Dreamtonic are priced by -- never the derived items themselves.
+  local realEncs = Wrekkit.db.encounters
+  Wrekkit.db.encounters = { { actors = { x = { consumeItem = { [13446] = { name = "Major Healing Potion", amount = 2 },
+                                                              [61675] = { name = "Nordanaar Herbal Tea", amount = 1 } } } } } }
+  local targets, byId = A:Targets(), {}
+  for _, t in ipairs(targets) do byId[t.id] = t.name end
+  check("scans what the pulls used", byId[13446], "Major Healing Potion")
+  check("  and the Small Dream Shard behind the tea", byId[61198] ~= nil, true)
+  check("  not the tea itself", byId[61675], nil)
+  Wrekkit.db.encounters = realEncs
+
+  -- The scan, against a stub auction house: two pages of potions with a
+  -- stack and a lookalike, then an item with nothing listed.
+  local listings = {
+    ["Major Healing Potion"] = {
+      [0] = { { 13446, 5, 50000 }, { 13447, 1, 100 }, { 13446, 1, 0 } },   -- 10000 each; a different item; bid only
+      [1] = { { 13446, 2, 16000 } },                                       -- 8000 each: the cheapest
+    },
+    ["Elixir of the Mongoose"] = { [0] = {} },
+  }
+  local cur, queries = {}, {}
+  local real = { AuctionFrame = AuctionFrame, Can = CanSendAuctionQuery, Query = QueryAuctionItems,
+                 Num = GetNumAuctionItems, Info = GetAuctionItemInfo, Link = GetAuctionItemLink }
+  AuctionFrame = { IsVisible = function() return true end }
+  CanSendAuctionQuery = function() return true end
+  QueryAuctionItems = function(name, _, _, _, _, _, page)
+    table.insert(queries, name .. "#" .. page)
+    local all = listings[name] or {}
+    cur = all[page] or {}
+    local total = 0
+    for _, p in pairs(all) do total = total + table.getn(p) end
+    cur.total = (name == "Major Healing Potion") and 60 or total
+    A.got = true
+  end
+  GetNumAuctionItems = function() return table.getn(cur), cur.total end
+  GetAuctionItemLink = function(_, i) return cur[i] and ("|Hitem:" .. cur[i][1] .. ":0:0:0|h") end
+  GetAuctionItemInfo = function(_, i)
+    local l = cur[i]
+    return "x", "tex", l[2], 1, 1, 60, 0, 0, l[3]
+  end
+  Wrekkit.db.prices = {}
+  P:Record(13452, 7777, 1, "Me")           -- Mongoose, from long ago
+  A.Targets = function() return { { id = 13446, name = "Major Healing Potion" },
+                                  { id = 13452, name = "Elixir of the Mongoose" } } end
+  local realShare = P.Share
+  P.Share = function() return 0 end
+  A:Start()
+  for _ = 1, 20 do if A.running then A:Tick() end end
+  check("the scan read every page", queries[2], "Major Healing Potion#1")
+  check("  and kept the cheapest unit price of exactly that item", Wrekkit.db.prices[13446] and Wrekkit.db.prices[13446].p, 8000)
+  check("an item with nothing listed keeps its old price", Wrekkit.db.prices[13452].p, 7777)
+  check("  and the scan finished", A.running, false)
+  check("  having priced one of two", A.priced, 1)
+
+  P.Share, A.Targets = realShare, nil
+  AuctionFrame, CanSendAuctionQuery, QueryAuctionItems = real.AuctionFrame, real.Can, real.Query
+  GetNumAuctionItems, GetAuctionItemInfo, GetAuctionItemLink = real.Num, real.Info, real.Link
+  Wrekkit.db.prices, P.cache, P.aux = realDB, {}, nil
 end)()
 
 ----------------------------------------------------------------------

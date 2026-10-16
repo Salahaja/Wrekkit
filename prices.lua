@@ -50,11 +50,56 @@ end
        Nordanaar Herbal Tea   1/5 of a Small Dream Shard
        Dreamtonic             1 Small Dream Shard ]]
 P.DERIVED = {
-  [61675] = { from = 61198, share = 1 / 5 },   -- Nordanaar Herbal Tea
-  [61423] = { from = 61198, share = 1 },       -- Dreamtonic
+  [61675] = { from = 61198, fromName = "Small Dream Shard", share = 1 / 5 },   -- Nordanaar Herbal Tea
+  [61423] = { from = 61198, fromName = "Small Dream Shard", share = 1 },       -- Dreamtonic
 }
 
---- What one of an item costs, in copper, or nil when nothing knows.
+--[[ Wrekkit's own record of prices, beside aux's: what its consumables scan
+     at the auction house found (AH Scan), and what guildmates' Wrekkits
+     shared. W.db.prices[itemId] = { p = copper each, t = when seen (unix
+     seconds), by = who saw it }. ]]
+function P:Store()
+  if not W.db then return {} end
+  W.db.prices = W.db.prices or {}
+  return W.db.prices
+end
+
+--- Note a price seen at time `t`. Kept only if newer than what is held, so
+--- an old observation arriving late never replaces a fresh one.
+function P:Record(itemId, copper, t, by)
+  itemId, copper, t = tonumber(itemId), tonumber(copper), tonumber(t)
+  if not itemId or not copper or copper <= 0 or not t then return false end
+  local store = self:Store()
+  local held = store[itemId]
+  if held and held.t and held.t >= t then return false end
+  store[itemId] = { p = copper, t = t, by = by }
+  self.cache[itemId] = nil
+  return true
+end
+
+--- aux's latest for an item: copper and when, or nil.
+function P:AuxLatest(itemId)
+  local history = self:Aux()
+  if not history then return nil end
+  -- aux keys items by "id:suffix"; consumables have no suffix.
+  local key = itemId .. ":0"
+  -- Today's lowest buyout, if it was scanned today...
+  local ok, v = pcall(history.market_value, key)
+  if ok and type(v) == "number" and v > 0 then return v, time and time() or 0 end
+  -- ...else the lowest from the latest day it was (newest first).
+  if type(history.data_points) == "function" then
+    local points
+    ok, points = pcall(history.data_points, key)
+    local newest = ok and type(points) == "table" and points[1]
+    if newest and type(newest.value) == "number" and newest.value > 0 then
+      return newest.value, tonumber(newest.time) or 0
+    end
+  end
+  return nil
+end
+
+--- What one of an item costs, in copper, or nil when nothing knows. The
+--- newest sighting wins: aux's, your own scan's, or a guildmate's.
 function P:Value(itemId)
   itemId = tonumber(itemId)
   if not itemId or itemId <= 0 then return nil end
@@ -67,24 +112,66 @@ function P:Value(itemId)
   local c = self.cache[itemId]
   if c and now - c.at < CACHE then return c.value or nil end
 
-  local value
-  local history = self:Aux()
-  if history then
-    -- aux keys items by "id:suffix"; consumables have no suffix.
-    local key = itemId .. ":0"
-    -- Today's lowest buyout, if it was scanned today...
-    local ok, v = pcall(history.market_value, key)
-    if ok and type(v) == "number" and v > 0 then value = v end
-    -- ...else the lowest from the latest day it was (newest first).
-    if not value and type(history.data_points) == "function" then
-      local points
-      ok, points = pcall(history.data_points, key)
-      local newest = ok and type(points) == "table" and points[1]
-      if newest and type(newest.value) == "number" and newest.value > 0 then value = newest.value end
-    end
-  end
+  local value, at = self:AuxLatest(itemId)
+  local own = self:Store()[itemId]
+  if own and own.p and (not value or (own.t or 0) > (at or 0)) then value = own.p end
   self.cache[itemId] = { value = value or false, at = now }
   return value
+end
+
+----------------------------------------------------------------------
+-- sharing with the guild
+----------------------------------------------------------------------
+
+--[[ Prices you scanned yourself go to guildmates running Wrekkit, after a
+     scan and once at login; theirs come back the same way. Only your OWN
+     sightings are sent, never ones you were told -- so a price is passed on
+     by the one person who saw it, and nobody re-broadcasts the guild's.
+
+       Q~*~id:copper:time,id:copper:time,...
+
+     W.db.priceShare (default on) switches both directions. Guild only:
+     the auction house is the guild's market too, and that is where the
+     people who would use these prices are. ]]
+local SHARE_DAYS = 7
+local PER_MSG = 160          -- payload characters per message
+
+function P:Sharing()
+  return W.db and W.db.priceShare ~= false
+end
+
+--- Send your own scanned prices from the last week to the guild.
+function P:Share()
+  if not self:Sharing() or not W.sync or not (IsInGuild and IsInGuild()) then return 0 end
+  local me = UnitName("player")
+  local since = (time and time() or 0) - SHARE_DAYS * 86400
+  local parts, msg, sent = {}, "", 0
+  for id, e in pairs(self:Store()) do
+    if e.by == me and (e.t or 0) >= since then
+      local entry = string.format("%.0f:%.0f:%.0f", id, e.p, e.t)
+      if string.len(msg) + string.len(entry) + 1 > PER_MSG then
+        table.insert(parts, msg)
+        msg = ""
+      end
+      msg = (msg == "") and entry or (msg .. "," .. entry)
+      sent = sent + 1
+    end
+  end
+  if msg ~= "" then table.insert(parts, msg) end
+  for _, body in ipairs(parts) do
+    W.sync:Send("*", "Q~" .. body, "GUILD")
+  end
+  return sent
+end
+
+--- A guildmate's prices. Each kept only if newer than what is held.
+function P:OnShared(payload, sender)
+  if not self:Sharing() or type(payload) ~= "string" then return 0 end
+  local taken = 0
+  for id, copper, t in string.gfind(payload, "(%d+):(%d+):(%d+)") do
+    if self:Record(id, copper, t, sender) then taken = taken + 1 end
+  end
+  return taken
 end
 
 --- Where prices come from, for a footer or /wrek status.

@@ -45,6 +45,7 @@ local HELP = {
   { "/wrek layout", "the meter's sizes, to report a drawing problem" },
   { "/wrek specs", "your group's talent specs, and where each came from" },
   { "/wrek inspect <name>", "ask a player for their talents now" },
+  { "/wrek scan", "at the auction house: price the consumables your raid uses" },
   { "/wrek who", "list every actor and how it was classified" },
   { "/wrek mode <metric>", "set the meter metric (dps, healing, taken, ...)" },
   { "/wrek segment <what>", "current, last, back2..back5 or overall" },
@@ -128,6 +129,9 @@ local function handler(msg)
 
   elseif cmd == "who" then
     W.Who()
+
+  elseif cmd == "scan" then
+    if W.ahscan.running then W.ahscan:Stop("stopped") else W.ahscan:Start() end
 
   elseif cmd == "help" or cmd == "?" then
     printHelp()

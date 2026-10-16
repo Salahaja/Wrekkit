@@ -93,6 +93,7 @@ declare(WOW, [[
   SetCVar GetCVar SendChatMessage SendAddonMessage GetAddOnMetadata
   GetNumSavedInstances GetSavedInstanceInfo UnitIsGhost
   GetItemInfo IsInGuild GetCursorPosition Minimap IsShiftKeyDown
+  QueryAuctionItems CanSendAuctionQuery GetNumAuctionItems GetAuctionItemInfo GetAuctionItemLink AuctionFrame
   WorldFrame PlaySound UnitIsDead UnitCanAttack getglobal
   GetNumShapeshiftForms GetShapeshiftFormInfo
   GetSpellName GetSpellTexture GetSpellCooldown CastSpell CastSpellByName

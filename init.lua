@@ -21,6 +21,9 @@ f:SetScript("OnEvent", function()
     W.sync:Start()
     W.threat:Start()
     W.talents:Start()
+    W.ahscan:StartEvents()
+    -- Your recent auction scans to the guild's Wrekkit, once things settle.
+    W.After(30, function() W.Guard("price share", function() W.prices:Share() end) end, "priceShareLogin")
     W.ui.threatFrames:Start()
     W.minimap:Update()
 

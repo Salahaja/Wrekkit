@@ -645,6 +645,12 @@ function S:Create()
     function(v) W.db.acceptShares = v end,
     { "Whether logs people send you are kept." })
 
+  check(self, "Share consumable prices with your guild",
+    function() return W.db.priceShare ~= false end,
+    function(v) W.db.priceShare = v and true or false end,
+    { "Auction prices from your \"Scan consumes\" go to", "guildmates running Wrekkit, and theirs come",
+      "to you; the newest price for each item wins." })
+
   ------------------------------------------------------------------
   -- actions, at the foot of the history they act on
   ------------------------------------------------------------------
