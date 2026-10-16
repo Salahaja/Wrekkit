@@ -630,27 +630,31 @@ check("the repeated one is counted twice", consDetail[1].amount, 2)
   check("money: copper", Wrekkit.Money(8), "8c")
   check("money: nothing", Wrekkit.Money(0), "-")
 
-  -- aux, as its module loader serves it, by "id:suffix": today's lowest
-  -- buyout, and one data point per earlier day it was listed, newest first.
-  -- Its weighted "Value" is deliberately not used: it lags the market.
-  local asked = {}
-  local today = { ["20520:0"] = 300, ["13444:0"] = 9000, ["61198:0"] = 50000, ["61675:0"] = 999999 }
-  local days = {
-    -- Out of stock today: the latest day it WAS listed, not an older one.
-    ["13446:0"] = { { value = 12000, time = 2 }, { value = 15000, time = 1 } },
-    ["13444:0"] = { { value = 5000, time = 2 } },
+  -- aux's saved table, read straight (never through aux's functions, which
+  -- write as they read): "next_push#today's lowest#price@day;..." newest
+  -- first. Its weighted "Value" is deliberately not used: it lags.
+  local now = time()
+  local function rec(lowest, ...)
+    local days, given = {}, { ... }   -- the harness is Lua 5.4: no implicit `arg`
+    for i = 1, table.getn(given), 2 do
+      table.insert(days, string.format("%.0f@%.0f", given[i], now - given[i + 1] * 86400))
+    end
+    return string.format("%.0f#%s#%s", now + 3600, lowest and string.format("%.0f", lowest) or "",
+      table.concat(days, ";"))
+  end
+  local hist = {
+    ["13446:0"] = rec(nil, 12000, 1, 15000, 2),   -- out of stock today: yesterday's, not older
+    ["20520:0"] = rec(300),                       -- listed today
+    ["13444:0"] = rec(9000, 5000, 1),             -- today beats yesterday
+    ["61198:0"] = rec(50000),
+    ["61675:0"] = rec(999999),
   }
-  local history = {
-    market_value = function(key) table.insert(asked, key) return today[key] end,
-    data_points = function(key) return days[key] or {} end,
-    value = function() return 777777 end,
-  }
-  local realLoaded, realRequire = IsAddOnLoaded, require
-  IsAddOnLoaded = function(name) return name == "aux-addon" end
-  require = function(name) if name == "aux.core.history" then return history end end
-  P.aux, P.cache = nil, {}
+  local realCVar, realFaction = GetCVar, UnitFactionGroup
+  GetCVar = function(k) if k == "realmName" then return "Testrealm" end return realCVar and realCVar(k) end
+  UnitFactionGroup = function() return "Alliance" end
+  aux = { faction = { ["Testrealm|Alliance"] = { history = hist } } }
+  P.cache = {}
   check("not listed today: the latest day's price, kept while out of stock", P:Value(13446), 12000)
-  check("  asked by aux's own key", asked[1], "13446:0")
   check("listed today: today's lowest buyout", P:Value(20520), 300)
   check("today's price beats an older day's", P:Value(13444), 9000)
   check("nothing for an item aux never saw", P:Value(99999), nil)
@@ -658,11 +662,11 @@ check("the repeated one is counted twice", consDetail[1].amount, 2)
   -- Shard, whatever their own listings say.
   check("Nordanaar Herbal Tea: a fifth of a Small Dream Shard", P:Value(61675), 10000)
   check("Dreamtonic: one Small Dream Shard", P:Value(61423), 50000)
-  days["13446:0"] = { { value = 99, time = 3 } }
+  hist["13446:0"] = rec(99)
   check("  and a minute's cache, not a lookup per repaint", P:Value(13446), 12000)
   advance(61)
-  check("  then asked again", P:Value(13446), 99)
-  days["13446:0"] = { { value = 12000, time = 2 } }
+  check("  then read again", P:Value(13446), 99)
+  hist["13446:0"] = rec(nil, 12000, 1)
   P.cache = {}
 
   local cost = Wrekkit.metrics.Get("consumeCost")
@@ -674,7 +678,7 @@ check("the repeated one is counted twice", consDetail[1].amount, 2)
   check("  how many, at what", priced[1]._note, "2 x 1g 20s")
   -- Something aux has never priced counts for nothing, and says so.
   P.cache = {}
-  history.market_value = function() return nil end
+  hist["20520:0"] = nil
   check("an unpriced item is flagged in the row", cost.sub(consBy["Fuff"]), "2g 40s |cff9d9d9d+1?|r")
   local unpriced = Wrekkit.report:Abilities(consBy["Fuff"], "consumeCost")
   check("  and in the detail", unpriced[2]._value, "no price")
@@ -683,8 +687,20 @@ check("the repeated one is counted twice", consDetail[1].amount, 2)
   check("a saved pull's item list is priced too",
     P:Cost({ { id = 13446, name = "Potion", amount = 3 } }), 36000)
 
-  IsAddOnLoaded, require = realLoaded, realRequire
-  P.aux, P.cache = nil, {}
+  -- Closing the auction house takes in today's aux prices (not older days')
+  -- as our own sightings, so they are shared like ones.
+  hist["20520:0"] = rec(300)
+  Wrekkit.db.prices = {}
+  local imported = P:ImportAux()
+  check("aux's prices from today are taken in", Wrekkit.db.prices[20520] and Wrekkit.db.prices[20520].p, 300)
+  check("  but not an older day's", Wrekkit.db.prices[13446], nil)
+  check("  as our own sighting", Wrekkit.db.prices[20520] and Wrekkit.db.prices[20520].by, UnitName("player"))
+  check("  the shard among them", Wrekkit.db.prices[61198] and Wrekkit.db.prices[61198].p, 50000)
+  check("  counted", imported >= 3, true)
+  Wrekkit.db.prices = {}
+
+  aux, GetCVar, UnitFactionGroup = nil, realCVar, realFaction
+  P.cache = {}
 end)()
 
 ----------------------------------------------------------------------
@@ -3682,7 +3698,11 @@ print("\n-- prices: own scans, guild sharing, the auction scan --")
 ;(function()
   local P, A = Wrekkit.prices, Wrekkit.ahscan
   local realDB = Wrekkit.db.prices
-  Wrekkit.db.prices, P.cache, P.aux = {}, {}, false   -- no aux: only our own record
+  local realCVar, realFaction = GetCVar, UnitFactionGroup
+  GetCVar = function(k) if k == "realmName" then return "Testrealm" end return realCVar and realCVar(k) end
+  UnitFactionGroup = function() return "Alliance" end
+  aux = nil                                          -- no aux: only our own record
+  Wrekkit.db.prices, P.cache = {}, {}
 
   -- The newest sighting wins; an older one arriving late does not.
   check("a price is recorded", P:Record(13446, 12000, 1000, "Me"), true)
@@ -3693,14 +3713,15 @@ print("\n-- prices: own scans, guild sharing, the auction scan --")
   check("a newer one does", P:Record(13446, 11000, 1100, "Bob"), true)
   check("  and is used", P:Value(13446), 11000)
 
-  -- Against aux: whichever was seen later.
-  local history = { market_value = function() return nil end,
-                    data_points = function(k) if k == "13446:0" then return { { value = 15000, time = 1200 } } end return {} end }
-  P.aux, P.cache = history, {}
+  -- Against aux: whichever was seen later. (A day in aux's list is stamped
+  -- by the push at its end; it counts from that day's start.)
+  aux = { faction = { ["Testrealm|Alliance"] = { history = {
+    ["13446:0"] = string.format("%.0f##15000@%.0f", time() + 3600, 1200 + 86400) } } } }
+  P.cache = {}
   check("aux's newer day beats an older own record", P:Value(13446), 15000)
   P:Record(13446, 10000, 1300, "Me")
   check("an own scan newer than aux's day beats it", P:Value(13446), 10000)
-  P.aux, P.cache = false, {}
+  aux, P.cache = nil, {}
 
   -- Guild sharing: only your own sightings go out, as Q~*~id:copper:time.
   local sent = {}
@@ -3728,39 +3749,53 @@ print("\n-- prices: own scans, guild sharing, the auction scan --")
   Wrekkit.db.priceShare = nil
   Wrekkit.sync.Send, IsInGuild = realSend, realGuild
 
-  -- What to scan: what the recorded pulls used, plus the Dream Shard the
-  -- tea and Dreamtonic are priced by -- never the derived items themselves.
-  local realEncs = Wrekkit.db.encounters
-  Wrekkit.db.encounters = { { actors = { x = { consumeItem = { [13446] = { name = "Major Healing Potion", amount = 2 },
-                                                              [61675] = { name = "Nordanaar Herbal Tea", amount = 1 } } } } } }
-  local targets, byId = A:Targets(), {}
-  for _, t in ipairs(targets) do byId[t.id] = t.name end
-  check("scans what the pulls used", byId[13446], "Major Healing Potion")
-  check("  and the Small Dream Shard behind the tea", byId[61198] ~= nil, true)
-  check("  not the tea itself", byId[61675], nil)
-  Wrekkit.db.encounters = realEncs
+  -- What a scan looks for: every consumable, on any character (a bank alt
+  -- with no raids recorded too), plus the Dream Shard behind the tea and
+  -- Dreamtonic; not the derived items, nor conjured food and water.
+  local want = A:Wanted()
+  local n = 0
+  for _ in pairs(want) do n = n + 1 end
+  check("it wants every consumable", n > 300, true)
+  check("  Major Healing Potion among them", want[13446], "Major Healing Potion")
+  check("  and the Small Dream Shard behind the tea", want[61198], "Small Dream Shard")
+  check("  not the tea itself", want[61675], nil)
+  check("  nor conjured water", want[8079], nil)
 
-  -- The scan, against a stub auction house: two pages of potions with a
-  -- stack and a lookalike, then an item with nothing listed.
+  -- How: the Consumable category by pages, then names only for what the
+  -- auction house files elsewhere -- never a search per potion, nor for
+  -- healthstones and the like that are never listed.
+  local realClasses = GetAuctionItemClasses
+  GetAuctionItemClasses = function() return "Weapon", "Armor", "Container", "Consumable", "Trade Goods" end
+  local jobs, names = A:Jobs(want)
+  local byName = {}
+  for _, j in ipairs(jobs) do if j.kind == "name" then byName[j.name] = true end end
+  check("first the Consumable category, by pages", jobs[1].kind .. ":" .. jobs[1].class, "class:4")
+  check("  then names for the trade-goods ones: oils", byName["Brilliant Wizard Oil"], true)
+  check("  jujus", byName["Juju Power"], true)
+  check("  not a potion, which the category covers", byName["Major Healing Potion"], nil)
+  check("  a few dozen searches, not hundreds", names < 80, true)
+
+  -- The scan, against a stub auction house: two pages of the category (a
+  -- stack, an unwanted item, a bid-only listing), then the oil by name.
   local listings = {
-    ["Major Healing Potion"] = {
-      [0] = { { 13446, 5, 50000 }, { 13447, 1, 100 }, { 13446, 1, 0 } },   -- 10000 each; a different item; bid only
-      [1] = { { 13446, 2, 16000 } },                                       -- 8000 each: the cheapest
+    [""] = {
+      [0] = { { 13446, 5, 50000 }, { 2589, 1, 100 }, { 13446, 1, 0 } },   -- 10000 each; linen; bid only
+      [1] = { { 13446, 2, 16000 } },                                     -- 8000 each: the cheapest
     },
-    ["Elixir of the Mongoose"] = { [0] = {} },
+    ["Brilliant Wizard Oil"] = { [0] = { { 20749, 1, 2500 } } },
   }
   local cur, queries = {}, {}
   local real = { AuctionFrame = AuctionFrame, Can = CanSendAuctionQuery, Query = QueryAuctionItems,
                  Num = GetNumAuctionItems, Info = GetAuctionItemInfo, Link = GetAuctionItemLink }
   AuctionFrame = { IsVisible = function() return true end }
   CanSendAuctionQuery = function() return true end
-  QueryAuctionItems = function(name, _, _, _, _, _, page)
+  QueryAuctionItems = function(name, _, _, _, class, _, page)
     table.insert(queries, name .. "#" .. page)
     local all = listings[name] or {}
     cur = all[page] or {}
     local total = 0
     for _, p in pairs(all) do total = total + table.getn(p) end
-    cur.total = (name == "Major Healing Potion") and 60 or total
+    cur.total = (name == "") and 60 or total
     A.got = true
   end
   GetNumAuctionItems = function() return table.getn(cur), cur.total end
@@ -3771,22 +3806,81 @@ print("\n-- prices: own scans, guild sharing, the auction scan --")
   end
   Wrekkit.db.prices = {}
   P:Record(13452, 7777, 1, "Me")           -- Mongoose, from long ago
-  A.Targets = function() return { { id = 13446, name = "Major Healing Potion" },
-                                  { id = 13452, name = "Elixir of the Mongoose" } } end
+  A.Wanted = function() return { [13446] = "Major Healing Potion", [20749] = "Brilliant Wizard Oil",
+                                 [13452] = "Elixir of the Mongoose" } end
+  local shares = 0
   local realShare = P.Share
-  P.Share = function() return 0 end
+  P.Share = function() shares = shares + 1 return 0 end
   A:Start()
   for _ = 1, 20 do if A.running then A:Tick() end end
-  check("the scan read every page", queries[2], "Major Healing Potion#1")
-  check("  and kept the cheapest unit price of exactly that item", Wrekkit.db.prices[13446] and Wrekkit.db.prices[13446].p, 8000)
+  check("the category's every page was read", queries[2], "#1")
+  check("  then the oil by name", queries[3], "Brilliant Wizard Oil#0")
+  check("  and nothing else searched", table.getn(queries), 3)
+  check("the cheapest unit price of exactly that item", Wrekkit.db.prices[13446] and Wrekkit.db.prices[13446].p, 8000)
+  check("  the oil's from its own search", Wrekkit.db.prices[20749] and Wrekkit.db.prices[20749].p, 2500)
   check("an item with nothing listed keeps its old price", Wrekkit.db.prices[13452].p, 7777)
   check("  and the scan finished", A.running, false)
-  check("  having priced one of two", A.priced, 1)
+  check("  having priced two", A.priced, 2)
 
-  P.Share, A.Targets = realShare, nil
+  -- It never spins silently. The client holding every search back...
+  A.Wanted = function() return { [1] = "A", [2] = "B Oil", [3] = "C Oil", [4] = "D Oil" } end
+  CanSendAuctionQuery = function() return false end
+  A:Start()
+  A:Tick()
+  advance(21)
+  A:Tick()
+  check("a search the client will not send stops the scan", A.running, false)
+  -- ...or searches going out and nothing coming back (the session ended).
+  CanSendAuctionQuery = function() return true end
+  QueryAuctionItems = function() end
+  A:Start()
+  for _ = 1, 6 do
+    A:Tick()
+    advance(9)
+    A:Tick()
+  end
+  check("three searches unanswered in a row stop it too", A.running, false)
+
+  -- Paced by the server: an answer is read and the next search sent at
+  -- once, in the event, with no tick in between.
+  local asked = {}
+  QueryAuctionItems = function(name, _, _, _, _, _, page) table.insert(asked, name .. "#" .. page) cur = { total = 0 } end
+  A.Wanted = function() return { [13446] = "Major Healing Potion", [20749] = "Brilliant Wizard Oil" } end
+  A:StartEvents()
+  A:Start()                                   -- the first search goes out on start
+  check("the first search goes out at once", asked[1], "#0")
+  local was = event
+  event = "AUCTION_ITEM_LIST_UPDATE"
+  A.frame:GetScript("OnEvent")()              -- the category answered
+  event = was
+  check("its answer sends the next search straight away", asked[2], "Brilliant Wizard Oil#0")
+
+  -- Somebody else's search mid-scan -- aux scanning, you browsing -- stops
+  -- ours rather than reading their page and searching into the middle of it.
+  A:Stop()
+  CanSendAuctionQuery = function() return false end   -- ours not yet sent
+  A:Start()
+  event = "AUCTION_ITEM_LIST_UPDATE"
+  A.frame:GetScript("OnEvent")()              -- an answer to nothing of ours
+  event = was
+  check("another search's answer stops the scan, untouched", A.running, false)
+
+  -- Closing the auction house: aux's prices from today are taken in, and
+  -- the lot shared once.
+  aux = { faction = { ["Testrealm|Alliance"] = { history = {
+    ["13510:0"] = string.format("%.0f#60000#", time() + 3600) } } } }
+  shares = 0
+  Wrekkit.db.prices = {}
+  A:Closed()
+  check("closing the AH takes in aux's prices", Wrekkit.db.prices[13510] and Wrekkit.db.prices[13510].p, 60000)
+  check("  and shares once", shares, 1)
+
+  P.Share, A.Wanted = realShare, nil
+  GetAuctionItemClasses = realClasses
   AuctionFrame, CanSendAuctionQuery, QueryAuctionItems = real.AuctionFrame, real.Can, real.Query
   GetNumAuctionItems, GetAuctionItemInfo, GetAuctionItemLink = real.Num, real.Info, real.Link
-  Wrekkit.db.prices, P.cache, P.aux = realDB, {}, nil
+  aux, GetCVar, UnitFactionGroup = nil, realCVar, realFaction
+  Wrekkit.db.prices, P.cache = realDB, {}
 end)()
 
 ----------------------------------------------------------------------

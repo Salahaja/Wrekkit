@@ -13,10 +13,12 @@ scanned today, else the lowest from the most recent day it was scanned. Not
 aux's "Value", which is a weighted median over every day it has kept and so
 lags a market that has moved.
 
-Read through aux's own module, never its saved table: the format is aux's
-business, and its functions already handle the daily roll-over. aux's
-loader is a global `require`, so this checks aux is actually loaded first --
-another addon could define a `require` of its own.
+Read from aux's saved table, read-only -- never through aux's functions.
+Those are not read-only: looking an item up rolls its day over and writes
+the record back, and hands out aux's own recycled temporary tables. Called
+from here every repaint, in the middle of an aux scan, they had aux's full
+scan going wrong. The table is plain: aux.faction["Realm|Faction"].history
+["id:0"] = "next_push#today's lowest#price@day;price@day;..." newest first.
 
 Prices are cached for a minute: the meter repaints twice a second and a
 raid's worth of players times their consumables is a lot of lookups for a
@@ -29,19 +31,16 @@ local P = W.prices
 local CACHE = 60            -- seconds a looked-up price is kept
 P.cache = {}                -- itemId -> { value = copper or false, at }
 
---- aux's history module, or nil when aux is not there to ask.
-function P:Aux()
-  if self.aux ~= nil then return self.aux or nil end
-  if not (IsAddOnLoaded and IsAddOnLoaded("aux-addon")) or type(require) ~= "function" then
-    return nil   -- not cached: aux may be loaded on demand later
-  end
-  local ok, history = pcall(require, "aux.core.history")
-  if ok and history and type(history.market_value) == "function" then
-    self.aux = history
-  else
-    self.aux = false
-  end
-  return self.aux or nil
+--- aux's price history for this character's market, or nil: its saved
+--- variable `aux`, keyed the way aux keys it (Nordanaar's market is one).
+function P:AuxHistory()
+  local saved = aux
+  if type(saved) ~= "table" or type(saved.faction) ~= "table" then return nil end
+  local realm = (GetCVar and GetCVar("realmName")) or (GetRealmName and GetRealmName()) or ""
+  local key = realm .. "|" .. ((UnitFactionGroup and UnitFactionGroup("player")) or "")
+  if realm == "Nordanaar" then key = realm .. "|Horde" end
+  local f = saved.faction[key]
+  return f and type(f.history) == "table" and f.history or nil
 end
 
 --[[ Items priced from another item rather than from their own auctions:
@@ -77,25 +76,48 @@ function P:Record(itemId, copper, t, by)
   return true
 end
 
---- aux's latest for an item: copper and when, or nil.
+--[[ aux's latest for an item: copper, when, and whether it is today's.
+     A record is "next_push#lowest#price@day;..." -- `lowest` is the lowest
+     buyout of the day that ends at next_push, not yet folded into the day
+     list. So it is the newest sighting there is: today's while next_push
+     is still ahead, an earlier day's (aux folds it in on its next look)
+     once past. Otherwise the newest day in the list. A day is stamped by
+     its start, so a scan of our own later that day wins over it. ]]
 function P:AuxLatest(itemId)
-  local history = self:Aux()
-  if not history then return nil end
-  -- aux keys items by "id:suffix"; consumables have no suffix.
-  local key = itemId .. ":0"
-  -- Today's lowest buyout, if it was scanned today...
-  local ok, v = pcall(history.market_value, key)
-  if ok and type(v) == "number" and v > 0 then return v, time and time() or 0 end
-  -- ...else the lowest from the latest day it was (newest first).
-  if type(history.data_points) == "function" then
-    local points
-    ok, points = pcall(history.data_points, key)
-    local newest = ok and type(points) == "table" and points[1]
-    if newest and type(newest.value) == "number" and newest.value > 0 then
-      return newest.value, tonumber(newest.time) or 0
-    end
+  local history = self:AuxHistory()
+  local rec = history and history[itemId .. ":0"]
+  if type(rec) ~= "string" then return nil end
+  local _, _, nextPush, lowest, points = string.find(rec, "^([^#]*)#([^#]*)#?(.*)$")
+  nextPush, lowest = tonumber(nextPush), tonumber(lowest)
+  local now = time and time() or 0
+  if lowest and lowest > 0 and nextPush then
+    return lowest, nextPush - 86400, nextPush > now
   end
+  local _, _, value, day = string.find(points or "", "^(%d+)@(%d+)")
+  value, day = tonumber(value), tonumber(day)
+  if value and value > 0 then return value, (day or 0) - 86400, false end
   return nil
+end
+
+--[[ aux's scans, taken in: today's lowest buyout for every consumable aux
+     has seen today, recorded as our own sighting so it is shared with the
+     guild like one. Run when the auction house closes -- after an aux scan,
+     that prices the lot with no scan of ours needed. ]]
+function P:ImportAux()
+  local history = self:AuxHistory()
+  if not history then return 0 end
+  local ids = {}
+  for _, entry in pairs(W.consumesDB or {}) do
+    for i = 1, table.getn(entry), 2 do ids[entry[i]] = true end
+  end
+  for _, d in pairs(self.DERIVED) do ids[d.from] = true end
+  local me, now, n = UnitName("player"), time and time() or 0, 0
+  for id in pairs(ids) do
+    local value, _, today = self:AuxLatest(id)
+    -- Only today's: an older day is aux's history, not a sighting of ours.
+    if today and self:Record(id, value, now, me) then n = n + 1 end
+  end
+  return n
 end
 
 --- What one of an item costs, in copper, or nil when nothing knows. The
@@ -176,7 +198,7 @@ end
 
 --- Where prices come from, for a footer or /wrek status.
 function P:Source()
-  if self:Aux() then return "aux" end
+  if self:AuxHistory() then return "aux" end
   return nil
 end
 
