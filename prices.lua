@@ -5,12 +5,16 @@ metric.
 
 The client knows no prices. aux does: every scan it runs, and every scan
 another account shares through VendorTruth (merged into aux's own history at
-login), goes into one history per item. This asks aux for its "Value" -- a
-weighted median of the daily lowest buyouts, the figure its tooltips show --
-and falls back to today's lowest buyout for an item seen only today.
+login), goes into one history per item -- the day's lowest buyout, and one
+data point per earlier day, newest first.
+
+The price used is the LATEST seen: today's lowest buyout when the item was
+scanned today, else the lowest from the most recent day it was scanned. Not
+aux's "Value", which is a weighted median over every day it has kept and so
+lags a market that has moved.
 
 Read through aux's own module, never its saved table: the format is aux's
-business, and its value function already handles the daily roll-over. aux's
+business, and its functions already handle the daily roll-over. aux's
 loader is a global `require`, so this checks aux is actually loaded first --
 another addon could define a `require` of its own.
 
@@ -32,7 +36,7 @@ function P:Aux()
     return nil   -- not cached: aux may be loaded on demand later
   end
   local ok, history = pcall(require, "aux.core.history")
-  if ok and history and type(history.value) == "function" then
+  if ok and history and type(history.market_value) == "function" then
     self.aux = history
   else
     self.aux = false
@@ -68,11 +72,15 @@ function P:Value(itemId)
   if history then
     -- aux keys items by "id:suffix"; consumables have no suffix.
     local key = itemId .. ":0"
-    local ok, v = pcall(history.value, key)
+    -- Today's lowest buyout, if it was scanned today...
+    local ok, v = pcall(history.market_value, key)
     if ok and type(v) == "number" and v > 0 then value = v end
-    if not value and type(history.market_value) == "function" then
-      ok, v = pcall(history.market_value, key)
-      if ok and type(v) == "number" and v > 0 then value = v end
+    -- ...else the lowest from the latest day it was (newest first).
+    if not value and type(history.data_points) == "function" then
+      local points
+      ok, points = pcall(history.data_points, key)
+      local newest = ok and type(points) == "table" and points[1]
+      if newest and type(newest.value) == "number" and newest.value > 0 then value = newest.value end
     end
   end
   self.cache[itemId] = { value = value or false, at = now }

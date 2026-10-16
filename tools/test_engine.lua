@@ -571,38 +571,39 @@ check("the repeated one is counted twice", consDetail[1].amount, 2)
   check("money: copper", Wrekkit.Money(8), "8c")
   check("money: nothing", Wrekkit.Money(0), "-")
 
-  -- aux, as its module loader serves it: value by "id:suffix".
+  -- aux, as its module loader serves it, by "id:suffix": today's lowest
+  -- buyout, and one data point per earlier day it was listed, newest first.
+  -- Its weighted "Value" is deliberately not used: it lags the market.
   local asked = {}
+  local today = { ["20520:0"] = 300, ["13444:0"] = 9000, ["61198:0"] = 50000, ["61675:0"] = 999999 }
+  local days = {
+    -- Out of stock today: the latest day it WAS listed, not an older one.
+    ["13446:0"] = { { value = 12000, time = 2 }, { value = 15000, time = 1 } },
+    ["13444:0"] = { { value = 5000, time = 2 } },
+  }
   local history = {
-    value = function(key) table.insert(asked, key) if key == "13446:0" then return 12000 end end,
-    market_value = function(key) if key == "20520:0" then return 300 end end,
+    market_value = function(key) table.insert(asked, key) return today[key] end,
+    data_points = function(key) return days[key] or {} end,
+    value = function() return 777777 end,
   }
   local realLoaded, realRequire = IsAddOnLoaded, require
   IsAddOnLoaded = function(name) return name == "aux-addon" end
   require = function(name) if name == "aux.core.history" then return history end end
   P.aux, P.cache = nil, {}
-  check("aux's value for a scanned item", P:Value(13446), 12000)
+  check("not listed today: the latest day's price, kept while out of stock", P:Value(13446), 12000)
   check("  asked by aux's own key", asked[1], "13446:0")
-  check("today's lowest buyout when there is no history yet", P:Value(20520), 300)
+  check("listed today: today's lowest buyout", P:Value(20520), 300)
+  check("today's price beats an older day's", P:Value(13444), 9000)
   check("nothing for an item aux never saw", P:Value(99999), nil)
-  -- Nordanaar Herbal Tea is valued at a fifth of a Small Dream Shard,
-  -- whatever its own listings say.
-  local shard = history.value
-  history.value = function(key)
-    if key == "61198:0" then return 50000 end
-    if key == "61675:0" then return 999999 end
-    return shard(key)
-  end
-  P.cache[61198], P.cache[61675] = nil, nil   -- the rest stays cached for the next check
+  -- Nordanaar Herbal Tea and Dreamtonic are valued by the Small Dream
+  -- Shard, whatever their own listings say.
   check("Nordanaar Herbal Tea: a fifth of a Small Dream Shard", P:Value(61675), 10000)
-  P.cache[61423] = nil
   check("Dreamtonic: one Small Dream Shard", P:Value(61423), 50000)
-  history.value = shard
-  history.value = function() return 99 end
+  days["13446:0"] = { { value = 99, time = 3 } }
   check("  and a minute's cache, not a lookup per repaint", P:Value(13446), 12000)
   advance(61)
   check("  then asked again", P:Value(13446), 99)
-  history.value = function(key) if key == "13446:0" then return 12000 end end
+  days["13446:0"] = { { value = 12000, time = 2 } }
   P.cache = {}
 
   local cost = Wrekkit.metrics.Get("consumeCost")
