@@ -595,6 +595,8 @@ check("the repeated one is counted twice", consDetail[1].amount, 2)
   end
   P.cache[61198], P.cache[61675] = nil, nil   -- the rest stays cached for the next check
   check("Nordanaar Herbal Tea: a fifth of a Small Dream Shard", P:Value(61675), 10000)
+  P.cache[61423] = nil
+  check("Dreamtonic: one Small Dream Shard", P:Value(61423), 50000)
   history.value = shard
   history.value = function() return 99 end
   check("  and a minute's cache, not a lookup per repaint", P:Value(13446), 12000)

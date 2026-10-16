@@ -42,10 +42,12 @@ end
 
 --[[ Items priced from another item rather than from their own auctions:
      itemId -> { item it is valued by, how many of it one is worth }.
-       Nordanaar Herbal Tea   1/5 of a Small Dream Shard -- what it costs
-                              to come by, whatever its own listings say. ]]
+     What it costs to come by, whatever its own listings say:
+       Nordanaar Herbal Tea   1/5 of a Small Dream Shard
+       Dreamtonic             1 Small Dream Shard ]]
 P.DERIVED = {
-  [61675] = { from = 61198, share = 1 / 5 },
+  [61675] = { from = 61198, share = 1 / 5 },   -- Nordanaar Herbal Tea
+  [61423] = { from = 61198, share = 1 },       -- Dreamtonic
 }
 
 --- What one of an item costs, in copper, or nil when nothing knows.
