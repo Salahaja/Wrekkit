@@ -692,6 +692,8 @@ function C:SeedBuffs(guid)
       -- When it came up is unknown; `scanned` says so, and the encounter
       -- takes it as up since the pull began rather than inventing a time.
       set[id] = { slots = { scan = true }, since = now, scanned = true }
+      -- A flask they arrived with: drunk where we could not see it.
+      self:BuffConsumable(guid, id)
     end
   end
 end
@@ -768,6 +770,8 @@ function C:Buff(guid, slot, spellId, gained, state)
   b.slots[slot or "anon"] = true
   set[spellId] = b
   W.encounter:BuffEdge(guid, spellId, true, now)
+  -- A consumable's buff: counted unless its drink already was.
+  self:BuffConsumable(guid, spellId)
 end
 
 --- A unit died: every buff it had is gone, whether or not the removals
@@ -863,6 +867,58 @@ function C:ConsumableItem(itemId, spellId, casterGuid)
   return known and known[1] or nil
 end
 
+--[[ Consumables drunk where we could not see: before the group formed,
+     before a login or a /reload. All that is left is the buff -- Flask of
+     the Titans on someone who logged in with it, Mongoose on someone who
+     joined already wearing it. So a consumable's buff turning up on a
+     group member (newly, or found already up -- SeedBuffs) counts as one
+     use, unless one was already counted for them in the last two hours.
+
+     The cast and its buff are one use, never two. A seen cast is counted
+     and noted; its buff then finds the note and stops. A buff that beat
+     its own cast here by a moment is counted, and the cast, finding a
+     buff note seconds old, stops instead.
+
+     Noted in W.db.consumeCredit (guid:spell -> { t, aura }) so a /reload,
+     which forgets every buff and finds them all again, does not count the
+     flask twice. Works where the buff IS the item's spell -- flasks,
+     elixirs, protection potions, jujus. Food's buff is "Well Fed", which
+     does not say which food. ]]
+local CREDIT_FOR = 7200      -- a buff is the same use within this
+local BUFF_BEAT = 5          -- a buff this fresh is its own cast's
+
+local function creditKey(guid, spellId) return tostring(guid) .. ":" .. tostring(spellId) end
+
+function C:CreditStore()
+  if not W.db then return {} end
+  W.db.consumeCredit = W.db.consumeCredit or {}
+  return W.db.consumeCredit
+end
+
+function C:NoteCredit(guid, spellId, aura)
+  local store = self:CreditStore()
+  local now = time and time() or 0
+  store[creditKey(guid, spellId)] = { t = now, aura = aura or nil }
+  -- Keep it small: anything past the window says nothing any more.
+  for k, rec in pairs(store) do
+    if now - (rec.t or 0) > CREDIT_FOR then store[k] = nil end
+  end
+end
+
+--- A consumable's buff came up on a group member (or was found up).
+function C:BuffConsumable(guid, spellId)
+  if not (W.consumesDB and W.consumesDB[spellId])
+     and not (W.db and W.db.consumeSpells and W.db.consumeSpells[spellId]) then
+    return
+  end
+  local rec = self:CreditStore()[creditKey(guid, spellId)]
+  if rec and (time and time() or 0) - (rec.t or 0) <= CREDIT_FOR then return end
+  local item = self:ConsumableItem(0, spellId, guid)
+  if not item then return end
+  self:NoteCredit(guid, spellId, true)
+  W.encounter:Consumable(guid, item, spellId)
+end
+
 --[[ SPELL_GO fires for every cast; a consumable is told apart by the spell
      it casts (ConsumableItem). ]]
 function C:SPELL_GO(itemId, spellId, casterGuid, targetGuid)
@@ -871,6 +927,10 @@ function C:SPELL_GO(itemId, spellId, casterGuid, targetGuid)
   spellId = num(spellId)
   local item = self:ConsumableItem(num(itemId), spellId, casterGuid)
   if not item then return end
+  -- Its buff got here first and was counted for it: the same use.
+  local rec = self:CreditStore()[creditKey(casterGuid, spellId)]
+  if rec and rec.aura and (time and time() or 0) - (rec.t or 0) <= BUFF_BEAT then return end
+  self:NoteCredit(casterGuid, spellId, false)
   W.encounter:Consumable(casterGuid, item, spellId)
 end
 

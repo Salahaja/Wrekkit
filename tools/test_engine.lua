@@ -580,6 +580,37 @@ check("named from the table when the client has not cached it",
   Wrekkit.capture.groupMembers = realGroup
 end)()
 
+-- Drunk where we could not see: only the buff is left. Counted once per
+-- buff, never twice with its own drink, nor again after a /reload.
+;(function()
+  local E, C = Wrekkit.encounter, Wrekkit.capture
+  local realGroup, realLive, realBuffs, realUB = C.groupMembers, E.live, C.buffs, UnitBuff
+  C.groupMembers = { Fuff = true }
+  E.live, E.held, C.buffs, Wrekkit.db.consumeCredit = nil, {}, {}, {}
+  -- Logged in wearing Flask of the Titans.
+  UnitBuff = function(unit, i) if unit == "0xP1" and i == 1 then return "tex", 1, 17626 end end
+  C:SeedBuffs("0xP1")
+  check("a flask they arrived with is counted", E.held[1] and E.held[1].itemId, 13510)
+  -- A /reload forgets every buff and finds the flask again: not twice.
+  C.buffs = {}
+  C:SeedBuffs("0xP1")
+  check("  once, not again after a reload", table.getn(E.held), 1)
+  UnitBuff = realUB
+  -- A drink seen, then its buff: one use.
+  fire("SPELL_GO_SELF", 13452, 17538, "0xP1", "0xP1")
+  C:Buff("0xP1", 2, 17538, true, 0)
+  check("a seen drink and its buff are one use", table.getn(E.held), 2)
+  -- The buff beating its own cast here: still one.
+  C:Buff("0xP1", 3, 17543, true, 0)
+  fire("SPELL_GO_SELF", 13457, 17543, "0xP1", "0xP1")
+  check("  as is a buff that beat its drink here", table.getn(E.held), 3)
+  -- A buff that is no consumable's: nothing.
+  C:Buff("0xP1", 4, 25290, true, 0)
+  check("other buffs are not consumables", table.getn(E.held), 3)
+  E.live, E.held, C.buffs = realLive, {}, realBuffs
+  C.groupMembers, Wrekkit.db.consumeCredit = realGroup, {}
+end)()
+
 -- The drilldown separates them by item, not one lumped total.
 local consDetail = Wrekkit.report:Abilities(consBy["Fuff"], "consumes")
 for _, a in ipairs(consDetail) do
@@ -2811,7 +2842,10 @@ fire("BUFF_ADDED_OTHER", "0xOut", 1, 17628, 1, 60, 1, 0)
 check("a player outside the group is not followed", Wrekkit.capture.buffs["0xOut"], nil)
 
 -- A buff alone does not put someone in the pull; acting does, and then
--- the buff is there from when it went on.
+-- the buff is there from when it went on. (This flask's drink was counted
+-- already -- otherwise its buff would count it, and using a consumable in
+-- a pull does put you in it.)
+Wrekkit.db.consumeCredit = { ["0xP2:17627"] = { t = time() } }
 fire("BUFF_ADDED_OTHER", "0xP2", 1, 17627, 1, 60, 2, 0)
 check("a buff alone makes nobody an actor", live.actors["0xP2"], nil)
 advance(2)
