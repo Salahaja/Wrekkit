@@ -553,6 +553,33 @@ check("a shared spell goes to the original item",
 check("named from the table when the client has not cached it",
   Wrekkit.capture:Item(13444, 17531), "Major Mana Potion")
 
+-- Between pulls: held, and credited to the next pull -- the pre-pull fire
+-- protection potion, the flask. Only your group's.
+;(function()
+  local E = Wrekkit.encounter
+  local realGroup, realLive, realIn = Wrekkit.capture.groupMembers, E.live, E.inCombat
+  Wrekkit.capture.groupMembers = { Fuff = true }
+  E.live, E.inCombat, E.held = nil, false, {}
+  fire("SPELL_GO_SELF", 13446, 17534, "0xP1", "0xP1")    -- you, before the pull
+  fire("SPELL_GO_OTHER", 0, 17534, "0xP2", "0xP2")       -- not in your group
+  check("used between pulls: held", table.getn(E.held), 1)
+  E:CombatStart()
+  local fuff
+  for _, a in pairs(E.live.actors) do if a.name == "Fuff" then fuff = a end end
+  check("  and credited to the next pull", fuff and fuff.consumes, 1)
+  check("  the hold emptied", table.getn(E.held), 0)
+  -- Long before (yesterday's flask): not tonight's first pull's.
+  E.live, E.inCombat = nil, false
+  fire("SPELL_GO_SELF", 13446, 17534, "0xP1", "0xP1")
+  advance(7201)
+  E:CombatStart()
+  local stale = 0
+  for _, a in pairs(E.live.actors) do stale = stale + (a.consumes or 0) end
+  check("  but not from hours before", stale, 0)
+  E.live, E.inCombat, E.held = realLive, realIn, {}
+  Wrekkit.capture.groupMembers = realGroup
+end)()
+
 -- The drilldown separates them by item, not one lumped total.
 local consDetail = Wrekkit.report:Abilities(consBy["Fuff"], "consumes")
 for _, a in ipairs(consDetail) do

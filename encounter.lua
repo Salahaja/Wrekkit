@@ -926,8 +926,41 @@ end
 --- Counted per item rather than lumped together, because "who is parsing on
 --- consumables" is really "what did they burn" -- five Invulnerability
 --- Potions and five Mana Potions are not the same story.
+--[[ Consumables used between pulls are held and credited to the NEXT pull.
+     Most are taken before one -- the flask, the elixirs, the food, the
+     Greater Fire Protection Potion drunk on the pull -- and a tracker that
+     only listened during a fight missed exactly those.
+
+     Only your own group's: out of a pull you are as likely as not standing
+     in a city full of strangers eating. And only from the last two hours,
+     so a flask from last night's raid is not credited to tonight's first
+     pull. Kept to HELD_MAX, oldest dropped first. ]]
+local HELD_MAX = 400
+local HELD_FOR = 7200
+E.held = {}
+
+function E:HoldConsumable(guid, itemId, spellId)
+  local u = W.capture.units[guid] or W.capture:Unit(guid)
+  if not u or not u.name or not W.capture:InGroup(u.name) then return end
+  if table.getn(self.held) >= HELD_MAX then table.remove(self.held, 1) end
+  table.insert(self.held, { guid = guid, itemId = itemId, spellId = spellId, at = GetTime() })
+end
+
+--- A pull has started: everything held goes to it.
+function E:CreditHeld()
+  local held = self.held
+  self.held = {}
+  local now = GetTime()
+  for _, h in ipairs(held) do
+    if now - h.at <= HELD_FOR then self:Consumable(h.guid, h.itemId, h.spellId) end
+  end
+end
+
 function E:Consumable(guid, itemId, spellId)
-  if not self.live then return end
+  if not self.live then
+    self:HoldConsumable(guid, itemId, spellId)
+    return
+  end
   local a = self:Actor(guid)
   if not a then return end
 
@@ -1251,6 +1284,8 @@ function E:CombatStart()
   self.lastGroupHit = now
   self.inCombat = true
   self.combatMark = now
+  -- What the group drank and ate before it.
+  self:CreditHeld()
   -- Report our own totals while this pull runs; W.sync decides whether.
   -- Only from here, when a pull is really being recorded: reporting into
   -- a raid while nothing is happening is traffic nobody asked for.
