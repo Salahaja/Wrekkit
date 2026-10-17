@@ -389,15 +389,15 @@ function M:Create()
   resetBtn:SetPoint("RIGHT", worldBtn, "LEFT", -2, 0)
   self.resetBtn = resetBtn
 
-  --[[ The search box takes whatever width is left. At a fixed 110 it
-       already met the icons at the meter's narrowest, and one more icon
-       would have run them together; anchored between the edge and the Pets
-       button it gives way instead of overlapping. ]]
+  --[[ The filter keeps its own size: a 40px "Filter" button folded, 80px
+       open -- never stretched by the window. (It used to be pinned between
+       the edge and the Pets button to fill the gap, which made it grow with
+       every resize and undid the folding; at 110px fixed it had met the
+       icons at the meter's narrowest, at 80 it does not.) ]]
   petBtn:ClearAllPoints()
   petBtn:SetPoint("RIGHT", resetBtn, "LEFT", -4, 0)
   search:ClearAllPoints()
   search:SetPoint("LEFT", tb, "LEFT", 4, 0)
-  search:SetPoint("RIGHT", petBtn, "LEFT", -4, 0)
 
   ------------------------------------------------------------------
   -- list
