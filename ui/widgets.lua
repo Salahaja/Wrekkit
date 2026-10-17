@@ -822,7 +822,79 @@ end
 -- search box
 ----------------------------------------------------------------------
 
-function UI.SearchBox(parent, width, onChange, placeholder)
+--[[ Letting go of the keyboard.
+
+     A 1.12 edit box holds the keyboard until Enter or Escape -- clicking
+     elsewhere does not take it back -- so a box clicked by accident ate
+     every key after it: no moving, no casting, and no idea why. Ours let
+     go by themselves:
+       a mouse button pressed anywhere off the box (IsMouseButtonDown, where
+         the client has it);
+       otherwise the cursor off the box's window for RELEASE_AWAY seconds
+         -- out into the world, which is where you go to move;
+       combat starting; the window hiding.
+     What was typed stays, and keeps filtering: only the keyboard goes. ]]
+local RELEASE_AWAY = 1.5
+local focused, watcher
+
+--- The top-level window a frame lives in.
+local function windowOf(frame)
+  local f = frame
+  while f and f.GetParent and f:GetParent() and f:GetParent() ~= UIParent do f = f:GetParent() end
+  return f
+end
+
+local function over(frame)
+  if not frame then return false end
+  if MouseIsOver then return MouseIsOver(frame) and true or false end
+  return false
+end
+
+--- Release whichever of our boxes has the keyboard.
+function UI.ReleaseFocus()
+  local eb = focused
+  if not eb then return end
+  focused = nil
+  eb:ClearFocus()
+  if eb._lostFocus then eb._lostFocus() end
+end
+
+local function watch(eb, box)
+  focused = eb
+  eb._awaySince = nil
+  if not watcher then
+    watcher = CreateFrame("Frame", "WrekkitFocusWatch")
+    watcher:RegisterEvent("PLAYER_REGEN_DISABLED")
+    watcher:SetScript("OnEvent", function() UI.ReleaseFocus() end)
+    watcher:SetScript("OnUpdate", function()
+      local e = focused
+      if not e then return end
+      local b = e._box
+      if IsMouseButtonDown then
+        local down = IsMouseButtonDown("LeftButton") or IsMouseButtonDown("RightButton")
+        if down and not over(b) then UI.ReleaseFocus() return end
+      end
+      if over(windowOf(b)) then
+        e._awaySince = nil
+      else
+        e._awaySince = e._awaySince or GetTime()
+        if GetTime() - e._awaySince > RELEASE_AWAY then UI.ReleaseFocus() end
+      end
+    end)
+  end
+end
+UI.WatchFocus = watch           -- for tests
+function UI.FocusedBox() return focused end
+function UI.FocusWatcher() return watcher end
+
+--[[ opts.collapsible: shown as a small magnifier until wanted. Click it and
+     the box opens with the keyboard; once it lets go with nothing typed, it
+     folds back. With a filter typed it stays open, so a filter in force is
+     never hidden. Fewer stray clicks, and the toolbar gets its room back. ]]
+local COLLAPSED_W = 20
+
+function UI.SearchBox(parent, width, onChange, placeholder, opts)
+  opts = opts or {}
   local f = UI.Panel(parent, W.color.bg, W.color.border)
   f:SetWidth(width or 130)
   f:SetHeight(20)
@@ -854,15 +926,70 @@ function UI.SearchBox(parent, width, onChange, placeholder)
     if onChange then onChange(text) end
   end
 
+  eb._box = f
+  local function release() if focused == eb then UI.ReleaseFocus() else eb:ClearFocus() end end
   eb:SetScript("OnTextChanged", changed)
-  eb:SetScript("OnEscapePressed", function() eb:SetText("") eb:ClearFocus() end)
-  eb:SetScript("OnEnterPressed", function() eb:ClearFocus() end)
-  clear:SetScript("OnClick", function() eb:SetText("") eb:ClearFocus() end)
+  eb:SetScript("OnEscapePressed", function() eb:SetText("") release() end)
+  eb:SetScript("OnEnterPressed", function() release() end)
+  eb:SetScript("OnEditFocusGained", function() watch(eb, f) end)
+  eb:SetScript("OnEditFocusLost", function()
+    if focused == eb then focused = nil end
+    if eb._lostFocus then eb._lostFocus() end
+  end)
+  clear:SetScript("OnClick", function() eb:SetText("") release() end)
   clear:SetScript("OnEnter", function() x:SetTextColor(unpackColor(W.color.text)) end)
   clear:SetScript("OnLeave", function() x:SetTextColor(unpackColor(W.color.textFaint)) end)
+  -- A window closing never leaves the keyboard behind in it.
+  f:SetScript("OnHide", function() if focused == eb then UI.ReleaseFocus() end end)
 
   f.editBox = eb
-  f.SetValue = function(self, v) eb:SetText(v or "") end
+  f.SetValue = function(self, v)
+    eb:SetText(v or "")
+    if rawget(f, "Fold") then f:Fold() end
+  end
+
+  if opts.collapsible then
+    local open = CreateFrame("Button", nil, f)
+    open:SetAllPoints(f)
+    local glass = open:CreateTexture(nil, "ARTWORK")
+    glass:SetTexture("Interface\\Icons\\INV_Misc_Spyglass_03")
+    glass:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    glass:SetWidth(14) glass:SetHeight(14)
+    glass:SetPoint("CENTER", open, "CENTER", 0, 0)
+    open:SetScript("OnEnter", function()
+      if not GameTooltip then return end
+      GameTooltip:SetOwner(open, "ANCHOR_BOTTOM")
+      GameTooltip:AddLine(placeholder or "Search")
+      GameTooltip:Show()
+    end)
+    open:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
+    f.openButton = open
+
+    local function shut()
+      f:SetWidth(COLLAPSED_W)
+      eb:Hide() hint:Hide() clear:Hide()
+      open:Show()
+      f.collapsed = true
+    end
+    local function unfold()
+      f:SetWidth(width or 130)
+      open:Hide()
+      eb:Show()
+      changed()
+      f.collapsed = false
+    end
+    -- Folded only while empty and not being typed in.
+    function f:Fold()
+      if (eb:GetText() or "") == "" and focused ~= eb then shut() else unfold() end
+    end
+    open:SetScript("OnClick", function()
+      unfold()
+      eb:SetFocus()
+      watch(eb, f)      -- some clients raise no focus event for a scripted SetFocus
+    end)
+    eb._lostFocus = function() f:Fold() end
+    f:Fold()
+  end
   return f
 end
 
@@ -1855,7 +1982,10 @@ function UI.Stepper(parent, label, get, set, min, max, step, format)
 
   local function nudge(dir)
     W.Guard("setting: " .. tostring(label), function()
-      local v = get() + dir * step
+      -- A step may depend on where the value is (fine near the bottom of a
+      -- range, coarse higher up): step(value, dir) -> how far to move.
+      local by = (type(step) == "function") and step(get(), dir) or step
+      local v = get() + dir * by
       -- Clamp rather than wrap: wrapping from the maximum back to the
       -- minimum on a stray click is a nasty surprise on a size control.
       if v < min then v = min elseif v > max then v = max end
@@ -1871,6 +2001,7 @@ function UI.Stepper(parent, label, get, set, min, max, step, format)
 
   -- Exposed so the audit can drive them; the stepper is otherwise opaque.
   f.minus, f.plus = minus, plus
+  f.label = label
   f.Refresh = show
   show()
   return f

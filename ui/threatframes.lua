@@ -590,13 +590,14 @@ function TF:CreateWarning()
   f.text:SetShadowOffset(1, -1)
   f.text:SetPoint("CENTER", UIParent, "CENTER", 0, 170)
 
-  -- Screen-edge flash: four soft bands fading inward.
+  -- Screen-edge flash: four soft bands fading inward, as deep as the
+  -- edgeWidth setting says (SizeEdges).
   local function band(p1, p2, horizontal, startA, endA)
     local t = f:CreateTexture(nil, "BACKGROUND")
     t:SetTexture(UI.media.white)
     t:SetPoint(p1, f, p1, 0, 0)
     t:SetPoint(p2, f, p2, 0, 0)
-    if horizontal then t:SetHeight(70) else t:SetWidth(70) end
+    t._horizontal = horizontal
     t._grad = { horizontal and "VERTICAL" or "HORIZONTAL", startA, endA }
     t:Hide()
     return t
@@ -607,7 +608,18 @@ function TF:CreateWarning()
     band("TOPLEFT", "BOTTOMLEFT", false, 1, 0),
     band("TOPRIGHT", "BOTTOMRIGHT", false, 0, 1),
   }
+  self:SizeEdges()
   return f
+end
+
+--- How far the edge flash reaches into the screen, from its setting.
+function TF:SizeEdges()
+  local f = self.warn
+  if not f then return end
+  local depth = T:Settings().edgeWidth or 30
+  for _, b in ipairs(f.bands) do
+    if b._horizontal then b:SetHeight(depth) else b:SetWidth(depth) end
+  end
 end
 
 local WARN_COLOR = { 1.00, 0.55, 0.10 }

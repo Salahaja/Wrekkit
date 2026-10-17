@@ -414,7 +414,7 @@ function R:Create()
   local search = UI.SearchBox(header, 120, function(text)
     R.state.search = text
     R:Refresh()
-  end, "Filter name")
+  end, "Filter name", { collapsible = true })
   search:SetPoint("BOTTOMRIGHT", header, "BOTTOMRIGHT", -12, 6)
   self.search = search
 

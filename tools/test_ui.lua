@@ -3192,6 +3192,94 @@ step("threat: docked window hangs under the meter", function()
   T:StopDemo()
 end)
 
+step("filter boxes: folded until wanted, and they let go of the keyboard", function()
+  local box = UI.meter.search
+  if not box.openButton then error("the meter's filter is not collapsible") end
+  box:SetValue("")
+  if not box.collapsed or box:GetWidth() > 24 then error("an empty filter is not folded to its magnifier") end
+  -- Clicked open: unfolded, with the keyboard.
+  box.openButton:GetScript("OnClick")()
+  if box.collapsed or UI.FocusedBox() ~= box.editBox then error("opening it did not give it the keyboard") end
+  local watch = UI.FocusWatcher()
+  -- A click off it lets go (where the client can tell a button is down)...
+  local realDown, realOver = IsMouseButtonDown, MouseIsOver
+  IsMouseButtonDown = function(b) return b == "LeftButton" end
+  MouseIsOver = function() return false end
+  watch:GetScript("OnUpdate")()
+  if UI.FocusedBox() then error("a click elsewhere did not release the keyboard") end
+  if not box.collapsed then error("released and empty, it did not fold back") end
+  -- ...and with no such function, the cursor away from its window does.
+  IsMouseButtonDown = nil
+  box.openButton:GetScript("OnClick")()
+  box.editBox:SetText("fuf")
+  watch:GetScript("OnUpdate")()
+  NOW = NOW + 2
+  watch:GetScript("OnUpdate")()
+  if UI.FocusedBox() then error("the cursor out in the world did not release the keyboard") end
+  if box.collapsed then error("with a filter typed it must stay open") end
+  -- Still over its window: kept, however long.
+  MouseIsOver = function() return true end
+  box.editBox:GetScript("OnEditFocusGained")()
+  NOW = NOW + 10
+  watch:GetScript("OnUpdate")()
+  if UI.FocusedBox() ~= box.editBox then error("it let go while the cursor was still over its window") end
+  -- Combat starting always takes the keyboard back.
+  local was = event
+  event = "PLAYER_REGEN_DISABLED"
+  watch:GetScript("OnEvent")()
+  event = was
+  if UI.FocusedBox() then error("combat starting did not release the keyboard") end
+  IsMouseButtonDown, MouseIsOver = realDown, realOver
+  box:SetValue("")
+  UI.meter:Settings().search = ""
+end)
+
+step("threat: the screen-edge flash is as deep as its setting", function()
+  local s = Wrekkit.threat:Settings()
+  local TF = UI.threatFrames
+  s.edgeWidth = 30
+  TF:Flash("danger")
+  local top, left = TF.warn.bands[1], TF.warn.bands[3]
+  if top:GetHeight() ~= 30 or left:GetWidth() ~= 30 then
+    error("edges drawn " .. tostring(top:GetHeight()) .. "/" .. tostring(left:GetWidth()) .. "px, want 30")
+  end
+  s.edgeWidth = 60
+  TF:SizeEdges()
+  if top:GetHeight() ~= 60 or left:GetWidth() ~= 60 then error("edges did not follow the setting") end
+  s.edgeWidth = 30
+  TF:SizeEdges()
+  TF.warn:Hide()
+
+  -- Down to a 1px line: a pixel at a time below 10, five at a time above.
+  UI.settings:Create()
+  local edge
+  for _, c in ipairs(UI.settings.controls) do
+    if c.label == "Screen edge width" and c.plus then edge = c end
+  end
+  if not edge then error("no Screen edge width control") end
+  s.edgeWidth = 10
+  edge.minus:GetScript("OnClick")()
+  if s.edgeWidth ~= 9 then error("below 10 it should step by 1, got " .. s.edgeWidth) end
+  s.edgeWidth = 10
+  edge.plus:GetScript("OnClick")()
+  if s.edgeWidth ~= 15 then error("from 10 up it should step by 5, got " .. s.edgeWidth) end
+  s.edgeWidth = 2
+  edge.minus:GetScript("OnClick")()
+  edge.minus:GetScript("OnClick")()
+  if s.edgeWidth ~= 1 then error("it should stop at 1px, got " .. s.edgeWidth) end
+  s.edgeWidth = 30
+
+  -- Opt-in: switched off once for everyone who had them, then theirs to keep.
+  local saved = { warnFlash = true, flashScreen = true }
+  for k, v in pairs(Wrekkit.threat.defaults) do if saved[k] == nil then saved[k] = v end end
+  saved.edgeFlashOptIn = nil
+  Wrekkit.threat:Sanitize(saved)
+  if saved.warnFlash or saved.flashScreen then error("the edge flashes were not switched off") end
+  saved.warnFlash = true
+  Wrekkit.threat:Sanitize(saved)
+  if not saved.warnFlash then error("turned back on, the flash did not stay on") end
+end)
+
 step("threat: 'hide when not in a group' holds in every mode", function()
   local T = Wrekkit.threat
   local s = T:Settings()

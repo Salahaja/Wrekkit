@@ -290,7 +290,7 @@ function M:Create()
   local search = UI.SearchBox(tb, 110, function(text)
     M:Settings().search = text
     M:Refresh()
-  end, "Filter name")
+  end, "Filter name", { collapsible = true })
   search:SetPoint("LEFT", tb, "LEFT", 4, 0)
   search:SetHeight(18)
   self.search = search

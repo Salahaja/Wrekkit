@@ -95,7 +95,7 @@ T.defaults = {
 
   -- warnings, damage dealers and healers
   warnText = true,
-  warnFlash = true,
+  warnFlash = false,       -- flash the screen edges with each warning (opt-in)
   warnSound = true,
   raidWarning = true,      -- danger warnings also as a raid warning, on this screen only
   warnPulled = true,       -- you took aggro off the tank
@@ -114,6 +114,7 @@ T.defaults = {
   flashFrame = true,       -- blink the target-frame %
   flashScreen = false,     -- pulse the screen edges as well
   flashSpeed = 3,          -- blinks a second
+  edgeWidth = 30,          -- how far the screen-edge flash reaches in, px
 
   -- mobs you are not targeting, watched through their nameplates
   watchMobs = true,        -- read each mob's own target (needs SuperWoW)
@@ -223,6 +224,13 @@ function T:Sanitize(s)
   s.flashAt = clamp(s.flashAt, 30, 150, d.flashAt)
   s.tankFlashAt = clamp(s.tankFlashAt, 30, 150, d.tankFlashAt)
   s.flashSpeed = clamp(s.flashSpeed, 1, 6, d.flashSpeed)
+  s.edgeWidth = math.floor(clamp(s.edgeWidth, 1, 100, d.edgeWidth))
+  -- The screen-edge flashes became opt-in. Saved settings hold every
+  -- default, so they are switched off ONCE for everyone who had them;
+  -- whoever turns them back on keeps them.
+  if not s.edgeFlashOptIn then
+    s.warnFlash, s.flashScreen, s.edgeFlashOptIn = false, false, true
+  end
   s.textSize = math.floor(clamp(s.textSize, 14, 48, d.textSize))
   s.frameScale = clamp(s.frameScale, 0.6, 2.5, d.frameScale)
   s.plateMemory = clamp(s.plateMemory, 0, 30, d.plateMemory)
