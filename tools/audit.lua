@@ -108,7 +108,7 @@ declare(FRAMEXML, [[
   CooldownFrame_SetTimer ReloadUI
   DEFAULT_CHAT_FRAME GameTooltip SlashCmdList StaticPopupDialogs
   StaticPopup_Show UISpecialFrames
-  UNKNOWN MouseIsOver RaidWarningFrame
+  UNKNOWN MouseIsOver RaidWarningFrame IsMouseButtonDown
 ]])
 
 declare(SUPER, [[
