@@ -987,6 +987,12 @@ function S:BuildThreat()
     function() return ts().dangerAt end,
     function(v) ts().dangerAt = v; redraw() end,
     10, 150, 5, pct)
+  -- How far either edge flash (the warning's and the pulse's) reaches in.
+  stepper(self, "Screen edge width",
+    function() return ts().edgeWidth end,
+    function(v) ts().edgeWidth = v; UI.threatFrames:SizeEdges() end,
+    10, 100, 5,
+    function(v) return v .. "px" end)
 
   get, set = opt("warnText")
   check(self, "Warning text", get, set, { "Large text mid-screen as you cross a line." })

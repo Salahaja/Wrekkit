@@ -114,6 +114,7 @@ T.defaults = {
   flashFrame = true,       -- blink the target-frame %
   flashScreen = false,     -- pulse the screen edges as well
   flashSpeed = 3,          -- blinks a second
+  edgeWidth = 30,          -- how far the screen-edge flash reaches in, px
 
   -- mobs you are not targeting, watched through their nameplates
   watchMobs = true,        -- read each mob's own target (needs SuperWoW)
@@ -223,6 +224,7 @@ function T:Sanitize(s)
   s.flashAt = clamp(s.flashAt, 30, 150, d.flashAt)
   s.tankFlashAt = clamp(s.tankFlashAt, 30, 150, d.tankFlashAt)
   s.flashSpeed = clamp(s.flashSpeed, 1, 6, d.flashSpeed)
+  s.edgeWidth = math.floor(clamp(s.edgeWidth, 10, 100, d.edgeWidth))
   s.textSize = math.floor(clamp(s.textSize, 14, 48, d.textSize))
   s.frameScale = clamp(s.frameScale, 0.6, 2.5, d.frameScale)
   s.plateMemory = clamp(s.plateMemory, 0, 30, d.plateMemory)

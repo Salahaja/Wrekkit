@@ -3192,6 +3192,23 @@ step("threat: docked window hangs under the meter", function()
   T:StopDemo()
 end)
 
+step("threat: the screen-edge flash is as deep as its setting", function()
+  local s = Wrekkit.threat:Settings()
+  local TF = UI.threatFrames
+  s.edgeWidth = 30
+  TF:Flash("danger")
+  local top, left = TF.warn.bands[1], TF.warn.bands[3]
+  if top:GetHeight() ~= 30 or left:GetWidth() ~= 30 then
+    error("edges drawn " .. tostring(top:GetHeight()) .. "/" .. tostring(left:GetWidth()) .. "px, want 30")
+  end
+  s.edgeWidth = 60
+  TF:SizeEdges()
+  if top:GetHeight() ~= 60 or left:GetWidth() ~= 60 then error("edges did not follow the setting") end
+  s.edgeWidth = 30
+  TF:SizeEdges()
+  TF.warn:Hide()
+end)
+
 step("threat: 'hide when not in a group' holds in every mode", function()
   local T = Wrekkit.threat
   local s = T:Settings()
