@@ -287,7 +287,7 @@ function M:Create()
   tbRule:SetPoint("BOTTOMRIGHT", tb, "BOTTOMRIGHT", 0, 0)
   self.toolbar = tb
 
-  local search = UI.SearchBox(tb, 110, function(text)
+  local search = UI.SearchBox(tb, 80, function(text)
     M:Settings().search = text
     M:Refresh()
   end, "Filter name", { collapsible = true })

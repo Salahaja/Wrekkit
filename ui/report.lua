@@ -411,7 +411,7 @@ function R:Create()
   self.hStats = UI.Text(header, 10, W.color.textDim, "RIGHT")
   self.hStats:SetPoint("TOPRIGHT", header, "TOPRIGHT", -12, -10)
 
-  local search = UI.SearchBox(header, 120, function(text)
+  local search = UI.SearchBox(header, 80, function(text)
     R.state.search = text
     R:Refresh()
   end, "Filter name", { collapsible = true })
