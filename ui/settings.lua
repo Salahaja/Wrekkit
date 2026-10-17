@@ -987,11 +987,13 @@ function S:BuildThreat()
     function() return ts().dangerAt end,
     function(v) ts().dangerAt = v; redraw() end,
     10, 150, 5, pct)
-  -- How far either edge flash (the warning's and the pulse's) reaches in.
+  -- How far either edge flash (the warning's and the pulse's) reaches in:
+  -- down to a 1px line. A pixel at a time up to 10, then five at a time.
   stepper(self, "Screen edge width",
     function() return ts().edgeWidth end,
     function(v) ts().edgeWidth = v; UI.threatFrames:SizeEdges() end,
-    10, 100, 5,
+    1, 100,
+    function(v, dir) if v < 10 or (v == 10 and dir < 0) then return 1 end return 5 end,
     function(v) return v .. "px" end)
 
   get, set = opt("warnText")

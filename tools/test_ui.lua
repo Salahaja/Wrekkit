@@ -3207,6 +3207,35 @@ step("threat: the screen-edge flash is as deep as its setting", function()
   s.edgeWidth = 30
   TF:SizeEdges()
   TF.warn:Hide()
+
+  -- Down to a 1px line: a pixel at a time below 10, five at a time above.
+  UI.settings:Create()
+  local edge
+  for _, c in ipairs(UI.settings.controls) do
+    if c.label == "Screen edge width" and c.plus then edge = c end
+  end
+  if not edge then error("no Screen edge width control") end
+  s.edgeWidth = 10
+  edge.minus:GetScript("OnClick")()
+  if s.edgeWidth ~= 9 then error("below 10 it should step by 1, got " .. s.edgeWidth) end
+  s.edgeWidth = 10
+  edge.plus:GetScript("OnClick")()
+  if s.edgeWidth ~= 15 then error("from 10 up it should step by 5, got " .. s.edgeWidth) end
+  s.edgeWidth = 2
+  edge.minus:GetScript("OnClick")()
+  edge.minus:GetScript("OnClick")()
+  if s.edgeWidth ~= 1 then error("it should stop at 1px, got " .. s.edgeWidth) end
+  s.edgeWidth = 30
+
+  -- Opt-in: switched off once for everyone who had them, then theirs to keep.
+  local saved = { warnFlash = true, flashScreen = true }
+  for k, v in pairs(Wrekkit.threat.defaults) do if saved[k] == nil then saved[k] = v end end
+  saved.edgeFlashOptIn = nil
+  Wrekkit.threat:Sanitize(saved)
+  if saved.warnFlash or saved.flashScreen then error("the edge flashes were not switched off") end
+  saved.warnFlash = true
+  Wrekkit.threat:Sanitize(saved)
+  if not saved.warnFlash then error("turned back on, the flash did not stay on") end
 end)
 
 step("threat: 'hide when not in a group' holds in every mode", function()

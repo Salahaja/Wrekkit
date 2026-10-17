@@ -1855,7 +1855,10 @@ function UI.Stepper(parent, label, get, set, min, max, step, format)
 
   local function nudge(dir)
     W.Guard("setting: " .. tostring(label), function()
-      local v = get() + dir * step
+      -- A step may depend on where the value is (fine near the bottom of a
+      -- range, coarse higher up): step(value, dir) -> how far to move.
+      local by = (type(step) == "function") and step(get(), dir) or step
+      local v = get() + dir * by
       -- Clamp rather than wrap: wrapping from the maximum back to the
       -- minimum on a stray click is a nasty surprise on a size control.
       if v < min then v = min elseif v > max then v = max end
@@ -1871,6 +1874,7 @@ function UI.Stepper(parent, label, get, set, min, max, step, format)
 
   -- Exposed so the audit can drive them; the stepper is otherwise opaque.
   f.minus, f.plus = minus, plus
+  f.label = label
   f.Refresh = show
   show()
   return f
