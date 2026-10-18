@@ -330,17 +330,14 @@ local function makeRow(parent, i)
       local m = b.mob
       if not m or m.sample then return end
       if arg1 == "RightButton" then
-        T:Taunt({ guid = m.guid, unit = m.unit, name = m.name, who = m.who })
-      elseif TargetUnit then
-        -- By guid with SuperWoW; else the token the group scan found it
-        -- through, if it still names this mob.
-        if m.guid then
-          TargetUnit(m.guid)
-        elseif m.unit and UnitExists(m.unit) and UnitName(m.unit) == m.name then
-          TargetUnit(m.unit)
-        elseif TargetByName then
-          TargetByName(m.name, true)
+        if MF:RightAction() == "attack" then
+          MF:TargetMob(m)
+          MF:StartAttack()
+        else
+          T:Taunt({ guid = m.guid, unit = m.unit, name = m.name, who = m.who })
         end
+      else
+        MF:TargetMob(m)
       end
     end)
   end)
@@ -418,6 +415,41 @@ function MF:Create()
   self.rows = {}
   self:RestorePosition()
   return f
+end
+
+--- Target a row's mob: by guid with SuperWoW; else the token the group
+--- scan found it through, if it still names this mob; else by name.
+function MF:TargetMob(m)
+  if not TargetUnit then return end
+  if m.guid then
+    TargetUnit(m.guid)
+  elseif m.unit and UnitExists(m.unit) and UnitName(m.unit) == m.name then
+    TargetUnit(m.unit)
+  elseif TargetByName then
+    TargetByName(m.name, true)
+  end
+end
+
+--[[ What a right-click on a mob does (mobRightClick):
+       auto    tanking, taunt it; otherwise attack it
+       attack  target it and start melee
+       taunt   taunt it, as it always did ]]
+function MF:RightAction()
+  local mode = T:Settings().mobRightClick or "auto"
+  if mode == "auto" then return T:IsTank() and "taunt" or "attack" end
+  return mode
+end
+
+--[[ Start auto-attack on the target -- never stop it. 1.12's AttackTarget()
+     TOGGLES the swing, so called while already swinging it would end it.
+     Whether we are swinging is what PLAYER_ENTER_COMBAT / _LEAVE_COMBAT
+     say (those are the auto-attack's own, not the combat flag's). The
+     swing follows a change of target, so already swinging is enough. ]]
+MF.swinging = false
+function MF:StartAttack()
+  if self.swinging or not AttackTarget then return end
+  if UnitExists and not UnitExists("target") then return end
+  AttackTarget()
 end
 
 --- Who a row's player button acts on: the player the mob is hitting, you
@@ -809,4 +841,13 @@ function MF:Reset()
   self.list = {}
   self.flipped = nil
   nextOrder = 0
+end
+
+-- Whether we are swinging, for StartAttack: the auto-attack's own events.
+if CreateFrame then
+  local swing = CreateFrame("Frame", "WrekkitMobsSwing")
+  swing:RegisterEvent("PLAYER_ENTER_COMBAT")
+  swing:RegisterEvent("PLAYER_LEAVE_COMBAT")
+  swing:SetScript("OnEvent", function() MF.swinging = (event == "PLAYER_ENTER_COMBAT") end)
+  MF.swingFrame = swing
 end

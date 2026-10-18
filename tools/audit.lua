@@ -100,7 +100,7 @@ declare(WOW, [[
   GetSpellName GetSpellTexture GetSpellCooldown CastSpell CastSpellByName
   GetNumSpellTabs GetSpellTabInfo IsPassiveSpell CursorHasSpell ClearCursor PickupSpell
   GetPlayerBuff GetPlayerBuffTexture
-  TargetUnit TargetByName TargetLastTarget ClearTarget UnitCanAssist
+  TargetUnit TargetByName TargetLastTarget ClearTarget UnitCanAssist AttackTarget
   this event arg1 arg2 arg3 arg4 arg5 arg6 arg7 arg8 arg9
 ]])
 
@@ -1251,6 +1251,40 @@ step("threat meter", function()
     if row:IsShown() and row.mark:IsShown() then error("a marker stayed after it was cleared") end
   end
   NOW = markNow
+  -- Right-click on a mob: attack it when not tanking (target, then melee,
+  -- never toggling off a swing already going); taunt when tanking.
+  do
+    local MF = UI.mobs
+    local row
+    for _, r in ipairs(MF.rows) do if r:IsShown() and r.mob and r.mob.guid == drakes[1] then row = r end end
+    if not row then error("no row for Drake 1 to right-click") end
+    local attacks, targeted, taunted = 0, nil, nil
+    local real = { attack = STUB.AttackTarget, target = STUB.TargetUnit, tank = T.IsTank, taunt = T.Taunt }
+    STUB.AttackTarget = function() attacks = attacks + 1 end
+    STUB.TargetUnit = function(u) targeted = u end
+    T.Taunt = function(self, m) taunted = m and m.guid end
+    T.IsTank = function() return false end
+    local was = arg1
+    arg1 = "RightButton"
+    MF.swinging = false
+    row:GetScript("OnClick")()
+    if targeted ~= drakes[1] or attacks ~= 1 then
+      error("right-click did not target and attack the mob (" .. tostring(targeted) .. ", " .. attacks .. ")")
+    end
+    MF.swinging = true
+    row:GetScript("OnClick")()
+    if attacks ~= 1 then error("right-click toggled off a swing already going") end
+    T.IsTank = function() return true end
+    row:GetScript("OnClick")()
+    if taunted ~= drakes[1] then error("right-click did not taunt while tanking") end
+    T:Settings().mobRightClick = "attack"
+    MF.swinging, taunted = false, nil
+    row:GetScript("OnClick")()
+    if taunted or attacks ~= 2 then error("set to attack, a tank's right-click did not attack") end
+    T:Settings().mobRightClick = "auto"
+    arg1, MF.swinging = was, false
+    STUB.AttackTarget, STUB.TargetUnit, T.IsTank, T.Taunt = real.attack, real.target, real.tank, real.taunt
+  end
   -- The width: set it, and the frame and every row's name column follow;
   -- outside its limits it is held to them.
   do
