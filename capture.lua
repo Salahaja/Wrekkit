@@ -612,7 +612,7 @@ function C:AUTO_ATTACK(attacker, target, damage, hitInfo, victimState, _, blocke
   info.resisted = num(resisted)
   info.school = nil
   W.encounter:Damage(attacker, target, 0, damage, info)
-  if W.value then W.value:Swing(attacker, target) end
+  if W.value then W.value:Swing(attacker, target, damage, info.crit) end
 end
 
 function C:SPELL_DAMAGE(target, caster, spellId, amount, mitigationStr, hitInfo, school, effectAuraStr)

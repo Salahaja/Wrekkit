@@ -4353,6 +4353,50 @@ check("the drilldown shows the curse as a line", curser and curser.dmgAbility[17
 check("Judgement of Light's healing moves to its paladin", TH.rowOf(moved, "healing", "Retguy").healing, 61, 0.01)
 Wrekkit.db.valueCredit = nil
 
+-- PHYSICAL. Windfury: the swing in the same moment as the proc is the
+-- totem's, credited to the shaman in the hitter's group.
+defPlayer("0xSham", "Totemguy", "SHAMAN")
+Wrekkit.capture.subgroups.Totemguy = 1
+Wrekkit.capture.units["0xSham"] = nil
+Wrekkit.capture:Unit("0xSham")
+fire("SPELL_GO_OTHER", 0, 8512, "0xSham", "0xSham")
+fire("SPELL_GO_OTHER", 0, 51368, "0xWar", "0xWar")
+fire("AUTO_ATTACK_OTHER", "0xWar", "0xV6", 900, 2, 0, 1, 0, 0, 0)
+check("Windfury's extra swing goes to the shaman", eff("0xSham", 51368), 900)
+advance(0.2)
+fire("AUTO_ATTACK_OTHER", "0xWar", "0xV6", 900, 2, 0, 1, 0, 0, 0)
+check("only that swing", eff("0xSham", 51368), 900)
+
+-- Estimates are off until asked for: armor and attack power count nothing.
+
+defNPC("0xV7", "Armored", 1000000)
+fire("AURA_CAST_ON_OTHER", 11597, "0xWar", "0xV7")
+fire("DEBUFF_ADDED_OTHER", "0xV7", 1, 11597, 5, 60, 5, 0)
+fire("AURA_CAST_ON_OTHER", 11717, "0xLock", "0xV7")
+fire("DEBUFF_ADDED_OTHER", "0xV7", 2, 11717, 1, 60, 6, 0)
+fire("BUFF_ADDED_OTHER", "0xWar", 4, 11551, 1, 60, 4, 0)
+for i = 1, 12 do
+  advance(2.5)
+  fire("AUTO_ATTACK_OTHER", "0xWar", "0xV7", 1000, 2, 0, 1, 0, 0, 0)
+end
+check("estimates off: Sunder counts nothing", eff("0xWar", 11597), 0)
+
+-- On: armor 3731 less 5 x 450 Sunder and 640 Recklessness.
+Wrekkit.db.raidValueEstimates = true
+advance(2.5)
+fire("AUTO_ATTACK_OTHER", "0xWar", "0xV7", 1000, 2, 0, 1, 0, 0, 0)
+local keepBase = 1 - 3731 / (3731 + 5500)
+local keepNow = 1 - 841 / (841 + 5500)
+local armorExtra = 1000 - 1000 * keepBase / keepNow
+local apExtra = 185 / 14 * 2.5 * keepNow
+local scale = (armorExtra + apExtra) > 750 and 750 / (armorExtra + apExtra) or 1
+check("Sunder's estimate, by armor it took off", eff("0xWar", 11597), armorExtra * 2250 / 2890 * scale, 0.5)
+check("Recklessness's, to its warlock", eff("0xLock", 11717), armorExtra * 640 / 2890 * scale, 0.5)
+check("Battle Shout: 185 AP over the 2.5s swings", eff("0xWar", 11551), apExtra * scale, 0.5)
+local sunderRow = enc.actors["0xWar"].valueEffect[11597]
+check("an estimate says so", sunderRow and sunderRow.name, "Sunder Armor (est.)")
+Wrekkit.db.raidValueEstimates = nil
+
 -- Switched off, nothing more is counted.
 Wrekkit.db.raidValue = nil
 local total = val("0xLock")

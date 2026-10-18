@@ -87,6 +87,72 @@ for _, id in ipairs({ 20185, 20344, 20345, 20346 }) do
   V.EFFECTS[id] = { name = "Judgement of Light", on = "target", support = "heal", schools = NONE, credit = "judgement" }
 end
 
+--[[ PHYSICAL. Windfury and Expose Weakness are exact and always counted.
+     The rest need a number the log never gives -- a mob's armor, a
+     player's attack power or weapon -- so they are ESTIMATES, counted only
+     with "Estimated effects" on (W.db.raidValueEstimates) and named
+     "(est.)" wherever they show:
+       armor     armor taken off per stack. Every mob is taken to start
+                 with a raid boss's (BOSS_ARMOR)
+       ap        attack power added: AP / 14 x weapon speed per hit, the
+                 speed read from that player's own swing gaps (a dual
+                 wielder reads short, so it errs low), after armor
+       rangedAp  the same, for ranged attacks only (Hunter's Mark)
+       crit      crit chance added: that share of a non-crit's size
+     Expose Armor's figure is its five-combo-point one. ]]
+local PHYS = { [0] = true }
+local function physical(ids, base)
+  for id, v in pairs(ids) do
+    local e = {}
+    for k, x in pairs(base) do e[k] = x end
+    e[base.field] = v
+    e.field = nil
+    e.schools = PHYS
+    V.EFFECTS[id] = e
+  end
+end
+physical({ [7386] = 90, [7405] = 180, [8380] = 270, [11596] = 360, [11597] = 450, [47383] = 600 },
+  { field = "armor", name = "Sunder Armor", on = "target", credit = "aura", estimate = true })
+physical({ [770] = 175, [778] = 285, [9749] = 395, [9907] = 505,
+           [16857] = 175, [17390] = 285, [17391] = 395, [17392] = 505 },
+  { field = "armor", name = "Faerie Fire", on = "target", credit = "aura", estimate = true })
+physical({ [704] = 140, [7658] = 290, [7659] = 465, [11717] = 640 },
+  { field = "armor", name = "Curse of Recklessness", on = "target", credit = "aura", estimate = true })
+physical({ [8647] = 400, [8648] = 400, [8649] = 725, [8651] = 725, [8650] = 1050, [8652] = 1050,
+           [11197] = 1375, [11199] = 1375, [11198] = 1700, [11200] = 1700 },
+  { field = "armor", name = "Expose Armor", on = "target", credit = "aura", estimate = true })
+physical({ [16928] = 100 },
+  { field = "armor", name = "Annihilator", on = "target", credit = "melee", estimate = true })
+physical({ [1130] = 20, [14323] = 45, [14324] = 75, [14325] = 110 },
+  { field = "rangedAp", name = "Hunter's Mark", on = "target", credit = "aura", estimate = true })
+physical({ [6673] = 15, [5242] = 35, [6192] = 55, [11549] = 85, [11550] = 130, [11551] = 185,
+           [25289] = 232, [24438] = 200, [27578] = 185 },
+  { field = "ap", name = "Battle Shout", on = "attacker", credit = "party", class = "WARRIOR", estimate = true })
+physical({ [19740] = 20, [19834] = 35, [19835] = 55, [19836] = 85, [19837] = 115, [19838] = 155,
+           [25291] = 185, [25782] = 155, [25916] = 185 },
+  { field = "ap", name = "Blessing of Might", on = "attacker", credit = "buffcaster", estimate = true })
+-- Trueshot is 3% of attack power plus 30; only the 30 is known.
+physical({ [19506] = 30 },
+  { field = "ap", name = "Trueshot Aura", on = "attacker", credit = "party", class = "HUNTER",
+    ranged = true, estimate = true })
+physical({ [24932] = 0.03 },
+  { field = "crit", name = "Leader of the Pack", on = "attacker", credit = "party", class = "DRUID",
+    ranged = true, estimate = true })
+physical({ [7140] = 5 },
+  { field = "flat", name = "Expose Weakness", on = "target", credit = "aura" })
+
+V.WINDFURY = 51368          -- the proc: cast on the player, the extra swing that same moment
+V.WINDFURY_TOTEMS = { [8512] = true, [10613] = true, [10614] = true }
+local BOSS_ARMOR = 3731     -- a level 63 raid boss
+local ARMOR_K = 400 + 85 * 60
+local RANGED = { ["Auto Shot"] = true, ["Aimed Shot"] = true, ["Multi-Shot"] = true }
+
+-- Buffs on the attacker, as a list: walked on every hit.
+V.attackerIds = {}
+for id, e in pairs(V.EFFECTS) do
+  if e.on == "attacker" then table.insert(V.attackerIds, id) end
+end
+
 --[[ Damage shields: Retribution Aura and Thorns hurt whatever hits the
      player wearing them, and the combat log calls that the WEARER's damage.
      It is the provider's: the paladin whose aura it is (in the wearer's
@@ -126,9 +192,19 @@ V.recentMelee = {}    -- mob guid -> { guid -> at }
 V.procScore = {}      -- spellId -> provider guid -> times seen among the candidates
 V.partyCache = {}     -- attacker guid -> { by, at }
 V.lastRestore = {}    -- the last restore credited, to drop its duplicate
+V.lastCaster = {}     -- spellId -> who cast that buff last (Greater Blessings)
+V.wfAt = {}           -- player guid -> when Windfury just procced on them
+V.lastTotem = {}      -- shaman guid -> when they last dropped Windfury Totem
+V.speed = {}          -- player guid (.. "r" for ranged) -> seconds between swings
+V.lastSwingAt = {}    -- the same keys -> their last swing
 
 function V:Enabled()
   return W.db and W.db.raidValue == true
+end
+
+--- The estimated effects too: armor, attack power, crit (experimental).
+function V:Estimates()
+  return W.db and W.db.raidValueEstimates == true
 end
 
 --- Switch the extra nampower events on when it is wanted.
@@ -170,6 +246,7 @@ function V:AuraCast(spellId, caster, target)
       self.buffBy[target] = b
     end
     b[spellId] = caster
+    self.lastCaster[spellId] = caster
     return
   end
   local t = self.lastCast[target]
@@ -183,10 +260,17 @@ function V:AuraCast(spellId, caster, target)
   if d then d.by = caster end
 end
 
---- A cast went off: a Judgement is about to put its debuff on the target.
+--- A cast went off: a Judgement is about to put its debuff on the target;
+--- Windfury procced on a player; a shaman dropped Windfury Totem.
 function V:SpellGo(spellId, caster, target)
-  if not self:Enabled() or not target or spellName(spellId) ~= "Judgement" then return end
-  self.lastJudge[target] = { by = caster, at = GetTime() }
+  if not self:Enabled() or not caster then return end
+  if spellId == self.WINDFURY then
+    self.wfAt[caster] = GetTime()
+  elseif self.WINDFURY_TOTEMS[spellId] then
+    self.lastTotem[caster] = GetTime()
+  elseif target and spellName(spellId) == "Judgement" then
+    self.lastJudge[target] = { by = caster, at = GetTime() }
+  end
 end
 
 function V:Provider(target, spellId, effect)
@@ -271,30 +355,54 @@ end
 -- the paladin's auras, and buffs cast on players
 ----------------------------------------------------------------------
 
---- The paladin in an attacker's own group with this aura up, or nil.
-function V:PartyProvider(attacker, spellId)
+--- The player of `class` (the paladin by default) in an attacker's own
+--- group with this aura up, or nil. Remembered a few seconds per spell.
+function V:PartyProvider(attacker, spellId, class)
+  class = class or "PALADIN"
   local now = GetTime()
-  local c = self.partyCache[attacker]
-  if c and c.spell == spellId and now - c.at < 5 then return c.by end
+  local cache = self.partyCache[attacker]
+  if not cache then
+    cache = {}
+    self.partyCache[attacker] = cache
+  end
+  local c = cache[spellId]
+  if c and now - c.at < 5 then return c.by end
   local me = W.capture.units[attacker]
   local group = me and W.capture:Subgroup(me.name)
   local by
   for guid, buffs in pairs(W.capture.buffs) do
     local u = W.capture.units[guid]
-    if buffs[spellId] and u and u.isPlayer and u.class == "PALADIN" then
+    if buffs[spellId] and u and u.isPlayer and u.class == class then
       if guid == attacker or (group and W.capture:Subgroup(u.name) == group) then
         by = guid
         if guid == attacker then break end
       end
     end
   end
-  self.partyCache[attacker] = { by = by, at = now, spell = spellId }
+  cache[spellId] = { by = by, at = now }
+  return by
+end
+
+--- The shaman behind a Windfury swing: one in the attacker's group, the
+--- one who dropped the totem latest if there are several.
+function V:WindfuryProvider(attacker)
+  local me = W.capture.units[attacker]
+  local group = me and W.capture:Subgroup(me.name)
+  if not group then return nil end
+  local by, at
+  for guid, u in pairs(W.capture.units) do
+    if u.isPlayer and u.class == "SHAMAN" and W.capture:Subgroup(u.name) == group then
+      local t = self.lastTotem[guid] or 0
+      if not by or t > at then by, at = guid, t end
+    end
+  end
   return by
 end
 
 local function buffProvider(self, effect, guid, spellId)
-  if effect.credit == "party" then return self:PartyProvider(guid, spellId) end
-  return self.buffBy[guid] and self.buffBy[guid][spellId]
+  if effect.credit == "party" then return self:PartyProvider(guid, spellId, effect.class) end
+  -- A Greater Blessing is cast on one player and lands on their whole class.
+  return (self.buffBy[guid] and self.buffBy[guid][spellId]) or self.lastCaster[spellId]
 end
 
 ----------------------------------------------------------------------
@@ -308,18 +416,6 @@ local function noteTarget(self, attacker, target)
     self.lastTarget[attacker] = t
   end
   t.mob, t.at = target, GetTime()
-end
-
---- A melee swing landed: a candidate for a melee proc on that mob.
-function V:Swing(attacker, target)
-  if not self:Enabled() or not isPlayer(attacker) then return end
-  local r = self.recentMelee[target]
-  if not r then
-    r = {}
-    self.recentMelee[target] = r
-  end
-  r[attacker] = GetTime()
-  noteTarget(self, attacker, target)
 end
 
 local mults = {}        -- reused: { id, size = bonus, by } x n
@@ -336,6 +432,113 @@ local function push(list, n, id, size, by)
   return n
 end
 
+local function noteSpeed(self, key, now)
+  local last = self.lastSwingAt[key]
+  self.lastSwingAt[key] = now
+  local gap = last and now - last
+  if not gap or gap <= 0.3 or gap > 5 then return end
+  local s = self.speed[key]
+  self.speed[key] = s and (s * 0.9 + gap * 0.1) or gap
+end
+
+local shares = {}       -- reused: { id, size = damage, by } x n
+
+--[[ A physical hit: Windfury's extra swing whole, then -- with estimates
+     on -- what armor taken off, attack power and crit added to it. ]]
+function V:Physical(attacker, target, amount, crit, ranged, swing)
+  if not amount or amount <= 0 then return end
+  local now = GetTime()
+  if swing then
+    local wf = self.wfAt[attacker]
+    if wf and now - wf <= 0.05 then
+      self.wfAt[attacker] = nil
+      W.encounter:Value(self:WindfuryProvider(attacker), self.WINDFURY, "Windfury Totem", amount, attacker)
+      return
+    end
+  end
+  local estimates = self:Estimates()
+  local mobSet = self.mob[target]
+  local n = 0
+
+  -- Armor: what was taken off, and by whom.
+  local keepNow = 1 - BOSS_ARMOR / (BOSS_ARMOR + ARMOR_K)
+  if estimates and mobSet then
+    local removed = 0
+    for id, d in pairs(mobSet) do
+      local e = self.EFFECTS[id]
+      if e.armor then removed = removed + e.armor * (d.stacks or 1) end
+    end
+    if removed > 0 then
+      local keepBase = keepNow
+      local left = BOSS_ARMOR - removed
+      if left < 0 then left = 0 end
+      keepNow = 1 - left / (left + ARMOR_K)
+      local extra = amount - amount * keepBase / keepNow
+      for id, d in pairs(mobSet) do
+        local e = self.EFFECTS[id]
+        if e.armor then n = push(shares, n, id, extra * e.armor * (d.stacks or 1) / removed, d.by) end
+      end
+    end
+  end
+
+  if mobSet then
+    for id, d in pairs(mobSet) do
+      local e = self.EFFECTS[id]
+      if e.flat and e.schools[0] then
+        n = push(shares, n, id, e.flat < amount and e.flat or amount, d.by)
+      elseif estimates and e.rangedAp and ranged then
+        local sp = self.speed[attacker .. "r"]
+        if sp then n = push(shares, n, id, e.rangedAp / 14 * sp * keepNow * (crit and 2 or 1), d.by) end
+      end
+    end
+  end
+
+  local buffs = estimates and W.capture.buffs[attacker]
+  if buffs then
+    local sp = self.speed[ranged and (attacker .. "r") or attacker]
+    for _, id in ipairs(self.attackerIds) do
+      local e = self.EFFECTS[id]
+      if buffs[id] and e.schools[0] and (e.ranged or not ranged) then
+        local size
+        if e.ap and sp then
+          size = e.ap / 14 * sp * keepNow * (crit and 2 or 1)
+        elseif e.crit then
+          size = e.crit * (crit and amount / 2 or amount)
+        end
+        if size then n = push(shares, n, id, size, buffProvider(self, e, attacker, id)) end
+      end
+    end
+  end
+  if n == 0 then return end
+
+  -- Estimates never claim most of a hit.
+  local total = 0
+  for i = 1, n do total = total + shares[i].size end
+  local scale = total > amount * 0.75 and amount * 0.75 / total or 1
+  for i = 1, n do
+    local s = shares[i]
+    local e = self.EFFECTS[s.id]
+    W.encounter:Value(s.by, s.id, e.estimate and (e.name .. " (est.)") or e.name, s.size * scale, attacker)
+  end
+end
+
+--- A melee swing landed: a candidate for a melee proc on that mob.
+function V:Swing(attacker, target, amount, crit)
+  if not self:Enabled() or not isPlayer(attacker) then return end
+  local r = self.recentMelee[target]
+  if not r then
+    r = {}
+    self.recentMelee[target] = r
+  end
+  local now = GetTime()
+  r[attacker] = now
+  noteTarget(self, attacker, target)
+  if amount then
+    noteSpeed(self, attacker, now)
+    self:Physical(attacker, target, amount, crit, false, true)
+  end
+end
+
 --- A spell hit: note what it says about procs, then credit what boosted it.
 function V:SpellHit(caster, target, spellId, amount, school, crit)
   if not self:Enabled() or not caster or not target then return end
@@ -343,7 +546,17 @@ function V:SpellHit(caster, target, spellId, amount, school, crit)
   if not u then return end
   school = tonumber(school) or 0
   if school == 0 then
-    self:Swing(caster, target)     -- a melee ability: a proc candidate too
+    -- Physical: a melee ability is a proc candidate too; an Auto Shot
+    -- times the ranged weapon.
+    local name = spellName(spellId)
+    local ranged = name and RANGED[name]
+    if ranged then
+      noteTarget(self, caster, target)
+      if name == "Auto Shot" then noteSpeed(self, caster .. "r", GetTime()) end
+    else
+      self:Swing(caster, target)
+    end
+    self:Physical(caster, target, amount, crit, ranged, false)
     return
   end
   noteTarget(self, caster, target)
@@ -378,8 +591,9 @@ function V:SpellHit(caster, target, spellId, amount, school, crit)
   end
   local buffs = W.capture.buffs[caster]
   if buffs then
-    for id, e in pairs(self.EFFECTS) do
-      if e.on == "attacker" and buffs[id] and e.schools[school] then
+    for _, id in ipairs(self.attackerIds) do
+      local e = self.EFFECTS[id]
+      if buffs[id] and e.schools[school] then
         n = push(mults, n, id, e.bonus, buffProvider(self, e, caster, id))
       end
     end

@@ -507,6 +507,17 @@ function S:Create()
       "Off, the hitter keeps it. The raid total is the",
       "same either way. Needs Raid value recording." })
 
+  -- Experimental: the effects whose worth can only be estimated.
+  check(self, "Estimated effects (experimental)",
+    function() return W.db.raidValueEstimates == true end,
+    function(v) W.db.raidValueEstimates = v and true or nil end,
+    { "Adds to Raid value what has no exact math:",
+      "Sunder, Expose Armor, Faerie Fire, Curse of",
+      "Recklessness, Annihilator (armor, assuming a",
+      "raid boss's), Battle Shout, Might, Trueshot,",
+      "Hunter's Mark, Leader of the Pack. Each shows",
+      "as (est.). Windfury is exact and always in." })
+
   choice(self, "Per-second basis",
     {
       { value = "combat", label = "combat time" },
