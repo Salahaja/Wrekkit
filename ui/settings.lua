@@ -1256,8 +1256,21 @@ function S:BuildThreat()
     function(v) ts().mobClickCtrl = v or "" end)
   get, set = opt("mobCasts")
   check(self, "Enemy cast bars", get, set,
-    { "A bar beside each mob while it casts: the", "spell and the time left -- gold casting,",
-      "green channelling. Needs Nampower." })
+    { "A bar on each mob while it casts: the spell", "and the time left -- gold casting, green",
+      "channelling. Needs Nampower." })
+  get, set = pick("mobCastStyle")
+  choice(self, "Cast bar",
+    {
+      { value = "over", label = "over the row" },
+      { value = "beside", label = "beside the row" },
+    }, get, set,
+    { "Over: covers who the mob is on while it casts,", "inside the window. Beside: just right of the",
+      "window, as wide as set below." })
+  stepper(self, "Cast bar width",
+    function() return ts().mobCastWidth end,
+    function(v) ts().mobCastWidth = v end,
+    40, 200, 10,
+    function(v) return v .. "px" end)
 
   stepper(self, "From",
     function() return ts().mobFramesMin end,

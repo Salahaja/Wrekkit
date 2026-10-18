@@ -39,7 +39,7 @@ local T = W.threat
 
 local ROW_H = 18
 local WIDTH = 220      -- default; the setting is mobFramesWidth
-local CAST_W = 150     -- an enemy cast bar, to the right of its mob's row
+local CAST_W = 100     -- an enemy cast bar beside its row; the setting is mobCastWidth
 local MIN_W, MAX_W = 160, 420
 local UPDATE = 0.2
 
@@ -295,12 +295,12 @@ local function makeRow(parent, i)
   b.pct:SetPoint("RIGHT", b, "RIGHT", -4, 0)
   b.pct:SetWidth(34)
 
-  -- What the mob is casting: a bar just right of its row (MF.PaintCast).
+  -- What the mob is casting: over the row's right part, or beside it
+  -- (MF.PlaceCast, MF.PaintCast). A plain frame, so clicks fall through
+  -- to the row and the player button underneath.
   local cb = CreateFrame("Frame", nil, b)
   cb:SetHeight(ROW_H)
-  cb:SetWidth(CAST_W)
-  cb:SetPoint("LEFT", b, "RIGHT", 3, 0)
-  cb.bg = UI.Fill(cb, W.color.panel, 0.85)
+  cb.bg = UI.Fill(cb, W.color.panel, 0.95)
   cb.icon = cb:CreateTexture(nil, "ARTWORK")
   cb.icon:SetWidth(ROW_H) cb.icon:SetHeight(ROW_H)
   cb.icon:SetPoint("LEFT", cb, "LEFT", 0, 0)
@@ -313,10 +313,9 @@ local function makeRow(parent, i)
   cb.name = UI.Text(cb, 10, W.color.text)
   cb.name:SetHeight(ROW_H)
   cb.name:SetPoint("LEFT", cb.icon, "RIGHT", 4, 0)
-  cb.name:SetWidth(CAST_W - ROW_H - 36)
   cb.time = UI.Text(cb, 10, W.color.textDim, "RIGHT", UI.fontNum)
   cb.time:SetPoint("RIGHT", cb, "RIGHT", -3, 0)
-  cb.time:SetWidth(30)
+  cb.time:SetWidth(26)
   cb:SetScript("OnUpdate", function() MF.TickCast(cb) end)
   cb:Hide()
   b.cast = cb
@@ -752,8 +751,39 @@ function MF.TickCast(cb)
   local done = 1 - left / c.dur
   local frac = c.channel and (1 - done) or done
   if frac < 0.01 then frac = 0.01 elseif frac > 1 then frac = 1 end
-  cb.bar:SetWidth((CAST_W - ROW_H - 1) * frac)
+  cb.bar:SetWidth(((cb._w or CAST_W) - ROW_H - 1) * frac)
   cb.time:SetText(string.format("%.1f", left))
+end
+
+--[[ Where a row's cast bar goes (mobCastStyle):
+       over    over the row's right part -- who the mob is on -- while it
+               casts; the name and health % stay in view, and nothing
+               sticks out of the window (the default)
+       beside  just right of the row, mobCastWidth wide ]]
+function MF.PlaceCast(b)
+  local cb = b and b.cast
+  if not cb then return end
+  local s = T:Settings()
+  local style = s.mobCastStyle or "over"
+  local w
+  if style == "beside" then
+    w = s.mobCastWidth or CAST_W
+  else
+    local rowW = b:GetWidth()
+    if not rowW or rowW <= 0 then rowW = MF:Width() - 4 end
+    w = rowW - (b.split or math.floor(rowW * SPLIT))
+  end
+  if cb._style == style and cb._w == w then return end
+  cb._style, cb._w = style, w
+  cb:ClearAllPoints()
+  if style == "beside" then
+    cb:SetPoint("LEFT", b, "RIGHT", 3, 0)
+  else
+    cb:SetPoint("RIGHT", b, "RIGHT", 0, 0)
+    cb:SetFrameLevel(b:GetFrameLevel() + 3)
+  end
+  cb:SetWidth(w)
+  cb.name:SetWidth(w - ROW_H - 34)
 end
 
 --- Show what a row's mob is casting, or nothing.
@@ -766,6 +796,7 @@ function MF.PaintCast(b, m, s)
     cb:Hide()
     return
   end
+  MF.PlaceCast(b)
   if cb.c ~= c then
     cb.c = c
     cb.icon:SetTexture(c.icon or "Interface\\Icons\\INV_Misc_QuestionMark")

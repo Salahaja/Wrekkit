@@ -1326,6 +1326,21 @@ step("threat meter", function()
     for _, r in ipairs(MF.rows) do
       if r ~= castRow and r:IsShown() and r.cast:IsShown() then error("a cast bar beside a mob that is not casting") end
     end
+    -- By default over the row's right part (who the mob is on), inside the
+    -- window; set beside, just right of it, as wide as set.
+    local cast = castRow.cast
+    local rowW = castRow:GetWidth()
+    if cast._style ~= "over" or math.abs(cast:GetWidth() - (rowW - castRow.split)) > 1 then
+      error("the cast bar is not over the row's right part: " .. tostring(cast._style) .. " " .. tostring(cast:GetWidth()))
+    end
+    T:Settings().mobCastStyle, T:Settings().mobCastWidth = "beside", 60
+    NOW = NOW + 0.1
+    MF.lastUpdate = nil
+    MF:Update()
+    if cast._style ~= "beside" or cast:GetWidth() ~= 60 then
+      error("set beside at 60px, the cast bar is " .. tostring(cast._style) .. " " .. tostring(cast:GetWidth()))
+    end
+    T:Settings().mobCastStyle, T:Settings().mobCastWidth = "over", 100
     W.capture.casts[drakes[1]] = nil
     NOW = NOW + 0.1
     MF.lastUpdate = nil
