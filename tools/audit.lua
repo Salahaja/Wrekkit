@@ -92,7 +92,7 @@ declare(WOW, [[
   UnitExists UnitIsPlayer UnitIsUnit UnitCanCooperate UnitAffectingCombat UnitIsVisible
   SetCVar GetCVar SendChatMessage SendAddonMessage GetAddOnMetadata
   GetNumSavedInstances GetSavedInstanceInfo UnitIsGhost
-  GetItemInfo IsInGuild GetCursorPosition Minimap IsShiftKeyDown
+  GetItemInfo IsInGuild GetCursorPosition Minimap IsShiftKeyDown IsControlKeyDown
   QueryAuctionItems CanSendAuctionQuery GetNumAuctionItems GetAuctionItemInfo GetAuctionItemLink AuctionFrame
   GetAuctionItemClasses UnitFactionGroup aux
   WorldFrame PlaySound UnitIsDead UnitCanAttack getglobal
@@ -1284,6 +1284,54 @@ step("threat meter", function()
     T:Settings().mobRightClick = "auto"
     arg1, MF.swinging = was, false
     STUB.AttackTarget, STUB.TargetUnit, T.IsTank, T.Taunt = real.attack, real.target, real.tank, real.taunt
+
+    -- Shift/Ctrl-click spells on the mob: off until turned on, then the
+    -- spell set for the held key, straight at the mob.
+    local casts = {}
+    local realCast, realShift, realCtrl = STUB.CastSpellByName, STUB.IsShiftKeyDown, STUB.IsControlKeyDown
+    STUB.CastSpellByName = function(spell, unit) table.insert(casts, spell .. "@" .. tostring(unit)) end
+    STUB.IsShiftKeyDown = function() return true end
+    STUB.IsControlKeyDown = function() return false end
+    T:Settings().mobClickShift, T:Settings().mobClickCtrl = "Sunder Armor", "Hamstring"
+    arg1 = "LeftButton"
+    row:GetScript("OnClick")()
+    if table.getn(casts) ~= 0 then error("a shift-click cast though the option is off") end
+    T:Settings().mobClickSpells = true
+    row:GetScript("OnClick")()
+    if casts[1] ~= "Sunder Armor@" .. drakes[1] then error("shift-click did not cast its spell on the mob: " .. tostring(casts[1])) end
+    STUB.IsShiftKeyDown = function() return false end
+    STUB.IsControlKeyDown = function() return true end
+    row:GetScript("OnClick")()
+    if casts[2] ~= "Hamstring@" .. drakes[1] then error("ctrl-click did not cast its spell on the mob: " .. tostring(casts[2])) end
+    T:Settings().mobClickSpells, T:Settings().mobClickShift, T:Settings().mobClickCtrl = false, "", ""
+    arg1 = was
+    STUB.CastSpellByName, STUB.IsShiftKeyDown, STUB.IsControlKeyDown = realCast, realShift, realCtrl
+
+    -- Enemy cast bars: off until turned on, then beside the casting mob.
+    W.capture.casts[drakes[1]] = { spellId = 18435, name = "Flame Breath", icon = "Interface\\Icons\\Spell_Fire_Fire",
+      start = GetTime(), dur = 2, channel = false }
+    NOW = NOW + 0.1
+    MF.lastUpdate = nil
+    MF:Update()
+    if row.cast:IsShown() then error("a cast bar showed with the option off") end
+    T:Settings().mobCasts = true
+    NOW = NOW + 0.1
+    MF.lastUpdate = nil
+    MF:Update()
+    local castRow
+    for _, r in ipairs(MF.rows) do if r:IsShown() and r.mob and r.mob.guid == drakes[1] then castRow = r end end
+    if not castRow.cast:IsShown() or castRow.cast.name:GetText() ~= "Flame Breath" then
+      error("no cast bar beside the casting mob")
+    end
+    for _, r in ipairs(MF.rows) do
+      if r ~= castRow and r:IsShown() and r.cast:IsShown() then error("a cast bar beside a mob that is not casting") end
+    end
+    W.capture.casts[drakes[1]] = nil
+    NOW = NOW + 0.1
+    MF.lastUpdate = nil
+    MF:Update()
+    if castRow.cast:IsShown() then error("the cast bar stayed after the cast ended") end
+    T:Settings().mobCasts = false
   end
   -- The width: set it, and the frame and every row's name column follow;
   -- outside its limits it is held to them.

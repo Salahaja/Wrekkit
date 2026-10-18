@@ -39,6 +39,7 @@ local T = W.threat
 
 local ROW_H = 18
 local WIDTH = 220      -- default; the setting is mobFramesWidth
+local CAST_W = 150     -- an enemy cast bar, to the right of its mob's row
 local MIN_W, MAX_W = 160, 420
 local UPDATE = 0.2
 
@@ -294,6 +295,32 @@ local function makeRow(parent, i)
   b.pct:SetPoint("RIGHT", b, "RIGHT", -4, 0)
   b.pct:SetWidth(34)
 
+  -- What the mob is casting: a bar just right of its row (MF.PaintCast).
+  local cb = CreateFrame("Frame", nil, b)
+  cb:SetHeight(ROW_H)
+  cb:SetWidth(CAST_W)
+  cb:SetPoint("LEFT", b, "RIGHT", 3, 0)
+  cb.bg = UI.Fill(cb, W.color.panel, 0.85)
+  cb.icon = cb:CreateTexture(nil, "ARTWORK")
+  cb.icon:SetWidth(ROW_H) cb.icon:SetHeight(ROW_H)
+  cb.icon:SetPoint("LEFT", cb, "LEFT", 0, 0)
+  cb.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+  cb.bar = cb:CreateTexture(nil, "BORDER")
+  cb.bar:SetTexture(UI.media.bar)
+  UI.RegisterBar(cb.bar)
+  cb.bar:SetPoint("TOPLEFT", cb.icon, "TOPRIGHT", 1, 0)
+  cb.bar:SetPoint("BOTTOMLEFT", cb.icon, "BOTTOMRIGHT", 1, 0)
+  cb.name = UI.Text(cb, 10, W.color.text)
+  cb.name:SetHeight(ROW_H)
+  cb.name:SetPoint("LEFT", cb.icon, "RIGHT", 4, 0)
+  cb.name:SetWidth(CAST_W - ROW_H - 36)
+  cb.time = UI.Text(cb, 10, W.color.textDim, "RIGHT", UI.fontNum)
+  cb.time:SetPoint("RIGHT", cb, "RIGHT", -3, 0)
+  cb.time:SetWidth(30)
+  cb:SetScript("OnUpdate", function() MF.TickCast(cb) end)
+  cb:Hide()
+  b.cast = cb
+
   --[[ The player the mob is hitting is a button of its own, over their
        name: a healer clicks it to heal, shield or bubble them (the spells
        are set under Mob frames), or to target them when none is. The rest
@@ -329,7 +356,11 @@ local function makeRow(parent, i)
       end
       local m = b.mob
       if not m or m.sample then return end
-      if arg1 == "RightButton" then
+      -- Shift- or Ctrl-click: the spell set for it, on this mob.
+      local spell = (arg1 ~= "RightButton") and MF:ModifierSpell()
+      if spell then
+        MF:CastOnMob(m, spell)
+      elseif arg1 == "RightButton" then
         if MF:RightAction() == "attack" then
           MF:TargetMob(m)
           MF:StartAttack()
@@ -428,6 +459,28 @@ function MF:TargetMob(m)
   elseif TargetByName then
     TargetByName(m.name, true)
   end
+end
+
+--[[ Shift- and Ctrl-click spells on a mob (mobClickSpells, off until
+     turned on): Sunder, a Judgement, a Hamstring -- whatever is set under
+     Mob frames. Nil when off, no modifier is held, or none is set. ]]
+function MF:ModifierSpell()
+  local s = T:Settings()
+  if not s.mobClickSpells then return nil end
+  local spell
+  if IsShiftKeyDown and IsShiftKeyDown() then spell = s.mobClickShift
+  elseif IsControlKeyDown and IsControlKeyDown() then spell = s.mobClickCtrl end
+  if spell and spell ~= "" then return spell end
+  return nil
+end
+
+--- Cast on a row's mob. With SuperWoW straight at its guid, your target
+--- untouched; without, it is targeted first, so the spell lands on it.
+function MF:CastOnMob(m, spell)
+  if not CastSpellByName then return end
+  if m.guid and SpellInfo and pcall(CastSpellByName, spell, m.guid) then return end
+  self:TargetMob(m)
+  pcall(CastSpellByName, spell)
 end
 
 --[[ What a right-click on a mob does (mobRightClick):
@@ -679,8 +732,54 @@ local function threatText(m, tank)
   return text, color, fresh
 end
 
+--[[ A mob's cast bar. A cast fills as it goes, a channel drains; the
+     colours are the stock casting bar's -- gold casting, green channelling.
+     Every frame while shown, so it moves smoothly; it hides itself the
+     moment the cast's time is up, and W.capture ends it early on a
+     completion, an interrupt or a death. ]]
+local CAST_COLOR = { 1.0, 0.7, 0.0 }
+local CHANNEL_COLOR = { 0.0, 1.0, 0.0 }
+
+function MF.TickCast(cb)
+  local c = cb.c
+  if not c then cb:Hide() return end
+  local left = c.start + c.dur - GetTime()
+  if left <= 0 then
+    cb.c = nil
+    cb:Hide()
+    return
+  end
+  local done = 1 - left / c.dur
+  local frac = c.channel and (1 - done) or done
+  if frac < 0.01 then frac = 0.01 elseif frac > 1 then frac = 1 end
+  cb.bar:SetWidth((CAST_W - ROW_H - 1) * frac)
+  cb.time:SetText(string.format("%.1f", left))
+end
+
+--- Show what a row's mob is casting, or nothing.
+function MF.PaintCast(b, m, s)
+  local cb = b.cast
+  if not cb then return end
+  local c = m and s and s.mobCasts == true and W.capture.Casting and W.capture:Casting(m.guid)
+  if not c then
+    cb.c = nil
+    cb:Hide()
+    return
+  end
+  if cb.c ~= c then
+    cb.c = c
+    cb.icon:SetTexture(c.icon or "Interface\\Icons\\INV_Misc_QuestionMark")
+    cb.name:SetText(c.name or "?")
+    local col = c.channel and CHANNEL_COLOR or CAST_COLOR
+    cb.bar:SetVertexColor(col[1], col[2], col[3], 0.75)
+  end
+  cb:Show()
+  MF.TickCast(cb)
+end
+
 local function paintMob(b, m, tank, s, blink, targetGuid)
   b.mob, b.summary = m, nil
+  MF.PaintCast(b, m, s)
   b:SetSelected(m.selected or m.isTarget or (targetGuid ~= nil and m.guid == targetGuid))
   b:SetMark(m.mark)
   b.name:SetText(m.name or "?")
@@ -716,6 +815,7 @@ end
      you" in blue is the line a tank wants to read and then ignore. ]]
 local function paintSummary(b, fine, elsewhere, hidden, tank, total)
   b.mob, b.summary, b.trouble = nil, true, false
+  MF.PaintCast(b, nil, nil)
   b:SetSelected(false)
   b:SetMark(nil)
   b.hp:Hide()

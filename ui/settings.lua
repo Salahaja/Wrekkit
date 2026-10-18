@@ -1241,6 +1241,24 @@ function S:BuildThreat()
     { "The click spells also reach someone not in", "your party or raid -- a passer-by a mob",
       "turned on. Only players you can help." })
 
+  -- On the mob itself: modifier-click spells, and its cast bar. Both off
+  -- until wanted.
+  get, set = opt("mobClickSpells")
+  check(self, "Shift/Ctrl-click a mob casts", get, set,
+    { "Shift- or Ctrl-click a mob's row to cast the", "spell set below on it -- Sunder, a Judgement.",
+      "With SuperWoW your target stays put." })
+  self.mobSlots = {}
+  self.mobSlots.shift = spellSlot(self, "Shift-click mob",
+    function() return ts().mobClickShift end,
+    function(v) ts().mobClickShift = v or "" end)
+  self.mobSlots.ctrl = spellSlot(self, "Ctrl-click mob",
+    function() return ts().mobClickCtrl end,
+    function(v) ts().mobClickCtrl = v or "" end)
+  get, set = opt("mobCasts")
+  check(self, "Enemy cast bars", get, set,
+    { "A bar beside each mob while it casts: the", "spell and the time left -- gold casting,",
+      "green channelling. Needs Nampower." })
+
   stepper(self, "From",
     function() return ts().mobFramesMin end,
     function(v) ts().mobFramesMin = v; redraw() end,

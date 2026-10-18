@@ -138,6 +138,10 @@ T.defaults = {
   mobFrames = true,
   mobFramesFor = "tank",   -- "tank" | "everyone"
   mobRightClick = "auto",  -- right-click a mob: "auto" (taunt tanking, else attack) | "attack" | "taunt"
+  mobCasts = false,        -- enemy cast bars beside the mob rows (opt-in)
+  mobClickSpells = false,  -- Shift/Ctrl-click a mob casts these (opt-in)
+  mobClickShift = "",
+  mobClickCtrl = "",
   mobFramesMin = 2,        -- shown from this many mobs
   mobFramesMax = 8,        -- at most this many rows
   mobFramesWidth = 220,    -- pixels; the name column takes what is left
@@ -241,7 +245,7 @@ function T:Sanitize(s)
   if type(s.coTanks) ~= "string" then s.coTanks = "" end
   if type(s.coTanksOff) ~= "string" then s.coTanksOff = "" end
   if type(s.tauntSpell) ~= "string" then s.tauntSpell = "" end
-  for _, k in ipairs({ "mobWhoLeft", "mobWhoRight", "mobWhoShift" }) do
+  for _, k in ipairs({ "mobWhoLeft", "mobWhoRight", "mobWhoShift", "mobClickShift", "mobClickCtrl" }) do
     if type(s[k]) ~= "string" then s[k] = "" end
   end
   s.tauntX, s.tauntY = tonumber(s.tauntX), tonumber(s.tauntY)
