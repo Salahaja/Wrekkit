@@ -1282,6 +1282,12 @@ function S:BuildThreat()
   self.mobSlots.right = spellSlot(self, "Right-click mob casts",
     function() return UI.mobs and UI.mobs:RightSpell() or "" end,
     function(v) if UI.mobs then UI.mobs:SetRightSpell(v or "") end end)
+  -- The mob in the WORLD, not the frame: off until wanted (W.autoshot).
+  check(self, "Hunters: right-click a mob shoots",
+    function() return W.db.hunterAutoShot == true end,
+    function(v) W.db.hunterAutoShot = v and true or nil end,
+    { "Right-clicking a mob in the world starts a", "melee swing. For a hunter 8+ yards away it",
+      "becomes Auto Shot; closer, the swing stays.", "Says so once if the client will not allow it." })
 
   -- Also by dragging its corner while the frames are being placed.
   stepper(self, "Width",
