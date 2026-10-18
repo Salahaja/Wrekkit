@@ -137,6 +137,7 @@ T.defaults = {
   -- mob frames: a small frame per mob in the fight, with who it is on
   mobFrames = true,
   mobFramesFor = "tank",   -- "tank" | "everyone"
+  mobRightClick = "auto",  -- right-click a mob: "auto" (taunt tanking, else attack) | "attack" | "taunt"
   mobFramesMin = 2,        -- shown from this many mobs
   mobFramesMax = 8,        -- at most this many rows
   mobFramesWidth = 220,    -- pixels; the name column takes what is left
@@ -246,6 +247,7 @@ function T:Sanitize(s)
   s.tauntX, s.tauntY = tonumber(s.tauntX), tonumber(s.tauntY)
   s.mobsX, s.mobsY = tonumber(s.mobsX), tonumber(s.mobsY)
   s.mobFramesFor = oneOf(s.mobFramesFor, { "tank", "everyone" }, d.mobFramesFor)
+  s.mobRightClick = oneOf(s.mobRightClick, { "auto", "attack", "taunt" }, d.mobRightClick)
   s.mobFramesMin = math.floor(clamp(s.mobFramesMin, 1, 10, d.mobFramesMin))
   s.mobFramesMax = math.floor(clamp(s.mobFramesMax, 2, 15, d.mobFramesMax))
   s.mobFramesWidth = math.floor(clamp(s.mobFramesWidth, 160, 420, d.mobFramesWidth))

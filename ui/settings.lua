@@ -1195,7 +1195,7 @@ function S:BuildThreat()
   get, set = opt("mobFrames")
   check(self, "Mob frames", get, set,
     { "A small frame per mob in the fight: its", "health, and who it is hitting. Click to",
-      "target, right-click to taunt. A mob loose", "on someone else blinks red. Without",
+      "target, right-click to taunt or attack (below).", "A mob loose on someone else blinks red. Without",
       "SuperWoW: the mobs your group has targeted." })
 
   get, set = pick("mobFramesFor")
@@ -1206,6 +1206,16 @@ function S:BuildThreat()
     }, get, set,
     { "In every fight, tanking or not. Not tanking,", "a mob on you is red, and with a tank running",
       "Wrekkit a mob you are close to pulling gets", "a row with your %, red past your warning line." })
+
+  get, set = pick("mobRightClick")
+  choice(self, "Right-click a mob",
+    {
+      { value = "auto", label = "taunt if tanking, else attack" },
+      { value = "attack", label = "attack" },
+      { value = "taunt", label = "taunt" },
+    }, get, set,
+    { "Attack: target it and start melee (never", "stops a swing already going). Taunt: your",
+      "taunt on it. Left-click always just targets." })
 
   -- Also by dragging its corner while the frames are being placed.
   stepper(self, "Width",
