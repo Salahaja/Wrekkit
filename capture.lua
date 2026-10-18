@@ -485,11 +485,25 @@ function C:Spell(spellId)
     name, rank, texture = SpellInfo(spellId)
   end
 
-  --[[ Without SuperWoW there is no SpellInfo, and every spell reads as its
-       raw id. Names learned from the player's own casts fill in what they
-       can; see LearnSpellName. ]]
+  --[[ Without SuperWoW, nampower names any id itself
+       (GetSpellNameAndRankForId), and its spell record gives the icon. ]]
+  if (not name or name == "") and GetSpellNameAndRankForId then
+    local ok, n, r = pcall(GetSpellNameAndRankForId, spellId)
+    if ok and type(n) == "string" and n ~= "" then
+      name, rank = n, r
+      if GetSpellRecField and GetSpellIconTexture then
+        local okIcon, icon = pcall(GetSpellRecField, spellId, "spellIconID")
+        if okIcon and tonumber(icon) and tonumber(icon) > 0 then
+          local okTex, tex = pcall(GetSpellIconTexture, icon)
+          if okTex and type(tex) == "string" and tex ~= "" then texture = tex end
+        end
+      end
+    end
+  end
+
+  -- Neither: names learned from the player's own casts (LearnSpellName).
   if not name or name == "" then
-    name = W.db and W.db.spellNames and W.db.spellNames[spellId]
+    name = C:LearnedNames()[spellId]
   end
 
   if name and name ~= "" then
@@ -511,19 +525,40 @@ end
      in SavedVariables so it accumulates instead of being relearned.
 
      Only cast-time spells announce themselves this way; instants never fire
-     SPELLCAST_START, so they keep their id. Partial, but it turns the
-     player's own spellbook from numbers into names over a night. ]]
+     SPELLCAST_START, so they keep their id. A last resort: SuperWoW's
+     SpellInfo and nampower's GetSpellNameAndRankForId both name everything.
+
+     STRICT, because a wrong pair is kept for good. Up to 0.9.26 any cast
+     finishing within a second took the name -- anyone's, and an Auto Shot
+     while eating became "Roasted Boar Meat". Now it must be your own
+     (SPELL_GO_SELF only), finish when its cast time said it would, and a
+     name is used once. Names learned the old way are dropped (LearnedNames). ]]
+local LEARN_VERSION = 2
+local LEARN_SLACK = 0.5     -- seconds either side of when the cast was due
+
+function C:LearnedNames()
+  local db = W.db
+  if not db then return {} end
+  if db.spellNamesVersion ~= LEARN_VERSION then
+    db.spellNames = nil
+    db.spellNamesVersion = LEARN_VERSION
+  end
+  if not db.spellNames then db.spellNames = {} end
+  return db.spellNames
+end
+
 function C:LearnSpellName(spellId)
   if not spellId or spellId == 0 then return end
-  if SpellInfo then return end          -- SuperWoW already answers this
-  if not self.pendingCastName then return end
-  if (GetTime() - (self.pendingCastAt or 0)) > 1.0 then return end
+  if SpellInfo or GetSpellNameAndRankForId then return end   -- named already
+  local name, due = self.pendingCastName, self.pendingCastDue
+  if not name or not due then return end
+  if math.abs(GetTime() - due) > LEARN_SLACK then return end
+  self.pendingCastName, self.pendingCastDue = nil, nil
 
   if not W.db then return end
-  if not W.db.spellNames then W.db.spellNames = {} end
-  if W.db.spellNames[spellId] then return end
-
-  W.db.spellNames[spellId] = self.pendingCastName
+  local names = self:LearnedNames()
+  if names[spellId] then return end
+  names[spellId] = name
   -- Drop the cached "Spell 1234" so the next lookup picks up the name.
   spellCache[spellId] = nil
 end
@@ -1032,23 +1067,28 @@ dispatch.ENVIRONMENTAL_DMG_OTHER = dispatch.ENVIRONMENTAL_DMG_SELF
 
 --- SPELLCAST_START(spellName, duration). Stock 1.12, and the only place
 --- a spell name is handed to us when SuperWoW is not installed.
-dispatch.SPELLCAST_START = function(a1)
+dispatch.SPELLCAST_START = function(a1, a2)
   if a1 and a1 ~= "" then
     C.pendingCastName = a1
-    C.pendingCastAt = GetTime()
+    -- When it should land: the cast time is a2, in milliseconds.
+    C.pendingCastDue = GetTime() + (num(a2) or 0) / 1000
   end
 end
 
-dispatch.SPELL_GO_SELF = function(a1, a2, a3, a4)
-  -- a2 is the spell id for the cast that just started, so this is where the
-  -- name from SPELLCAST_START gets bound to an id.
-  C:LearnSpellName(num(a2))
+local function spellGo(a1, a2, a3, a4)
   C:SPELL_GO(a1, a2, a3, a4)
   -- A cast completing ends its cast bar; a channel's GO is its start.
   local c = C.casts[a3]
   if c and not c.channel and c.spellId == num(a2) then C.casts[a3] = nil end
 end
-dispatch.SPELL_GO_OTHER = dispatch.SPELL_GO_SELF
+
+dispatch.SPELL_GO_SELF = function(a1, a2, a3, a4)
+  -- Your own cast: a2 is its id, so the name SPELLCAST_START gave can be
+  -- bound to it -- never from SPELL_GO_OTHER, someone else's cast.
+  C:LearnSpellName(num(a2))
+  spellGo(a1, a2, a3, a4)
+end
+dispatch.SPELL_GO_OTHER = spellGo
 
 ----------------------------------------------------------------------
 -- enemy casts, for the mob window's cast bars
