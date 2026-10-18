@@ -3196,7 +3196,10 @@ step("filter boxes: folded until wanted, and they let go of the keyboard", funct
   local box = UI.meter.search
   if not box.openButton then error("the meter's filter is not collapsible") end
   box:SetValue("")
-  if not box.collapsed or box:GetWidth() > 24 then error("an empty filter is not folded to its magnifier") end
+  if not box.collapsed or box:GetWidth() > 44 then error("an empty filter is not folded to its button") end
+  if box.openButton.label:GetText() ~= "Filter" then error("the folded filter is not a \"Filter\" button") end
+  -- Its own size, never stretched by the window: anchored on its left only.
+  if table.getn(box._points or {}) ~= 1 then error("the filter is pinned to more than its left edge, so it stretches with the window") end
   -- Clicked open: unfolded, with the keyboard.
   box.openButton:GetScript("OnClick")()
   if box.collapsed or UI.FocusedBox() ~= box.editBox then error("opening it did not give it the keyboard") end

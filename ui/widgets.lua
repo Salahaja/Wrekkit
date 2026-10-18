@@ -887,11 +887,11 @@ UI.WatchFocus = watch           -- for tests
 function UI.FocusedBox() return focused end
 function UI.FocusWatcher() return watcher end
 
---[[ opts.collapsible: shown as a small magnifier until wanted. Click it and
+--[[ opts.collapsible: shown as a small "Filter" button until wanted. Click it and
      the box opens with the keyboard; once it lets go with nothing typed, it
      folds back. With a filter typed it stays open, so a filter in force is
      never hidden. Fewer stray clicks, and the toolbar gets its room back. ]]
-local COLLAPSED_W = 20
+local COLLAPSED_W = 40      -- the width of the toolbar's other small buttons (Pets)
 
 function UI.SearchBox(parent, width, onChange, placeholder, opts)
   opts = opts or {}
@@ -949,20 +949,23 @@ function UI.SearchBox(parent, width, onChange, placeholder, opts)
   end
 
   if opts.collapsible then
-    local open = CreateFrame("Button", nil, f)
+    -- Folded, it is a button like the toolbar's others -- drawn in the
+    -- skin in use (Blizzard's, pfUI's or our own) -- saying what it does.
+    local open = UI.Button(f, opts.label or "Filter", COLLAPSED_W, 18)
     open:SetAllPoints(f)
-    local glass = open:CreateTexture(nil, "ARTWORK")
-    glass:SetTexture("Interface\\Icons\\INV_Misc_Spyglass_03")
-    glass:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-    glass:SetWidth(14) glass:SetHeight(14)
-    glass:SetPoint("CENTER", open, "CENTER", 0, 0)
+    open:SetFrameLevel(f:GetFrameLevel() + 2)
+    local hoverIn, hoverOut = open:GetScript("OnEnter"), open:GetScript("OnLeave")
     open:SetScript("OnEnter", function()
+      if hoverIn then hoverIn() end
       if not GameTooltip then return end
       GameTooltip:SetOwner(open, "ANCHOR_BOTTOM")
       GameTooltip:AddLine(placeholder or "Search")
       GameTooltip:Show()
     end)
-    open:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
+    open:SetScript("OnLeave", function()
+      if hoverOut then hoverOut() end
+      if GameTooltip then GameTooltip:Hide() end
+    end)
     f.openButton = open
 
     local function shut()
