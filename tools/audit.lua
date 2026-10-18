@@ -92,7 +92,7 @@ declare(WOW, [[
   UnitExists UnitIsPlayer UnitIsUnit UnitCanCooperate UnitAffectingCombat UnitIsVisible
   SetCVar GetCVar SendChatMessage SendAddonMessage GetAddOnMetadata
   GetNumSavedInstances GetSavedInstanceInfo UnitIsGhost
-  GetItemInfo IsInGuild GetCursorPosition Minimap IsShiftKeyDown
+  GetItemInfo IsInGuild GetCursorPosition Minimap IsShiftKeyDown IsControlKeyDown
   QueryAuctionItems CanSendAuctionQuery GetNumAuctionItems GetAuctionItemInfo GetAuctionItemLink AuctionFrame
   GetAuctionItemClasses UnitFactionGroup aux
   WorldFrame PlaySound UnitIsDead UnitCanAttack getglobal
@@ -323,7 +323,7 @@ local function makeFrame(kind, name, parent)
   m.UnregisterEvent = function(self, e) self._events[e] = nil end
   m.RegisterForClicks = function() end
   m.RegisterForDrag = function() end
-  m.EnableMouse = function() end
+  m.EnableMouse = function(self, on) self._mouse = on and true or false end
   m.EnableMouseWheel = function() end
   m.EnableKeyboard = function() end
   m.SetMovable = function() end
@@ -1284,6 +1284,122 @@ step("threat meter", function()
     T:Settings().mobRightClick = "auto"
     arg1, MF.swinging = was, false
     STUB.AttackTarget, STUB.TargetUnit, T.IsTank, T.Taunt = real.attack, real.target, real.tank, real.taunt
+
+    -- The player side of a row (clicking whoever the mob is on): off by
+    -- default, so the whole row is the mob's; kept on, once, for whoever
+    -- had set a spell on it.
+    do
+      local s = T:Settings()
+      local fresh = { mobWhoLeft = "", mobWhoRight = "", mobWhoShift = "" }
+      for k, v in pairs(T.defaults) do if fresh[k] == nil then fresh[k] = v end end
+      T:Sanitize(fresh)
+      if fresh.mobWhoClicks then error("the player side of the row is on by default") end
+      local used = { mobWhoLeft = "Flash Heal", mobWhoRight = "", mobWhoShift = "" }
+      for k, v in pairs(T.defaults) do if used[k] == nil then used[k] = v end end
+      T:Sanitize(used)
+      if not used.mobWhoClicks then error("someone with a player click spell set lost it") end
+      s.mobWhoClicks = false
+      NOW = NOW + 0.1
+      MF.lastUpdate = nil
+      MF:Update()
+      if row.whoBtn._mouse ~= false then error("off, the player button still takes the mouse") end
+      s.mobWhoClicks = true
+      NOW = NOW + 0.1
+      MF.lastUpdate = nil
+      MF:Update()
+      if row.whoBtn._mouse ~= true then error("on, the player button takes no mouse") end
+    end
+
+    -- Shift/Ctrl-click spells on the mob: off until turned on, then the
+    -- spell set for the held key, straight at the mob.
+    local casts = {}
+    local realCast, realShift, realCtrl = STUB.CastSpellByName, STUB.IsShiftKeyDown, STUB.IsControlKeyDown
+    STUB.CastSpellByName = function(spell, unit) table.insert(casts, spell .. "@" .. tostring(unit)) end
+    STUB.IsShiftKeyDown = function() return true end
+    STUB.IsControlKeyDown = function() return false end
+    T:Settings().mobClickShift, T:Settings().mobClickCtrl = "Sunder Armor", "Hamstring"
+    arg1 = "LeftButton"
+    row:GetScript("OnClick")()
+    if table.getn(casts) ~= 0 then error("a shift-click cast though the option is off") end
+    T:Settings().mobClickSpells = true
+    row:GetScript("OnClick")()
+    if casts[1] ~= "Sunder Armor@" .. drakes[1] then error("shift-click did not cast its spell on the mob: " .. tostring(casts[1])) end
+    STUB.IsShiftKeyDown = function() return false end
+    STUB.IsControlKeyDown = function() return true end
+    row:GetScript("OnClick")()
+    if casts[2] ~= "Hamstring@" .. drakes[1] then error("ctrl-click did not cast its spell on the mob: " .. tostring(casts[2])) end
+    T:Settings().mobClickSpells, T:Settings().mobClickShift, T:Settings().mobClickCtrl = false, "", ""
+    arg1 = was
+    STUB.CastSpellByName, STUB.IsShiftKeyDown, STUB.IsControlKeyDown = realCast, realShift, realCtrl
+
+    -- Enemy cast bars: off until turned on, then beside the casting mob.
+    W.capture.casts[drakes[1]] = { spellId = 18435, name = "Flame Breath", icon = "Interface\\Icons\\Spell_Fire_Fire",
+      start = GetTime(), dur = 2, channel = false }
+    NOW = NOW + 0.1
+    MF.lastUpdate = nil
+    MF:Update()
+    if row.cast:IsShown() then error("a cast bar showed with the option off") end
+    T:Settings().mobCasts = true
+    NOW = NOW + 0.1
+    MF.lastUpdate = nil
+    MF:Update()
+    local castRow
+    for _, r in ipairs(MF.rows) do if r:IsShown() and r.mob and r.mob.guid == drakes[1] then castRow = r end end
+    if not castRow.cast:IsShown() or castRow.cast.name:GetText() ~= "Flame Breath" then
+      error("no cast bar beside the casting mob")
+    end
+    for _, r in ipairs(MF.rows) do
+      if r ~= castRow and r:IsShown() and r.cast:IsShown() then error("a cast bar beside a mob that is not casting") end
+    end
+    -- By default over the row's right part (who the mob is on), inside the
+    -- window; set beside, just right of it, as wide as set.
+    local cast = castRow.cast
+    local rowW = castRow:GetWidth()
+    if cast._style ~= "over" or math.abs(cast:GetWidth() - (rowW - castRow.split)) > 1 then
+      error("the cast bar is not over the row's right part: " .. tostring(cast._style) .. " " .. tostring(cast:GetWidth()))
+    end
+    T:Settings().mobCastStyle, T:Settings().mobCastWidth = "beside", 60
+    NOW = NOW + 0.1
+    MF.lastUpdate = nil
+    MF:Update()
+    if cast._style ~= "beside" or cast:GetWidth() ~= 60 then
+      error("set beside at 60px, the cast bar is " .. tostring(cast._style) .. " " .. tostring(cast:GetWidth()))
+    end
+    T:Settings().mobCastStyle, T:Settings().mobCastWidth = "over", 100
+    -- "all but the name": more of the row than "who it's on".
+    NOW = NOW + 0.1
+    MF.lastUpdate = nil
+    MF:Update()
+    local whoWide = cast:GetWidth()
+    T:Settings().mobCastCover = "name"
+    NOW = NOW + 0.1
+    MF.lastUpdate = nil
+    MF:Update()
+    if not (cast:GetWidth() > whoWide) then
+      error("covering all but the name is no wider than covering who it's on (" .. cast:GetWidth() .. ")")
+    end
+    T:Settings().mobCastCover = "who"
+    -- "name full width": the name across the row, the player a short tag.
+    local splitName = castRow.nameW
+    T:Settings().mobRowLayout = "wide"
+    NOW = NOW + 0.1
+    MF.lastUpdate = nil
+    MF:Update()
+    if castRow.layout ~= "wide" or not (castRow.nameW > splitName) then
+      error("full width did not widen the name: " .. tostring(castRow.nameW) .. " vs " .. tostring(splitName))
+    end
+    if castRow.who:GetWidth() ~= 60 then error("full width's player tag is " .. tostring(castRow.who:GetWidth()) .. "px") end
+    T:Settings().mobRowLayout = "split"
+    NOW = NOW + 0.1
+    MF.lastUpdate = nil
+    MF:Update()
+    if castRow.layout ~= "split" or castRow.nameW ~= splitName then error("back to split, the row did not come back") end
+    W.capture.casts[drakes[1]] = nil
+    NOW = NOW + 0.1
+    MF.lastUpdate = nil
+    MF:Update()
+    if castRow.cast:IsShown() then error("the cast bar stayed after the cast ended") end
+    T:Settings().mobCasts = false
   end
   -- The width: set it, and the frame and every row's name column follow;
   -- outside its limits it is held to them.

@@ -39,6 +39,7 @@ local T = W.threat
 
 local ROW_H = 18
 local WIDTH = 220      -- default; the setting is mobFramesWidth
+local CAST_W = 100     -- an enemy cast bar beside its row; the setting is mobCastWidth
 local MIN_W, MAX_W = 160, 420
 local UPDATE = 0.2
 
@@ -294,6 +295,31 @@ local function makeRow(parent, i)
   b.pct:SetPoint("RIGHT", b, "RIGHT", -4, 0)
   b.pct:SetWidth(34)
 
+  -- What the mob is casting: over the row's right part, or beside it
+  -- (MF.PlaceCast, MF.PaintCast). A plain frame, so clicks fall through
+  -- to the row and the player button underneath.
+  local cb = CreateFrame("Frame", nil, b)
+  cb:SetHeight(ROW_H)
+  cb.bg = UI.Fill(cb, W.color.panel, 0.95)
+  cb.icon = cb:CreateTexture(nil, "ARTWORK")
+  cb.icon:SetWidth(ROW_H) cb.icon:SetHeight(ROW_H)
+  cb.icon:SetPoint("LEFT", cb, "LEFT", 0, 0)
+  cb.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+  cb.bar = cb:CreateTexture(nil, "BORDER")
+  cb.bar:SetTexture(UI.media.bar)
+  UI.RegisterBar(cb.bar)
+  cb.bar:SetPoint("TOPLEFT", cb.icon, "TOPRIGHT", 1, 0)
+  cb.bar:SetPoint("BOTTOMLEFT", cb.icon, "BOTTOMRIGHT", 1, 0)
+  cb.name = UI.Text(cb, 10, W.color.text)
+  cb.name:SetHeight(ROW_H)
+  cb.name:SetPoint("LEFT", cb.icon, "RIGHT", 4, 0)
+  cb.time = UI.Text(cb, 10, W.color.textDim, "RIGHT", UI.fontNum)
+  cb.time:SetPoint("RIGHT", cb, "RIGHT", -3, 0)
+  cb.time:SetWidth(26)
+  cb:SetScript("OnUpdate", function() MF.TickCast(cb) end)
+  cb:Hide()
+  b.cast = cb
+
   --[[ The player the mob is hitting is a button of its own, over their
        name: a healer clicks it to heal, shield or bubble them (the spells
        are set under Mob frames), or to target them when none is. The rest
@@ -329,7 +355,11 @@ local function makeRow(parent, i)
       end
       local m = b.mob
       if not m or m.sample then return end
-      if arg1 == "RightButton" then
+      -- Shift- or Ctrl-click: the spell set for it, on this mob.
+      local spell = (arg1 ~= "RightButton") and MF:ModifierSpell()
+      if spell then
+        MF:CastOnMob(m, spell)
+      elseif arg1 == "RightButton" then
         if MF:RightAction() == "attack" then
           MF:TargetMob(m)
           MF:StartAttack()
@@ -430,6 +460,28 @@ function MF:TargetMob(m)
   end
 end
 
+--[[ Shift- and Ctrl-click spells on a mob (mobClickSpells, off until
+     turned on): Sunder, a Judgement, a Hamstring -- whatever is set under
+     Mob frames. Nil when off, no modifier is held, or none is set. ]]
+function MF:ModifierSpell()
+  local s = T:Settings()
+  if not s.mobClickSpells then return nil end
+  local spell
+  if IsShiftKeyDown and IsShiftKeyDown() then spell = s.mobClickShift
+  elseif IsControlKeyDown and IsControlKeyDown() then spell = s.mobClickCtrl end
+  if spell and spell ~= "" then return spell end
+  return nil
+end
+
+--- Cast on a row's mob. With SuperWoW straight at its guid, your target
+--- untouched; without, it is targeted first, so the spell lands on it.
+function MF:CastOnMob(m, spell)
+  if not CastSpellByName then return end
+  if m.guid and SpellInfo and pcall(CastSpellByName, spell, m.guid) then return end
+  self:TargetMob(m)
+  pcall(CastSpellByName, spell)
+end
+
 --[[ What a right-click on a mob does (mobRightClick):
        auto    tanking, taunt it; otherwise attack it
        attack  target it and start melee
@@ -511,9 +563,23 @@ end
      player column's width. ]]
 local SPLIT = 0.6
 local PCT_W = 34
+local WHO_TAG = 60      -- "name full width": the player as a short tag at the end
+
+--- The row layout in use (mobRowLayout): "split" 60/40, or "wide" -- the
+--- mob's name across the row, the player a tag at its end.
+function MF:Layout()
+  return (T:Settings().mobRowLayout == "wide") and "wide" or "split"
+end
 
 function MF:Columns(w)
   local rowW = (w or self:Width()) - 4 - 2 * (self.pad or 0)
+  if self:Layout() == "wide" then
+    -- [name ...........][who tag][pct]; the split is where the tag starts.
+    local split = rowW - 4 - PCT_W - 4 - WHO_TAG
+    local nameW = split - 6 - 4
+    if nameW < 30 then nameW = 30 end
+    return split, nameW, WHO_TAG
+  end
   local split = math.floor(rowW * SPLIT)
   local nameW = split - 6 - PCT_W - 6
   if nameW < 30 then nameW = 30 end
@@ -532,15 +598,25 @@ end
 local function layoutRow(b, split, nameW, whoW)
   b.split = split
   b.nameW = nameW
+  b.layout = MF:Layout()
   b.pct:ClearAllPoints()
-  b.pct:SetPoint("RIGHT", b, "LEFT", split - 4, 0)
-  -- The player, right up against the row's right edge.
   b.who:ClearAllPoints()
-  b.who:SetPoint("RIGHT", b, "RIGHT", -4, 0)
-  b.who:SetWidth(whoW)
   b.whoBtn:ClearAllPoints()
-  b.whoBtn:SetPoint("TOPLEFT", b, "TOPLEFT", split, 0)
-  b.whoBtn:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", 0, 0)
+  if b.layout == "wide" then
+    -- The % at the far right, the player a tag just left of it.
+    b.pct:SetPoint("RIGHT", b, "RIGHT", -4, 0)
+    b.who:SetPoint("RIGHT", b, "RIGHT", -4 - PCT_W - 4, 0)
+    b.who:SetWidth(whoW)
+    b.whoBtn:SetPoint("TOPLEFT", b, "TOPLEFT", split, 0)
+    b.whoBtn:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", -4 - PCT_W, 0)
+  else
+    b.pct:SetPoint("RIGHT", b, "LEFT", split - 4, 0)
+    -- The player, right up against the row's right edge.
+    b.who:SetPoint("RIGHT", b, "RIGHT", -4, 0)
+    b.who:SetWidth(whoW)
+    b.whoBtn:SetPoint("TOPLEFT", b, "TOPLEFT", split, 0)
+    b.whoBtn:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", 0, 0)
+  end
   -- Re-lay the name, with or without a marker beside it.
   local mark = b.markShown
   b.markShown = -1
@@ -574,7 +650,7 @@ function MF:ApplyWidth()
   end
   local split, nameW, whoW = self:Columns(w)
   for _, b in ipairs(self.rows or {}) do
-    if b.split ~= split or b.nameW ~= nameW then layoutRow(b, split, nameW, whoW) end
+    if b.split ~= split or b.nameW ~= nameW or b.layout ~= self:Layout() then layoutRow(b, split, nameW, whoW) end
   end
 end
 
@@ -679,8 +755,95 @@ local function threatText(m, tank)
   return text, color, fresh
 end
 
+--[[ A mob's cast bar. A cast fills as it goes, a channel drains; the
+     colours are the stock casting bar's -- gold casting, green channelling.
+     Every frame while shown, so it moves smoothly; it hides itself the
+     moment the cast's time is up, and W.capture ends it early on a
+     completion, an interrupt or a death. ]]
+local CAST_COLOR = { 1.0, 0.7, 0.0 }
+local CHANNEL_COLOR = { 0.0, 1.0, 0.0 }
+
+function MF.TickCast(cb)
+  local c = cb.c
+  if not c then cb:Hide() return end
+  local left = c.start + c.dur - GetTime()
+  if left <= 0 then
+    cb.c = nil
+    cb:Hide()
+    return
+  end
+  local done = 1 - left / c.dur
+  local frac = c.channel and (1 - done) or done
+  if frac < 0.01 then frac = 0.01 elseif frac > 1 then frac = 1 end
+  cb.bar:SetWidth(((cb._w or CAST_W) - ROW_H - 1) * frac)
+  cb.time:SetText(string.format("%.1f", left))
+end
+
+--[[ Where a row's cast bar goes (mobCastStyle):
+       over    over the row's right part -- who the mob is on -- while it
+               casts; the name and health % stay in view, and nothing
+               sticks out of the window (the default)
+       beside  just right of the row, mobCastWidth wide ]]
+function MF.PlaceCast(b)
+  local cb = b and b.cast
+  if not cb then return end
+  local s = T:Settings()
+  local style = s.mobCastStyle or "over"
+  local w
+  if style == "beside" then
+    w = s.mobCastWidth or CAST_W
+  else
+    local rowW = b:GetWidth()
+    if not rowW or rowW <= 0 then rowW = MF:Width() - 4 end
+    -- Who it is on (from the split), or everything after the name.
+    if s.mobCastCover == "name" then
+      w = rowW - (6 + (b.nameW or 0) + 2)
+    else
+      w = rowW - (b.split or math.floor(rowW * SPLIT))
+    end
+  end
+  if cb._style == style and cb._w == w then return end
+  cb._style, cb._w = style, w
+  cb:ClearAllPoints()
+  if style == "beside" then
+    cb:SetPoint("LEFT", b, "RIGHT", 3, 0)
+  else
+    cb:SetPoint("RIGHT", b, "RIGHT", 0, 0)
+    cb:SetFrameLevel(b:GetFrameLevel() + 3)
+  end
+  cb:SetWidth(w)
+  cb.name:SetWidth(w - ROW_H - 34)
+end
+
+--- Show what a row's mob is casting, or nothing.
+function MF.PaintCast(b, m, s)
+  local cb = b.cast
+  if not cb then return end
+  local c = m and s and s.mobCasts == true and W.capture.Casting and W.capture:Casting(m.guid)
+  if not c then
+    cb.c = nil
+    cb:Hide()
+    return
+  end
+  MF.PlaceCast(b)
+  if cb.c ~= c then
+    cb.c = c
+    cb.icon:SetTexture(c.icon or "Interface\\Icons\\INV_Misc_QuestionMark")
+    cb.name:SetText(c.name or "?")
+    local col = c.channel and CHANNEL_COLOR or CAST_COLOR
+    cb.bar:SetVertexColor(col[1], col[2], col[3], 0.75)
+  end
+  cb:Show()
+  MF.TickCast(cb)
+end
+
 local function paintMob(b, m, tank, s, blink, targetGuid)
   b.mob, b.summary = m, nil
+  MF.PaintCast(b, m, s)
+  --[[ The player side of the row -- clicking whoever the mob is on, to heal
+       or target them -- only when switched on (mobWhoClicks). Off, the
+       button takes no mouse at all, so the whole row is the mob's. ]]
+  if b.whoBtn.EnableMouse then b.whoBtn:EnableMouse(s.mobWhoClicks == true) end
   b:SetSelected(m.selected or m.isTarget or (targetGuid ~= nil and m.guid == targetGuid))
   b:SetMark(m.mark)
   b.name:SetText(m.name or "?")
@@ -716,6 +879,7 @@ end
      you" in blue is the line a tank wants to read and then ignore. ]]
 local function paintSummary(b, fine, elsewhere, hidden, tank, total)
   b.mob, b.summary, b.trouble = nil, true, false
+  MF.PaintCast(b, nil, nil)
   b:SetSelected(false)
   b:SetMark(nil)
   b.hp:Hide()

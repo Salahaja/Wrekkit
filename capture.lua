@@ -89,6 +89,8 @@ C.events = {
   "DAMAGE_SHIELD_SELF", "DAMAGE_SHIELD_OTHER",
   "ENVIRONMENTAL_DMG_SELF", "ENVIRONMENTAL_DMG_OTHER",
   "SPELL_GO_SELF", "SPELL_GO_OTHER",
+  -- Enemy cast bars in the mob window: a cast starting, and one failing.
+  "SPELL_START_OTHER", "SPELL_FAILED_OTHER",
   "UNIT_DIED",
 
   -- Buffs. Edge-triggered by nampower: these fire when something is gained
@@ -106,6 +108,7 @@ C.cvars = {
   "NP_EnableSpellHealEvents",
   "NP_EnableSpellEnergizeEvents",
   "NP_EnableSpellGoEvents",     -- carries the itemId behind a cast
+  "NP_EnableSpellStartEvents",  -- casts starting: the mob window's cast bars
   -- Not NP_EnableAuraCastEvents: that gates AURA_CAST_ON_*, a different
   -- family. BUFF_ADDED/REMOVED need no CVar at all.
 }
@@ -1004,12 +1007,66 @@ dispatch.SPELL_GO_SELF = function(a1, a2, a3, a4)
   -- name from SPELLCAST_START gets bound to an id.
   C:LearnSpellName(num(a2))
   C:SPELL_GO(a1, a2, a3, a4)
+  -- A cast completing ends its cast bar; a channel's GO is its start.
+  local c = C.casts[a3]
+  if c and not c.channel and c.spellId == num(a2) then C.casts[a3] = nil end
 end
 dispatch.SPELL_GO_OTHER = dispatch.SPELL_GO_SELF
+
+----------------------------------------------------------------------
+-- enemy casts, for the mob window's cast bars
+----------------------------------------------------------------------
+
+--[[ What each mob is casting right now. SPELL_START_OTHER (needs
+     NP_EnableSpellStartEvents) gives the spell and its cast time, or for a
+     channel (spellType 1) its duration. It ends on its SPELL_GO, on
+     SPELL_FAILED_OTHER (interrupted, or it failed), on death, or by
+     running out -- a channel's GO comes at its START, so a channel is only
+     ever ended by time, a failure or death. Mobs only: players' casts are
+     no business of the mob window's. ]]
+C.casts = {}   -- guid -> { spellId, name, icon, start, dur, channel }
+
+function C:CastStart(caster, spellId, castTime, duration, spellType)
+  if not caster then return end
+  local u = self.units[caster] or self:Unit(caster)
+  if u and u.isPlayer then return end
+  local channel = num(spellType) == 1
+  local ms = channel and num(duration) or num(castTime)
+  if ms <= 0 then return end
+  local name, icon
+  if SpellInfo then
+    local ok, n, _, i = pcall(SpellInfo, spellId)
+    if ok then name, icon = n, i end
+  end
+  self.casts[caster] = { spellId = spellId, name = name or self:Spell(spellId) or "?",
+    icon = icon, start = GetTime(), dur = ms / 1000, channel = channel }
+end
+
+--- A cast is over. With a spell id, only if it is that cast that ended.
+function C:CastEnd(caster, spellId)
+  local c = caster and self.casts[caster]
+  if c and (not spellId or c.spellId == spellId) then self.casts[caster] = nil end
+end
+
+--- What a mob is casting now, or nil -- a cast past its time is over.
+function C:Casting(guid)
+  local c = guid and self.casts[guid]
+  if c and GetTime() > c.start + c.dur + 0.3 then
+    self.casts[guid] = nil
+    return nil
+  end
+  return c
+end
+
+dispatch.SPELL_START_OTHER = function(a1, a2, a3, a4, a5, a6, a7, a8)
+  C:CastStart(a3, num(a2), a6, a7, a8)
+end
+dispatch.SPELL_FAILED_OTHER = function(a1) C:CastEnd(a1) end
 
 dispatch.UNIT_DIED = function(a1)
   W.encounter:Death(a1)
   C:ClearBuffs(a1)
+  C.casts[a1] = nil
   -- So tank mode can tell a mob that died from one that turned away.
   if W.threat then W.threat:OnUnitDied(a1) end
 end

@@ -1225,7 +1225,12 @@ function S:BuildThreat()
     function(v) return v .. "px" end)
 
   -- Clicking the player a mob is on: a spell each, or empty to target them.
-  -- Picked from the spellbook or dragged in; see spellSlot.
+  -- Picked from the spellbook or dragged in; see spellSlot. Off until
+  -- switched on, and then the right side of a row is the player's.
+  get, set = opt("mobWhoClicks")
+  check(self, "Click the player a mob is on", get, set,
+    { "The right side of a mob's row acts on the", "player it is hitting: the spells below heal",
+      "or shield them. Off, the whole row is the mob's." })
   self.whoSlots = {}
   self.whoSlots.left = spellSlot(self, "Click player",
     function() return ts().mobWhoLeft end,
@@ -1240,6 +1245,52 @@ function S:BuildThreat()
   check(self, "Cast on players outside your group", get, set,
     { "The click spells also reach someone not in", "your party or raid -- a passer-by a mob",
       "turned on. Only players you can help." })
+
+  -- On the mob itself: modifier-click spells, and its cast bar. Both off
+  -- until wanted.
+  get, set = opt("mobClickSpells")
+  check(self, "Shift/Ctrl-click a mob casts", get, set,
+    { "Shift- or Ctrl-click a mob's row to cast the", "spell set below on it -- Sunder, a Judgement.",
+      "With SuperWoW your target stays put." })
+  self.mobSlots = {}
+  self.mobSlots.shift = spellSlot(self, "Shift-click mob",
+    function() return ts().mobClickShift end,
+    function(v) ts().mobClickShift = v or "" end)
+  self.mobSlots.ctrl = spellSlot(self, "Ctrl-click mob",
+    function() return ts().mobClickCtrl end,
+    function(v) ts().mobClickCtrl = v or "" end)
+  get, set = opt("mobCasts")
+  check(self, "Enemy cast bars", get, set,
+    { "A bar on each mob while it casts: the spell", "and the time left -- gold casting, green",
+      "channelling. Needs Nampower." })
+  get, set = pick("mobCastStyle")
+  choice(self, "Cast bar",
+    {
+      { value = "over", label = "over the row" },
+      { value = "beside", label = "beside the row" },
+    }, get, set,
+    { "Over: covers who the mob is on while it casts,", "inside the window. Beside: just right of the",
+      "window, as wide as set below." })
+  stepper(self, "Cast bar width",
+    function() return ts().mobCastWidth end,
+    function(v) ts().mobCastWidth = v end,
+    40, 200, 10,
+    function(v) return v .. "px" end)
+  get, set = pick("mobCastCover")
+  choice(self, "Cast bar covers",
+    {
+      { value = "who", label = "who it's on" },
+      { value = "name", label = "all but the name" },
+    }, get, set,
+    { "Over the row: the right part (who the mob is", "hitting), or everything after its name --", "more room for the spell." })
+  get, set = pick("mobRowLayout")
+  choice(self, "Row layout",
+    {
+      { value = "split", label = "split 60/40" },
+      { value = "wide", label = "name full width" },
+    }, get, set,
+    { "Split: the mob on the left, who it is hitting", "on the right. Full width: the name across the",
+      "row, the player a short tag by the %." })
 
   stepper(self, "From",
     function() return ts().mobFramesMin end,

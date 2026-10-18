@@ -138,11 +138,20 @@ T.defaults = {
   mobFrames = true,
   mobFramesFor = "tank",   -- "tank" | "everyone"
   mobRightClick = "auto",  -- right-click a mob: "auto" (taunt tanking, else attack) | "attack" | "taunt"
+  mobCasts = false,        -- enemy cast bars in the mob window (opt-in)
+  mobCastStyle = "over",   -- "over" the row's right part | "beside" it
+  mobCastWidth = 100,      -- beside: how wide, px
+  mobCastCover = "who",    -- over: "who" the mob is on | "name": all but the name
+  mobRowLayout = "split",  -- "split" 60/40 | "wide": the name across, the player a tag
+  mobClickSpells = false,  -- Shift/Ctrl-click a mob casts these (opt-in)
+  mobClickShift = "",
+  mobClickCtrl = "",
   mobFramesMin = 2,        -- shown from this many mobs
   mobFramesMax = 8,        -- at most this many rows
   mobFramesWidth = 220,    -- pixels; the name column takes what is left
   -- Clicking the player a mob is hitting, on its row: a spell to cast on
   -- them, by name, or empty to target them.
+  mobWhoClicks = false,    -- click the player a mob is on to cast at them (opt-in)
   mobWhoLeft = "",
   mobWhoRight = "",
   mobWhoShift = "",
@@ -241,13 +250,24 @@ function T:Sanitize(s)
   if type(s.coTanks) ~= "string" then s.coTanks = "" end
   if type(s.coTanksOff) ~= "string" then s.coTanksOff = "" end
   if type(s.tauntSpell) ~= "string" then s.tauntSpell = "" end
-  for _, k in ipairs({ "mobWhoLeft", "mobWhoRight", "mobWhoShift" }) do
+  for _, k in ipairs({ "mobWhoLeft", "mobWhoRight", "mobWhoShift", "mobClickShift", "mobClickCtrl" }) do
     if type(s[k]) ~= "string" then s[k] = "" end
   end
   s.tauntX, s.tauntY = tonumber(s.tauntX), tonumber(s.tauntY)
   s.mobsX, s.mobsY = tonumber(s.mobsX), tonumber(s.mobsY)
   s.mobFramesFor = oneOf(s.mobFramesFor, { "tank", "everyone" }, d.mobFramesFor)
   s.mobRightClick = oneOf(s.mobRightClick, { "auto", "attack", "taunt" }, d.mobRightClick)
+  s.mobCastStyle = oneOf(s.mobCastStyle, { "over", "beside" }, d.mobCastStyle)
+  -- The player side of the mob rows became opt-in. Whoever had set a
+  -- spell on it is using it, so it stays on for them; once, then theirs.
+  if not s.whoClicksOptIn then
+    s.mobWhoClicks = (s.mobWhoLeft ~= "" and s.mobWhoLeft ~= nil) or (s.mobWhoRight ~= "" and s.mobWhoRight ~= nil)
+      or (s.mobWhoShift ~= "" and s.mobWhoShift ~= nil)
+    s.whoClicksOptIn = true
+  end
+  s.mobCastWidth = math.floor(clamp(s.mobCastWidth, 40, 200, d.mobCastWidth))
+  s.mobCastCover = oneOf(s.mobCastCover, { "who", "name" }, d.mobCastCover)
+  s.mobRowLayout = oneOf(s.mobRowLayout, { "split", "wide" }, d.mobRowLayout)
   s.mobFramesMin = math.floor(clamp(s.mobFramesMin, 1, 10, d.mobFramesMin))
   s.mobFramesMax = math.floor(clamp(s.mobFramesMax, 2, 15, d.mobFramesMax))
   s.mobFramesWidth = math.floor(clamp(s.mobFramesWidth, 160, 420, d.mobFramesWidth))

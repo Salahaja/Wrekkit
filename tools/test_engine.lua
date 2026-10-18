@@ -3655,6 +3655,37 @@ IN_COMBAT = IN
 end
 
 ----------------------------------------------------------------------
+print("\n-- enemy casts, for the mob window's cast bars --")
+----------------------------------------------------------------------
+;(function()
+  local C = Wrekkit.capture
+  C.casts = {}
+  -- SPELL_START_OTHER(itemId, spellId, caster, target, castFlags, castTime, duration, spellType)
+  fire("SPELL_START_OTHER", 0, 18435, "0xBoss", "0xP1", 0, 2000, 0, 0)
+  local c = C:Casting("0xBoss")
+  check("a mob's cast is followed", c and c.spellId, 18435)
+  check("  for its cast time", c and c.dur, 2)
+  fire("SPELL_GO_OTHER", 0, 18435, "0xBoss", "0xP1")
+  check("  and ends when it lands", C:Casting("0xBoss"), nil)
+  -- A channel's GO is its start: only time, a failure or death end it.
+  fire("SPELL_START_OTHER", 0, 22686, "0xBoss", "0xP1", 0, 0, 5000, 1)
+  fire("SPELL_GO_OTHER", 0, 22686, "0xBoss", "0xP1")
+  check("a channel outlives its GO", C:Casting("0xBoss") and C:Casting("0xBoss").channel, true)
+  fire("SPELL_FAILED_OTHER", "0xBoss", 22686)
+  check("  and ends when interrupted", C:Casting("0xBoss"), nil)
+  fire("SPELL_START_OTHER", 0, 18435, "0xBoss", "0xP1", 0, 2000, 0, 0)
+  advance(3)
+  check("a cast past its time is over", C:Casting("0xBoss"), nil)
+  fire("SPELL_START_OTHER", 0, 18435, "0xBoss", "0xP1", 0, 2000, 0, 0)
+  fire("UNIT_DIED", "0xBoss")
+  check("  as is a dead mob's", C:Casting("0xBoss"), nil)
+  -- Players' casts are not the mob window's business.
+  fire("SPELL_START_OTHER", 0, 10329, "0xP2", "0xP1", 0, 2500, 0, 0)
+  check("players' casts are not followed", C:Casting("0xP2"), nil)
+  C.casts = {}
+end)()
+
+----------------------------------------------------------------------
 print("\n-- mob watch: no AGGRO shouts when solo --")
 ----------------------------------------------------------------------
 ;(function()
