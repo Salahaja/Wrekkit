@@ -563,9 +563,23 @@ end
      player column's width. ]]
 local SPLIT = 0.6
 local PCT_W = 34
+local WHO_TAG = 60      -- "name full width": the player as a short tag at the end
+
+--- The row layout in use (mobRowLayout): "split" 60/40, or "wide" -- the
+--- mob's name across the row, the player a tag at its end.
+function MF:Layout()
+  return (T:Settings().mobRowLayout == "wide") and "wide" or "split"
+end
 
 function MF:Columns(w)
   local rowW = (w or self:Width()) - 4 - 2 * (self.pad or 0)
+  if self:Layout() == "wide" then
+    -- [name ...........][who tag][pct]; the split is where the tag starts.
+    local split = rowW - 4 - PCT_W - 4 - WHO_TAG
+    local nameW = split - 6 - 4
+    if nameW < 30 then nameW = 30 end
+    return split, nameW, WHO_TAG
+  end
   local split = math.floor(rowW * SPLIT)
   local nameW = split - 6 - PCT_W - 6
   if nameW < 30 then nameW = 30 end
@@ -584,15 +598,25 @@ end
 local function layoutRow(b, split, nameW, whoW)
   b.split = split
   b.nameW = nameW
+  b.layout = MF:Layout()
   b.pct:ClearAllPoints()
-  b.pct:SetPoint("RIGHT", b, "LEFT", split - 4, 0)
-  -- The player, right up against the row's right edge.
   b.who:ClearAllPoints()
-  b.who:SetPoint("RIGHT", b, "RIGHT", -4, 0)
-  b.who:SetWidth(whoW)
   b.whoBtn:ClearAllPoints()
-  b.whoBtn:SetPoint("TOPLEFT", b, "TOPLEFT", split, 0)
-  b.whoBtn:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", 0, 0)
+  if b.layout == "wide" then
+    -- The % at the far right, the player a tag just left of it.
+    b.pct:SetPoint("RIGHT", b, "RIGHT", -4, 0)
+    b.who:SetPoint("RIGHT", b, "RIGHT", -4 - PCT_W - 4, 0)
+    b.who:SetWidth(whoW)
+    b.whoBtn:SetPoint("TOPLEFT", b, "TOPLEFT", split, 0)
+    b.whoBtn:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", -4 - PCT_W, 0)
+  else
+    b.pct:SetPoint("RIGHT", b, "LEFT", split - 4, 0)
+    -- The player, right up against the row's right edge.
+    b.who:SetPoint("RIGHT", b, "RIGHT", -4, 0)
+    b.who:SetWidth(whoW)
+    b.whoBtn:SetPoint("TOPLEFT", b, "TOPLEFT", split, 0)
+    b.whoBtn:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", 0, 0)
+  end
   -- Re-lay the name, with or without a marker beside it.
   local mark = b.markShown
   b.markShown = -1
@@ -626,7 +650,7 @@ function MF:ApplyWidth()
   end
   local split, nameW, whoW = self:Columns(w)
   for _, b in ipairs(self.rows or {}) do
-    if b.split ~= split or b.nameW ~= nameW then layoutRow(b, split, nameW, whoW) end
+    if b.split ~= split or b.nameW ~= nameW or b.layout ~= self:Layout() then layoutRow(b, split, nameW, whoW) end
   end
 end
 
@@ -771,7 +795,12 @@ function MF.PlaceCast(b)
   else
     local rowW = b:GetWidth()
     if not rowW or rowW <= 0 then rowW = MF:Width() - 4 end
-    w = rowW - (b.split or math.floor(rowW * SPLIT))
+    -- Who it is on (from the split), or everything after the name.
+    if s.mobCastCover == "name" then
+      w = rowW - (6 + (b.nameW or 0) + 2)
+    else
+      w = rowW - (b.split or math.floor(rowW * SPLIT))
+    end
   end
   if cb._style == style and cb._w == w then return end
   cb._style, cb._w = style, w

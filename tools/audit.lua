@@ -1366,6 +1366,34 @@ step("threat meter", function()
       error("set beside at 60px, the cast bar is " .. tostring(cast._style) .. " " .. tostring(cast:GetWidth()))
     end
     T:Settings().mobCastStyle, T:Settings().mobCastWidth = "over", 100
+    -- "all but the name": more of the row than "who it's on".
+    NOW = NOW + 0.1
+    MF.lastUpdate = nil
+    MF:Update()
+    local whoWide = cast:GetWidth()
+    T:Settings().mobCastCover = "name"
+    NOW = NOW + 0.1
+    MF.lastUpdate = nil
+    MF:Update()
+    if not (cast:GetWidth() > whoWide) then
+      error("covering all but the name is no wider than covering who it's on (" .. cast:GetWidth() .. ")")
+    end
+    T:Settings().mobCastCover = "who"
+    -- "name full width": the name across the row, the player a short tag.
+    local splitName = castRow.nameW
+    T:Settings().mobRowLayout = "wide"
+    NOW = NOW + 0.1
+    MF.lastUpdate = nil
+    MF:Update()
+    if castRow.layout ~= "wide" or not (castRow.nameW > splitName) then
+      error("full width did not widen the name: " .. tostring(castRow.nameW) .. " vs " .. tostring(splitName))
+    end
+    if castRow.who:GetWidth() ~= 60 then error("full width's player tag is " .. tostring(castRow.who:GetWidth()) .. "px") end
+    T:Settings().mobRowLayout = "split"
+    NOW = NOW + 0.1
+    MF.lastUpdate = nil
+    MF:Update()
+    if castRow.layout ~= "split" or castRow.nameW ~= splitName then error("back to split, the row did not come back") end
     W.capture.casts[drakes[1]] = nil
     NOW = NOW + 0.1
     MF.lastUpdate = nil

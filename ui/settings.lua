@@ -1276,6 +1276,21 @@ function S:BuildThreat()
     function(v) ts().mobCastWidth = v end,
     40, 200, 10,
     function(v) return v .. "px" end)
+  get, set = pick("mobCastCover")
+  choice(self, "Cast bar covers",
+    {
+      { value = "who", label = "who it's on" },
+      { value = "name", label = "all but the name" },
+    }, get, set,
+    { "Over the row: the right part (who the mob is", "hitting), or everything after its name --", "more room for the spell." })
+  get, set = pick("mobRowLayout")
+  choice(self, "Row layout",
+    {
+      { value = "split", label = "split 60/40" },
+      { value = "wide", label = "name full width" },
+    }, get, set,
+    { "Split: the mob on the left, who it is hitting", "on the right. Full width: the name across the",
+      "row, the player a short tag by the %." })
 
   stepper(self, "From",
     function() return ts().mobFramesMin end,

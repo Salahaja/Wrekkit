@@ -141,6 +141,8 @@ T.defaults = {
   mobCasts = false,        -- enemy cast bars in the mob window (opt-in)
   mobCastStyle = "over",   -- "over" the row's right part | "beside" it
   mobCastWidth = 100,      -- beside: how wide, px
+  mobCastCover = "who",    -- over: "who" the mob is on | "name": all but the name
+  mobRowLayout = "split",  -- "split" 60/40 | "wide": the name across, the player a tag
   mobClickSpells = false,  -- Shift/Ctrl-click a mob casts these (opt-in)
   mobClickShift = "",
   mobClickCtrl = "",
@@ -264,6 +266,8 @@ function T:Sanitize(s)
     s.whoClicksOptIn = true
   end
   s.mobCastWidth = math.floor(clamp(s.mobCastWidth, 40, 200, d.mobCastWidth))
+  s.mobCastCover = oneOf(s.mobCastCover, { "who", "name" }, d.mobCastCover)
+  s.mobRowLayout = oneOf(s.mobRowLayout, { "split", "wide" }, d.mobRowLayout)
   s.mobFramesMin = math.floor(clamp(s.mobFramesMin, 1, 10, d.mobFramesMin))
   s.mobFramesMax = math.floor(clamp(s.mobFramesMax, 2, 15, d.mobFramesMax))
   s.mobFramesWidth = math.floor(clamp(s.mobFramesWidth, 160, 420, d.mobFramesWidth))
