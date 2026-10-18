@@ -1225,7 +1225,12 @@ function S:BuildThreat()
     function(v) return v .. "px" end)
 
   -- Clicking the player a mob is on: a spell each, or empty to target them.
-  -- Picked from the spellbook or dragged in; see spellSlot.
+  -- Picked from the spellbook or dragged in; see spellSlot. Off until
+  -- switched on, and then the right side of a row is the player's.
+  get, set = opt("mobWhoClicks")
+  check(self, "Click the player a mob is on", get, set,
+    { "The right side of a mob's row acts on the", "player it is hitting: the spells below heal",
+      "or shield them. Off, the whole row is the mob's." })
   self.whoSlots = {}
   self.whoSlots.left = spellSlot(self, "Click player",
     function() return ts().mobWhoLeft end,

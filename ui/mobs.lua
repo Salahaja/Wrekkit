@@ -811,6 +811,10 @@ end
 local function paintMob(b, m, tank, s, blink, targetGuid)
   b.mob, b.summary = m, nil
   MF.PaintCast(b, m, s)
+  --[[ The player side of the row -- clicking whoever the mob is on, to heal
+       or target them -- only when switched on (mobWhoClicks). Off, the
+       button takes no mouse at all, so the whole row is the mob's. ]]
+  if b.whoBtn.EnableMouse then b.whoBtn:EnableMouse(s.mobWhoClicks == true) end
   b:SetSelected(m.selected or m.isTarget or (targetGuid ~= nil and m.guid == targetGuid))
   b:SetMark(m.mark)
   b.name:SetText(m.name or "?")

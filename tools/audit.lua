@@ -323,7 +323,7 @@ local function makeFrame(kind, name, parent)
   m.UnregisterEvent = function(self, e) self._events[e] = nil end
   m.RegisterForClicks = function() end
   m.RegisterForDrag = function() end
-  m.EnableMouse = function() end
+  m.EnableMouse = function(self, on) self._mouse = on and true or false end
   m.EnableMouseWheel = function() end
   m.EnableKeyboard = function() end
   m.SetMovable = function() end
@@ -1284,6 +1284,31 @@ step("threat meter", function()
     T:Settings().mobRightClick = "auto"
     arg1, MF.swinging = was, false
     STUB.AttackTarget, STUB.TargetUnit, T.IsTank, T.Taunt = real.attack, real.target, real.tank, real.taunt
+
+    -- The player side of a row (clicking whoever the mob is on): off by
+    -- default, so the whole row is the mob's; kept on, once, for whoever
+    -- had set a spell on it.
+    do
+      local s = T:Settings()
+      local fresh = { mobWhoLeft = "", mobWhoRight = "", mobWhoShift = "" }
+      for k, v in pairs(T.defaults) do if fresh[k] == nil then fresh[k] = v end end
+      T:Sanitize(fresh)
+      if fresh.mobWhoClicks then error("the player side of the row is on by default") end
+      local used = { mobWhoLeft = "Flash Heal", mobWhoRight = "", mobWhoShift = "" }
+      for k, v in pairs(T.defaults) do if used[k] == nil then used[k] = v end end
+      T:Sanitize(used)
+      if not used.mobWhoClicks then error("someone with a player click spell set lost it") end
+      s.mobWhoClicks = false
+      NOW = NOW + 0.1
+      MF.lastUpdate = nil
+      MF:Update()
+      if row.whoBtn._mouse ~= false then error("off, the player button still takes the mouse") end
+      s.mobWhoClicks = true
+      NOW = NOW + 0.1
+      MF.lastUpdate = nil
+      MF:Update()
+      if row.whoBtn._mouse ~= true then error("on, the player button takes no mouse") end
+    end
 
     -- Shift/Ctrl-click spells on the mob: off until turned on, then the
     -- spell set for the held key, straight at the mob.

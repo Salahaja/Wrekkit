@@ -149,6 +149,7 @@ T.defaults = {
   mobFramesWidth = 220,    -- pixels; the name column takes what is left
   -- Clicking the player a mob is hitting, on its row: a spell to cast on
   -- them, by name, or empty to target them.
+  mobWhoClicks = false,    -- click the player a mob is on to cast at them (opt-in)
   mobWhoLeft = "",
   mobWhoRight = "",
   mobWhoShift = "",
@@ -255,6 +256,13 @@ function T:Sanitize(s)
   s.mobFramesFor = oneOf(s.mobFramesFor, { "tank", "everyone" }, d.mobFramesFor)
   s.mobRightClick = oneOf(s.mobRightClick, { "auto", "attack", "taunt" }, d.mobRightClick)
   s.mobCastStyle = oneOf(s.mobCastStyle, { "over", "beside" }, d.mobCastStyle)
+  -- The player side of the mob rows became opt-in. Whoever had set a
+  -- spell on it is using it, so it stays on for them; once, then theirs.
+  if not s.whoClicksOptIn then
+    s.mobWhoClicks = (s.mobWhoLeft ~= "" and s.mobWhoLeft ~= nil) or (s.mobWhoRight ~= "" and s.mobWhoRight ~= nil)
+      or (s.mobWhoShift ~= "" and s.mobWhoShift ~= nil)
+    s.whoClicksOptIn = true
+  end
   s.mobCastWidth = math.floor(clamp(s.mobCastWidth, 40, 200, d.mobCastWidth))
   s.mobFramesMin = math.floor(clamp(s.mobFramesMin, 1, 10, d.mobFramesMin))
   s.mobFramesMax = math.floor(clamp(s.mobFramesMax, 2, 15, d.mobFramesMax))
