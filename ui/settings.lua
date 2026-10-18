@@ -480,6 +480,20 @@ function S:Create()
       "with which spell, to whom. Costs storage:",
       "the busiest 60 seconds of each fight." })
 
+  -- Off until wanted: it looks at every spell hit.
+  check(self, "Raid value",
+    function() return W.db.raidValue == true end,
+    function(v)
+      W.db.raidValue = v and true or nil
+      if W.value then W.value:Apply() end
+    end,
+    { "What buffs and debuffs add to others' damage:",
+      "auras, curses, judgements, Shadow Weaving,",
+      "Nightfall, Thorns -- credited to who provides",
+      "them. 'Raid value' under Damage; the mana and",
+      "health judgements give back, 'Raid support'",
+      "under Healing." })
+
   choice(self, "Per-second basis",
     {
       { value = "combat", label = "combat time" },

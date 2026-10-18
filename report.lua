@@ -143,7 +143,8 @@ local function blankRow(a, key)
     damage = 0, taken = 0, healing = 0, overheal = 0, absorbed = 0,
     deaths = 0, dispels = 0, interrupts = 0,
     hits = 0, crits = 0, misses = 0, consumes = 0, active = 0,
-    critHits = 0, healHits = 0, healCrits = 0,
+    critHits = 0, healHits = 0, healCrits = 0, valueAdded = 0,
+    valueMana = 0, valueHeal = 0,
     -- auras and the four ability tables are built on first use; see
     -- lazyDetail below.
   }, lazyDetail)
@@ -247,7 +248,8 @@ end
      keeps the actors it was summed from (_src, actor and pull in pairs)
      and fills the tables in from them on first touch. ]]
 local DETAIL = { auras = true, dmgAbility = true, healAbility = true,
-                 takenAbility = true, consumeItem = true, dispelAbility = true }
+                 takenAbility = true, consumeItem = true, dispelAbility = true,
+                 valueEffect = true, valueSupport = true }
 
 lazyDetail.__index = function(row, k)
   if not DETAIL[k] then return nil end
@@ -257,6 +259,8 @@ lazyDetail.__index = function(row, k)
   row.auras = {}
   row.dmgAbility, row.healAbility, row.takenAbility, row.consumeItem = {}, {}, {}, {}
   row.dispelAbility = {}
+  row.valueEffect = {}
+  row.valueSupport = {}
   for i = 1, table.getn(src), 2 do
     local a, enc = src[i], src[i + 1]
     addAuras(row, a.auras, enc)
@@ -265,6 +269,8 @@ lazyDetail.__index = function(row, k)
     addAbilities(row.takenAbility, a.takenAbility)
     addAbilities(row.consumeItem, a.consumeItem)
     addAbilities(row.dispelAbility, a.dispelAbility)
+    addAbilities(row.valueEffect, a.valueEffect)
+    addAbilities(row.valueSupport, a.valueSupport)
   end
   return row[k]
 end
@@ -280,6 +286,8 @@ local function addDetail(row, a, enc)
       addAbilities(row.takenAbility, a.takenAbility)
       addAbilities(row.consumeItem, a.consumeItem)
       addAbilities(row.dispelAbility, a.dispelAbility)
+      addAbilities(row.valueEffect, a.valueEffect)
+      addAbilities(row.valueSupport, a.valueSupport)
       return
     end
     src = {}
@@ -398,6 +406,9 @@ function R:View(encounters, opts)
       row.healCrits = row.healCrits + (a.healCrits or 0)
       row.misses = row.misses + (a.misses or 0)
       row.consumes = row.consumes + (a.consumes or 0)
+      row.valueAdded = row.valueAdded + (a.valueAdded or 0)
+      row.valueMana = row.valueMana + (a.valueMana or 0)
+      row.valueHeal = row.valueHeal + (a.valueHeal or 0)
 
       --[[ Active time is NOT summed here. Two actors on one row -- an owner
            and their pet, or two whelps of one name -- acting at the same

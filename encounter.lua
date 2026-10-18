@@ -85,6 +85,14 @@ local function newActor(guid, u)
     healAbility = {},   -- spellId -> { name, amount, over, hits, crits }
     takenAbility = {},  -- spellId -> { name, amount, hits, max }
     consumeItem = {},   -- itemId  -> { name, amount = times used }
+    -- Raid value (W.value): damage this actor's buffs and debuffs added to
+    -- other people's hits, and by which effect.
+    valueAdded = 0,
+    valueEffect = {},   -- spellId -> { name, amount, hits }
+    -- Raid support: mana and health their judgements gave others back.
+    valueMana = 0,
+    valueHeal = 0,
+    valueSupport = {},  -- spellId -> { name, amount, hits }
     dispelAbility = {}, -- spellId -> { name, amount = times }
   }
 end
@@ -974,6 +982,42 @@ function E:Consumable(guid, itemId, spellId)
   row.name = name
 end
 
+--[[ Raid value: `amount` of someone's hit that `guid`'s effect added. A
+     provider not known (a proc whose owner is not yet learned) is kept on
+     the pull as unattributed, so the effect's total is still right. ]]
+function E:Value(guid, spellId, name, amount)
+  local enc = self.live
+  if not enc or not amount or amount <= 0 then return end
+  local a = guid and self:Actor(guid)
+  if not a then
+    enc.valueUnknown = (enc.valueUnknown or 0) + amount
+    return
+  end
+  a.valueAdded = (a.valueAdded or 0) + amount
+  a.valueEffect = a.valueEffect or {}
+  local row = abilityRow(a.valueEffect, spellId, name)
+  row.amount = row.amount + amount
+  row.hits = row.hits + 1
+end
+
+--- Raid support: `amount` of mana ("mana") or health ("heal") that
+--- `guid`'s judgement gave back to someone who hit its mob.
+function E:Support(guid, spellId, name, amount, kind)
+  local enc = self.live
+  if not enc or not amount or amount <= 0 then return end
+  local a = guid and self:Actor(guid)
+  if not a then return end
+  if kind == "mana" then
+    a.valueMana = (a.valueMana or 0) + amount
+  else
+    a.valueHeal = (a.valueHeal or 0) + amount
+  end
+  a.valueSupport = a.valueSupport or {}
+  local row = abilityRow(a.valueSupport, spellId, name)
+  row.amount = row.amount + amount
+  row.hits = row.hits + 1
+end
+
 --- Close every buff still running when the pull ended: a flask nobody ever
 --- lost was up until the end, not for zero seconds.
 function E:CloseAuras(enc)
@@ -1744,12 +1788,17 @@ function E:Persist(enc)
       critHits = a.critHits, healHits = a.healHits, healCrits = a.healCrits,
       consumes = a.consumes,
       active = a.active,
+      valueAdded = (a.valueAdded or 0) > 0 and a.valueAdded or nil,
+      valueMana = (a.valueMana or 0) > 0 and a.valueMana or nil,
+      valueHeal = (a.valueHeal or 0) > 0 and a.valueHeal or nil,
       -- Packed: the live table is keyed by spell id, this is a string.
       auras = packAuras(a.auras, rec.auraNames),
       dmgAbility = keepDetail and topAbilities(a.dmgAbility, limit) or nil,
       healAbility = keepDetail and topAbilities(a.healAbility, limit) or nil,
       takenAbility = keepDetail and topAbilities(a.takenAbility, limit) or nil,
       consumeItem = keepDetail and topAbilities(a.consumeItem, limit) or nil,
+      valueEffect = (a.valueAdded or 0) > 0 and topAbilities(a.valueEffect, limit) or nil,
+      valueSupport = ((a.valueMana or 0) + (a.valueHeal or 0)) > 0 and topAbilities(a.valueSupport, limit) or nil,
       dispelAbility = (a.dispels or 0) > 0 and topAbilities(a.dispelAbility, limit) or nil,
     }
   end

@@ -179,6 +179,37 @@ M.list = {
     priced = true,
   },
   {
+    --[[ Raid value (W.value, when switched on): damage a player's buffs and
+         debuffs added to OTHER people's hits -- Sanctity Aura, the curses,
+         Improved Shadow Bolt, Nightfall -- credited to whoever provides
+         them. Drilled in, which effect added how much. ]]
+    key = "value", label = "Raid value", short = "VAL", side = "player",
+    value = function(r) return r.valueAdded or 0 end,
+    sub = function(r)
+      local v = r.valueAdded or 0
+      return v > 0 and ("+" .. W.Short(v)) or "-"
+    end,
+    color = W.color.accent,
+    detail = "valueEffect",
+  },
+  {
+    --[[ Raid support (W.value too): mana and health a paladin's Judgement
+         of Wisdom and of Light gave back to whoever hit the mob. Ranked on
+         the two together; the column keeps them apart. ]]
+    key = "support", label = "Raid support", short = "SUP", side = "player",
+    value = function(r) return (r.valueMana or 0) + (r.valueHeal or 0) end,
+    sub = function(r)
+      local m, h = r.valueMana or 0, r.valueHeal or 0
+      if m + h <= 0 then return "-" end
+      local out = {}
+      if m > 0 then table.insert(out, W.Short(m) .. " mana") end
+      if h > 0 then table.insert(out, W.Short(h) .. " heal") end
+      return table.concat(out, " ")
+    end,
+    color = W.color.healing,
+    detail = "valueSupport",
+  },
+  {
     --[[ Uptime of ONE buff, across everybody.
 
          The question is always about a particular buff -- was the flask up,
