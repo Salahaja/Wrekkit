@@ -347,6 +347,18 @@ function V:DebuffOn(guid, spellId, slot, stacks)
   end
 end
 
+--- A mob's debuff that came through the buff events. Players are left
+--- alone: an effect id on a player is something else entirely.
+function V:MobAura(guid, spellId, slot, stacks, on, state)
+  local e = self.EFFECTS[spellId]
+  if not e or e.on ~= "target" or not self:Enabled() or not guid then return end
+  local u = W.capture.units[guid] or W.capture:Unit(guid)
+  if not u or u.isPlayer or u.owner then return end
+  -- Its own slot space: a buff slot and a debuff slot of one number differ.
+  slot = "b" .. tostring(slot or "")
+  if on then self:DebuffOn(guid, spellId, slot, stacks) else self:DebuffOff(guid, spellId, slot, state) end
+end
+
 function V:DebuffOff(guid, spellId, slot, state)
   local set = self.mob[guid]
   local d = set and set[spellId]

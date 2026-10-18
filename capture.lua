@@ -999,11 +999,16 @@ dispatch.SPELL_ENERGIZE_BY_OTHER = dispatch.SPELL_ENERGIZE_BY_SELF
 -- UnitBuff ordering and shifts as other buffs come and go; auraSlot is the
 -- raw slot and stays put for as long as the aura does, so instances are
 -- keyed by that.
+-- The client sometimes files a mob's debuff under its BUFFS (Nightfall,
+-- Judgement of the Crusader, Shadow Weaving on 10/17): raid value takes
+-- those too, as the debuffs they are.
 local function buffOn(a1, a2, a3, a4, a5, a6, a7)
   C:Buff(a1, a6, a3, true, a7)
+  if W.value then W.value:MobAura(a1, num(a3), a6, a4, true, a7) end
 end
 local function buffOff(a1, a2, a3, a4, a5, a6, a7)
   C:Buff(a1, a6, a3, false, a7)
+  if W.value then W.value:MobAura(a1, num(a3), a6, a4, false, a7) end
 end
 
 dispatch.BUFF_ADDED_SELF = buffOn

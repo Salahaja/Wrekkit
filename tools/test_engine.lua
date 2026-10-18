@@ -4434,6 +4434,19 @@ Wrekkit.db.valueAnnounce = nil
 lines = Wrekkit.announce:Lines({ metric = "support", encounters = { enc }, label = "Test" }, 15)
 check("support is announced in mana and healing", find(lines, "mana") ~= nil, true)
 
+-- Nightfall filed under the mob's BUFFS still counts, and a player's
+-- buff of the same id is not mistaken for it.
+defNPC("0xV10", "Buffed debuff", 1000000)
+fire("AUTO_ATTACK_OTHER", "0xWar", "0xV10", 500, 2, 0, 1, 0, 0, 0)
+fire("BUFF_ADDED_OTHER", "0xV10", 3, 23605, 1, 60, 9, 0)
+local nfBefore = eff("0xWar", 23605)
+hit("0xV10", "0xLock2", 11661, 1100, 5)
+check("a debuff filed as a mob's buff counts", eff("0xWar", 23605) - nfBefore, 100, 0.01)
+fire("BUFF_REMOVED_OTHER", "0xV10", 3, 23605, 0, 0, 9, 1)
+check("and ends with it", Wrekkit.value.mob["0xV10"], nil)
+fire("BUFF_ADDED_OTHER", "0xMage", 9, 23605, 1, 60, 9, 0)
+check("the same id on a player is not a mob debuff", Wrekkit.value.mob["0xMage"], nil)
+
 -- Armor read off the mob itself, and remembered by name.
 local realField = GetUnitField
 GetUnitField = function(guid, f)
