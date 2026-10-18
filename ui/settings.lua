@@ -1277,6 +1277,11 @@ function S:BuildThreat()
     { "The attack a right-click starts. Hunters: Auto", "Shot. Warriors, rogues: their bow, gun or throw.",
       "Priests, mages, warlocks: a wand. Whichever", "reaches shoots from 8 yards out, swings closer.",
       "Never switches off an attack already going." })
+  -- Or a spell of your own instead, kept for this character only.
+  self.mobSlots = self.mobSlots or {}
+  self.mobSlots.right = spellSlot(self, "Right-click mob casts",
+    function() return UI.mobs and UI.mobs:RightSpell() or "" end,
+    function(v) if UI.mobs then UI.mobs:SetRightSpell(v or "") end end)
 
   -- Also by dragging its corner while the frames are being placed.
   stepper(self, "Width",
@@ -1313,7 +1318,7 @@ function S:BuildThreat()
   check(self, "Shift/Ctrl-click a mob casts", get, set,
     { "Shift- or Ctrl-click a mob's row to cast the", "spell set below on it -- Sunder, a Judgement.",
       "With SuperWoW your target stays put." })
-  self.mobSlots = {}
+  self.mobSlots = self.mobSlots or {}
   self.mobSlots.shift = spellSlot(self, "Shift-click mob",
     function() return ts().mobClickShift end,
     function(v) ts().mobClickShift = v or "" end)

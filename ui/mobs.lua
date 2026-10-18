@@ -362,7 +362,8 @@ local function makeRow(parent, i)
       elseif arg1 == "RightButton" then
         if MF:RightAction() == "attack" then
           MF:TargetMob(m)
-          MF:StartAttack()
+          local own = MF:RightSpell()
+          if own then MF:CastOnMob(m, own) else MF:StartAttack() end
         else
           T:Taunt({ guid = m.guid, unit = m.unit, name = m.name, who = m.who })
         end
@@ -471,6 +472,29 @@ function MF:ModifierSpell()
   elseif IsControlKeyDown and IsControlKeyDown() then spell = s.mobClickCtrl end
   if spell and spell ~= "" then return spell end
   return nil
+end
+
+--- Who "this character" is, for settings kept per character.
+function MF:CharKey()
+  local realm = (GetCVar and GetCVar("realmName")) or (GetRealmName and GetRealmName()) or ""
+  return (UnitName and UnitName("player") or "?") .. "-" .. realm
+end
+
+--[[ The spell a right-click casts in place of attacking -- Frostbolt for a
+     mage, Arcane Shot for a hunter -- set per character under Mob frames.
+     Nil when none is set: right-click attacks (mobAttackWith). ]]
+function MF:RightSpell()
+  local by = T:Settings().mobRightSpellBy
+  local spell = type(by) == "table" and by[self:CharKey()]
+  if spell and spell ~= "" then return spell end
+  return nil
+end
+
+function MF:SetRightSpell(spell)
+  local s = T:Settings()
+  if type(s.mobRightSpellBy) ~= "table" then s.mobRightSpellBy = {} end
+  if spell == "" then spell = nil end
+  s.mobRightSpellBy[self:CharKey()] = spell
 end
 
 --- Cast on a row's mob. With SuperWoW straight at its guid, your target

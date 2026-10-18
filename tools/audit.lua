@@ -1337,6 +1337,21 @@ step("threat meter", function()
     if table.getn(shots) ~= 5 or attacks ~= before + 1 then error("a paladin did not swing") end
     STUB.GetInventoryItemLink, STUB.GetItemInfo = realLink, realItem
 
+    -- A spell of this character's own instead: a mage's Frostbolt.
+    as = "MAGE"
+    MF:SetRightSpell("Frostbolt")
+    row:GetScript("OnClick")()
+    if shots[6] ~= "Frostbolt" then error("the right-click spell was not cast: " .. tostring(shots[6])) end
+    local realName = STUB.UnitName
+    STUB.UnitName = function(u) if u == "player" then return "Somealt" end return realName(u) end
+    before = attacks
+    s.mobAttackWith = "melee"
+    row:GetScript("OnClick")()
+    if table.getn(shots) ~= 6 or attacks ~= before + 1 then error("another character got the mage's right-click spell") end
+    STUB.UnitName = realName
+    MF:SetRightSpell("")
+    if MF:RightSpell() ~= nil then error("clearing the right-click spell left it set") end
+
     s.mobAttackWith, s.mobRightClick = "melee", "auto"
     STUB.UnitClass, STUB.CastSpellByName, STUB.IsSpellInRange = realClass, realCast, realRange
     STUB.CheckInteractDistance = realClose

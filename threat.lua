@@ -147,6 +147,9 @@ T.defaults = {
   mobClickSpells = false,  -- Shift/Ctrl-click a mob casts these (opt-in)
   mobClickShift = "",
   mobClickCtrl = "",
+  -- A spell right-click casts instead of attacking, PER CHARACTER (a
+  -- mage's Frostbolt is no use to their warrior): "Name-Realm" -> spell.
+  mobRightSpellBy = {},
   mobFramesMin = 2,        -- shown from this many mobs
   mobFramesMax = 8,        -- at most this many rows
   mobFramesWidth = 220,    -- pixels; the name column takes what is left
