@@ -1352,36 +1352,6 @@ step("threat meter", function()
     MF:SetRightSpell("")
     if MF:RightSpell() ~= nil then error("clearing the right-click spell left it set") end
 
-    -- The mob in the world: a hunter's right-click swing becomes Auto Shot.
-    local AS = W.autoshot
-    as = "HUNTER"
-    W.db.hunterAutoShot = true
-    AS.swinging, AS.shooting = false, false
-    inRange, close = 1, false
-    AS:OnEvent("PLAYER_ENTER_COMBAT")
-    if shots[table.getn(shots)] ~= "Auto Shot" then error("a hunter's swing at range did not become Auto Shot") end
-    local n0 = table.getn(shots)
-    AS:OnEvent("START_AUTOREPEAT_SPELL")
-    AS:OnEvent("PLAYER_TARGET_CHANGED")
-    if table.getn(shots) ~= n0 then error("Auto Shot was cast again while repeating") end
-    AS:OnEvent("STOP_AUTOREPEAT_SPELL")
-    AS:OnEvent("PLAYER_LEAVE_COMBAT")
-    inRange, close = 0, true
-    AS:OnEvent("PLAYER_ENTER_COMBAT")
-    if table.getn(shots) ~= n0 then error("inside 8 yards the swing was turned into Auto Shot") end
-    AS:OnEvent("PLAYER_LEAVE_COMBAT")
-    W.db.hunterAutoShot = nil
-    inRange, close = 1, false
-    AS:OnEvent("PLAYER_ENTER_COMBAT")
-    if table.getn(shots) ~= n0 then error("switched off, it still shot") end
-    AS:OnEvent("PLAYER_LEAVE_COMBAT")
-    as = "WARRIOR"
-    W.db.hunterAutoShot = true
-    AS:OnEvent("PLAYER_ENTER_COMBAT")
-    if table.getn(shots) ~= n0 then error("a warrior's swing became Auto Shot") end
-    AS:OnEvent("PLAYER_LEAVE_COMBAT")
-    W.db.hunterAutoShot = nil
-
     s.mobAttackWith, s.mobRightClick = "melee", "auto"
     STUB.UnitClass, STUB.CastSpellByName, STUB.IsSpellInRange = realClass, realCast, realRange
     STUB.CheckInteractDistance = realClose

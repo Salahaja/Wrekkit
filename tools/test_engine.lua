@@ -247,7 +247,6 @@ dofile("talents.lua")
 dofile("prices.lua")
 dofile("ahscan.lua")
 dofile("raidvalue.lua")
-dofile("autoshot.lua")
 
 WrekkitDB = nil
 Wrekkit.InitDB()
