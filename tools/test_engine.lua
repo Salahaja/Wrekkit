@@ -4337,6 +4337,22 @@ check("Raid support ranks the paladin", row and Wrekkit.metrics.Get("support").s
 row = TH.rowOf(view, "value", "Curser")
 check("Raid value drills into the effects", row and row.valueEffect[17937] ~= nil, true)
 
+-- Credited to providers: the curse's share leaves the bolter for the curser.
+local function total(v) local t = 0 for _, r in ipairs(v.rows) do t = t + r.damage end return t end
+local plain = Wrekkit.report:View({ enc }, {})
+local bolterPlain = TH.rowOf(plain, "damage", "Bolter").damage
+Wrekkit.db.valueCredit = true
+local moved = Wrekkit.report:View({ enc }, {})
+local curser = TH.rowOf(moved, "damage", "Curser")
+check("credited: the curser gains what the curse added", curser and curser.damage,
+  TH.rowOf(plain, "damage", "Curser").damage + val("0xLock") - enc.actors["0xLock"].valueGot, 0.01)
+check("the bolter's is less by what others added", TH.rowOf(moved, "damage", "Bolter").damage,
+  bolterPlain - enc.actors["0xLock2"].valueGot + val("0xLock2"), 0.01)
+check("the raid's total does not change", total(moved), total(plain), 0.01)
+check("the drilldown shows the curse as a line", curser and curser.dmgAbility[17937] ~= nil, true)
+check("Judgement of Light's healing moves to its paladin", TH.rowOf(moved, "healing", "Retguy").healing, 61, 0.01)
+Wrekkit.db.valueCredit = nil
+
 -- Switched off, nothing more is counted.
 Wrekkit.db.raidValue = nil
 local total = val("0xLock")

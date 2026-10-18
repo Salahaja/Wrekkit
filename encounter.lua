@@ -93,6 +93,10 @@ local function newActor(guid, u)
     valueMana = 0,
     valueHeal = 0,
     valueSupport = {},  -- spellId -> { name, amount, hits }
+    -- The other side: how much of THIS actor's damage and healing came from
+    -- someone else's effects. "Credit raid value to providers" moves it.
+    valueGot = 0,
+    valueHealGot = 0,
     dispelAbility = {}, -- spellId -> { name, amount = times }
   }
 end
@@ -985,7 +989,7 @@ end
 --[[ Raid value: `amount` of someone's hit that `guid`'s effect added. A
      provider not known (a proc whose owner is not yet learned) is kept on
      the pull as unattributed, so the effect's total is still right. ]]
-function E:Value(guid, spellId, name, amount)
+function E:Value(guid, spellId, name, amount, from)
   local enc = self.live
   if not enc or not amount or amount <= 0 then return end
   local a = guid and self:Actor(guid)
@@ -994,6 +998,8 @@ function E:Value(guid, spellId, name, amount)
     return
   end
   a.valueAdded = (a.valueAdded or 0) + amount
+  local h = from and self:Actor(from)
+  if h then h.valueGot = (h.valueGot or 0) + amount end
   a.valueEffect = a.valueEffect or {}
   local row = abilityRow(a.valueEffect, spellId, name)
   row.amount = row.amount + amount
@@ -1002,7 +1008,7 @@ end
 
 --- Raid support: `amount` of mana ("mana") or health ("heal") that
 --- `guid`'s judgement gave back to someone who hit its mob.
-function E:Support(guid, spellId, name, amount, kind)
+function E:Support(guid, spellId, name, amount, kind, from)
   local enc = self.live
   if not enc or not amount or amount <= 0 then return end
   local a = guid and self:Actor(guid)
@@ -1011,6 +1017,8 @@ function E:Support(guid, spellId, name, amount, kind)
     a.valueMana = (a.valueMana or 0) + amount
   else
     a.valueHeal = (a.valueHeal or 0) + amount
+    local h = from and self:Actor(from)
+    if h then h.valueHealGot = (h.valueHealGot or 0) + amount end
   end
   a.valueSupport = a.valueSupport or {}
   local row = abilityRow(a.valueSupport, spellId, name)
@@ -1791,6 +1799,8 @@ function E:Persist(enc)
       valueAdded = (a.valueAdded or 0) > 0 and a.valueAdded or nil,
       valueMana = (a.valueMana or 0) > 0 and a.valueMana or nil,
       valueHeal = (a.valueHeal or 0) > 0 and a.valueHeal or nil,
+      valueGot = (a.valueGot or 0) > 0 and a.valueGot or nil,
+      valueHealGot = (a.valueHealGot or 0) > 0 and a.valueHealGot or nil,
       -- Packed: the live table is keyed by spell id, this is a string.
       auras = packAuras(a.auras, rec.auraNames),
       dmgAbility = keepDetail and topAbilities(a.dmgAbility, limit) or nil,

@@ -394,7 +394,7 @@ function V:SpellHit(caster, target, spellId, amount, school, crit)
   local extra = amount - amount / product
   for i = 1, n do
     local m = mults[i]
-    W.encounter:Value(m.by, m.id, self.EFFECTS[m.id].name, extra * math.log(1 + m.size) / logs)
+    W.encounter:Value(m.by, m.id, self.EFFECTS[m.id].name, extra * math.log(1 + m.size) / logs, caster)
   end
   -- A flat bonus comes before the multipliers, and is no more than what the
   -- hit had left once they are taken out.
@@ -403,7 +403,7 @@ function V:SpellHit(caster, target, spellId, amount, school, crit)
     local f = flats[i]
     local share = f.size < left and f.size or left
     left = left - share
-    W.encounter:Value(f.by, f.id, self.EFFECTS[f.id].name, share)
+    W.encounter:Value(f.by, f.id, self.EFFECTS[f.id].name, share, caster)
   end
 end
 
@@ -416,7 +416,7 @@ function V:Shield(owner, damage, school)
   for _, id in ipairs(s.ids) do
     if buffs[id] then
       local by = buffProvider(self, s, owner, id)
-      if by and by ~= owner then W.encounter:Value(by, id, s.name, damage) end
+      if by and by ~= owner then W.encounter:Value(by, id, s.name, damage, owner) end
       return
     end
   end
@@ -440,7 +440,7 @@ function V:Restore(target, spellId, amount, kind)
   if not t or now - t.at > TARGET_WINDOW then return end
   for id, d in pairs(self.mob[t.mob] or {}) do
     if self.EFFECTS[id].support == kind then
-      W.encounter:Support(d.by, id, name, amount, kind)
+      W.encounter:Support(d.by, id, name, amount, kind, target)
       return
     end
   end

@@ -150,6 +150,28 @@ local function blankRow(a, key)
   }, lazyDetail)
 end
 
+--[[ "Credit raid value to providers" (W.db.valueCredit): the damage and
+     healing someone's buffs and debuffs added to other people's hits is
+     moved off the hitter and onto the provider, so a Curse of Shadow
+     warlock's damage includes what the curse added to every other warlock.
+     The raid's total does not change. Shown in the provider's drilldown as
+     one line per effect. ]]
+local function valueCredit()
+  return W.db and W.db.valueCredit == true
+end
+
+local function creditedDamage(a)
+  local d = a.damage or 0
+  if valueCredit() then d = d + (a.valueAdded or 0) - (a.valueGot or 0) end
+  return d
+end
+
+local function creditedHealing(a)
+  local h = a.healing or 0
+  if valueCredit() then h = h + (a.valueHeal or 0) - (a.valueHealGot or 0) end
+  return h
+end
+
 local function addAbilities(dst, src)
   eachAbility(src, function(id, row)
     local d = dst[id]
@@ -237,6 +259,20 @@ local function addAuras(row, auras, enc)
   end
 end
 
+-- The provider's side of valueCredit, in the drilldowns: each effect's
+-- worth as its own line, so the total still adds up.
+local function addCredited(row, a)
+  if not valueCredit() then return end
+  if (a.valueAdded or 0) > 0 then addAbilities(row.dmgAbility, a.valueEffect) end
+  if (a.valueHeal or 0) > 0 then
+    local heals = {}
+    eachAbility(a.valueSupport, function(id, r)
+      if r.name == "Judgement of Light" then heals[id] = r end
+    end)
+    addAbilities(row.healAbility, heals)
+  end
+end
+
 --[[ A row's detail -- its buffs and its per-ability tables -- is built
      the first time something asks for it, not with the row.
 
@@ -271,6 +307,7 @@ lazyDetail.__index = function(row, k)
     addAbilities(row.dispelAbility, a.dispelAbility)
     addAbilities(row.valueEffect, a.valueEffect)
     addAbilities(row.valueSupport, a.valueSupport)
+    addCredited(row, a)
   end
   return row[k]
 end
@@ -288,6 +325,7 @@ local function addDetail(row, a, enc)
       addAbilities(row.dispelAbility, a.dispelAbility)
       addAbilities(row.valueEffect, a.valueEffect)
       addAbilities(row.valueSupport, a.valueSupport)
+      addCredited(row, a)
       return
     end
     src = {}
@@ -390,9 +428,9 @@ function R:View(encounters, opts)
         table.insert(view.rows, row)
       end
 
-      row.damage = row.damage + (a.damage or 0)
+      row.damage = row.damage + creditedDamage(a)
       row.taken = row.taken + (a.taken or 0)
-      row.healing = row.healing + (a.healing or 0)
+      row.healing = row.healing + creditedHealing(a)
       row.overheal = row.overheal + (a.overheal or 0)
       row.absorbed = row.absorbed + (a.absorbed or 0)
       row.deaths = row.deaths + (a.deaths or 0)
@@ -424,8 +462,8 @@ function R:View(encounters, opts)
         mine = { damage = 0, healing = 0, taken = 0 }
         encLocal[key] = mine
       end
-      mine.damage = mine.damage + (a.damage or 0)
-      mine.healing = mine.healing + (a.healing or 0)
+      mine.damage = mine.damage + creditedDamage(a)
+      mine.healing = mine.healing + creditedHealing(a)
       mine.taken = mine.taken + (a.taken or 0)
 
       -- Buff uptime sums across pulls the same way damage does, so "flask
@@ -1136,7 +1174,7 @@ function Cache:Get(slot, optsKey, encounters, make)
     self.slots[slot] = nil
     return make()
   end
-  local basis = (W.db and W.db.dpsBasis) or "combat"
+  local basis = ((W.db and W.db.dpsBasis) or "combat") .. (valueCredit() and "+credit" or "")
   local c = self.slots[slot]
   if c and c.gen == R.gen and c.sum == sum and c.opts == optsKey
      and c.basis == basis and sameList(c.list, encounters) then

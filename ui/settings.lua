@@ -494,6 +494,19 @@ function S:Create()
       "health judgements give back, 'Raid support'",
       "under Healing." })
 
+  check(self, "Credit raid value to providers",
+    function() return W.db.valueCredit == true end,
+    function(v)
+      W.db.valueCredit = v and true or nil
+      meter:Refresh()
+      if UI.report and UI.report.frame then UI.report:Refresh() end
+    end,
+    { "Moves what those effects added onto the",
+      "provider's own damage and healing: the curse's",
+      "share of every warlock's bolts is the curser's.",
+      "Off, the hitter keeps it. The raid total is the",
+      "same either way. Needs Raid value recording." })
+
   choice(self, "Per-second basis",
     {
       { value = "combat", label = "combat time" },
