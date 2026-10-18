@@ -22,6 +22,7 @@ talents.lua
 prices.lua
 ahscan.lua
 raidvalue.lua
+autoshot.lua
 
 ui\widgets.lua
 ui\chart.lua
