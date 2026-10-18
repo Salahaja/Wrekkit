@@ -480,6 +480,56 @@ function S:Create()
       "with which spell, to whom. Costs storage:",
       "the busiest 60 seconds of each fight." })
 
+  -- Off until wanted: it looks at every spell hit.
+  check(self, "Raid value",
+    function() return W.db.raidValue == true end,
+    function(v)
+      W.db.raidValue = v and true or nil
+      if W.value then W.value:Apply() end
+    end,
+    { "What buffs and debuffs add to others' damage:",
+      "auras, curses, judgements, Shadow Weaving,",
+      "Nightfall, Thorns -- credited to who provides",
+      "them. 'Raid value' under Damage; the mana and",
+      "health judgements give back, 'Raid support'",
+      "under Healing." })
+
+  check(self, "Credit raid value to providers",
+    function() return W.db.valueCredit == true end,
+    function(v)
+      W.db.valueCredit = v and true or nil
+      meter:Refresh()
+      if UI.report and UI.report.frame then UI.report:Refresh() end
+    end,
+    { "Moves what those effects added onto the",
+      "provider's own damage and healing: the curse's",
+      "share of every warlock's bolts is the curser's.",
+      "Off, the hitter keeps it. The raid total is the",
+      "same either way. Needs Raid value recording." })
+
+  -- Experimental: the effects whose worth can only be estimated.
+  check(self, "Estimated effects (experimental)",
+    function() return W.db.raidValueEstimates == true end,
+    function(v) W.db.raidValueEstimates = v and true or nil end,
+    { "Adds to Raid value what has no exact math:",
+      "Sunder, Expose Armor, Faerie Fire, Curse of",
+      "Recklessness, Annihilator (armor, assuming a",
+      "raid boss's), Battle Shout, Might, Trueshot,",
+      "Hunter's Mark, Leader of the Pack. Each shows",
+      "as (est.). Windfury is exact and always in." })
+
+  choice(self, "Announce raid value",
+    {
+      { value = "combined", label = "each effect's total" },
+      { value = "individual", label = "and who added it" },
+    },
+    function() return W.db.valueAnnounce or "combined" end,
+    function(v) W.db.valueAnnounce = (v == "individual") and "individual" or nil end,
+    { "Announcing Raid value or Raid support posts",
+      "what each effect added. Its total, and how many",
+      "players built it -- or each one's share, as in",
+      "Sunder 60k: Wiredbro 40k, Manner 20k." })
+
   choice(self, "Per-second basis",
     {
       { value = "combat", label = "combat time" },

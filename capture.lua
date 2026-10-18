@@ -84,6 +84,8 @@ C.events = {
   "AUTO_ATTACK_SELF", "AUTO_ATTACK_OTHER",
   "SPELL_DAMAGE_EVENT_SELF", "SPELL_DAMAGE_EVENT_OTHER",
   "SPELL_HEAL_BY_SELF", "SPELL_HEAL_BY_OTHER", "SPELL_HEAL_ON_SELF",
+  -- BY_ only: ON_SELF repeats BY_SELF when you restore yourself.
+  "SPELL_ENERGIZE_BY_SELF", "SPELL_ENERGIZE_BY_OTHER",
   "SPELL_MISS_SELF", "SPELL_MISS_OTHER",
   "SPELL_DISPEL_BY_SELF", "SPELL_DISPEL_BY_OTHER",
   "DAMAGE_SHIELD_SELF", "DAMAGE_SHIELD_OTHER",
@@ -91,6 +93,9 @@ C.events = {
   "SPELL_GO_SELF", "SPELL_GO_OTHER",
   -- Enemy cast bars in the mob window: a cast starting, and one failing.
   "SPELL_START_OTHER", "SPELL_FAILED_OTHER",
+  -- Raid value (W.value, off unless switched on): debuffs on mobs, and who
+  -- cast the auras behind them (NP_EnableAuraCastEvents, set when it is on).
+  "DEBUFF_ADDED_OTHER", "DEBUFF_REMOVED_OTHER", "AURA_CAST_ON_OTHER",
   "UNIT_DIED",
 
   -- Buffs. Edge-triggered by nampower: these fire when something is gained
@@ -145,8 +150,15 @@ C.rosterClass = {}
 --- filter would keep counting someone long after they left the raid.
 C.groupMembers = {}
 
+--- A group member's raid subgroup (1 for everyone in a party), or nil.
+C.subgroups = {}
+function C:Subgroup(name)
+  return name and self.subgroups[name]
+end
+
 function C:ScanRoster()
   local fresh = {}
+  local groups = {}
 
   local me = UnitName("player")
   local _, myToken = UnitClass("player")
@@ -158,10 +170,11 @@ function C:ScanRoster()
   local n = GetNumRaidMembers()
   if n and n > 0 then
     for i = 1, n do
-      local name, _, _, _, _, fileName = GetRaidRosterInfo(i)
+      local name, _, subgroup, _, _, fileName = GetRaidRosterInfo(i)
       if name then
         if fileName then self.rosterClass[name] = fileName end
         fresh[name] = true
+        groups[name] = subgroup
       end
     end
   else
@@ -177,7 +190,12 @@ function C:ScanRoster()
     end
   end
 
+  -- Not in a raid: a party is one group.
+  if not (GetNumRaidMembers() and GetNumRaidMembers() > 0) then
+    for name in pairs(fresh) do groups[name] = 1 end
+  end
   self.groupMembers = fresh
+  self.subgroups = groups
   self:PruneBuffs()
 end
 
@@ -594,6 +612,7 @@ function C:AUTO_ATTACK(attacker, target, damage, hitInfo, victimState, _, blocke
   info.resisted = num(resisted)
   info.school = nil
   W.encounter:Damage(attacker, target, 0, damage, info)
+  if W.value then W.value:Swing(attacker, target, damage, info.crit) end
 end
 
 function C:SPELL_DAMAGE(target, caster, spellId, amount, mitigationStr, hitInfo, school, effectAuraStr)
@@ -609,6 +628,7 @@ function C:SPELL_DAMAGE(target, caster, spellId, amount, mitigationStr, hitInfo,
   info.resisted = resisted
   info.school = num(school)
   W.encounter:Damage(caster, target, num(spellId), amount, info)
+  if W.value then W.value:SpellHit(caster, target, num(spellId), amount, info.school, info.crit) end
 end
 
 function C:SPELL_HEAL(target, caster, spellId, amount, critical, periodic)
@@ -619,6 +639,13 @@ function C:SPELL_HEAL(target, caster, spellId, amount, critical, periodic)
   info.crit = num(critical) == 1
   info.periodic = num(periodic) == 1
   W.encounter:Heal(caster, target, num(spellId), effective, over, info)
+  if W.value then W.value:Restore(target, num(spellId), effective, "heal") end
+end
+
+-- Mana and the like given back: only raid value reads it (Judgement of
+-- Wisdom), so nothing is kept unless that is on.
+function C:SPELL_ENERGIZE(target, caster, spellId, powerType, amount)
+  if W.value and num(powerType) == 0 then W.value:Restore(target, num(spellId), num(amount), "mana") end
 end
 
 ----------------------------------------------------------------------
@@ -811,6 +838,7 @@ function C:DAMAGE_SHIELD(shieldOwner, attacker, damage, school)
   -- A damage shield (Retribution Aura, Thorns) never crits.
   info.canCrit = false
   W.encounter:Damage(shieldOwner, attacker, 0, damage, info)
+  if W.value then W.value:Shield(shieldOwner, damage, info.school) end
 end
 
 function C:ENVIRONMENTAL(unit, damageType, damage, absorb, resist)
@@ -928,6 +956,7 @@ function C:SPELL_GO(itemId, spellId, casterGuid, targetGuid)
   -- Every cast: a deep-talent ability says what the caster is specced.
   if W.talents then W.talents:OnCast(casterGuid, spellId) end
   spellId = num(spellId)
+  if W.value then W.value:SpellGo(spellId, casterGuid, targetGuid) end
   local item = self:ConsumableItem(num(itemId), spellId, casterGuid)
   if not item then return end
   -- Its buff got here first and was counted for it: the same use.
@@ -961,17 +990,25 @@ dispatch.SPELL_HEAL_BY_OTHER = dispatch.SPELL_HEAL_BY_SELF
 -- HEAL_ON_SELF can duplicate HEAL_BY_SELF when you heal yourself; the
 -- aggregator de-dupes on (caster, target, spell, amount) within a tick.
 dispatch.SPELL_HEAL_ON_SELF = dispatch.SPELL_HEAL_BY_SELF
+-- SPELL_ENERGIZE_BY_*(target, caster, spellId, powerType, amount, periodic)
+dispatch.SPELL_ENERGIZE_BY_SELF = function(a1, a2, a3, a4, a5) C:SPELL_ENERGIZE(a1, a2, a3, a4, a5) end
+dispatch.SPELL_ENERGIZE_BY_OTHER = dispatch.SPELL_ENERGIZE_BY_SELF
 
 -- BUFF_ADDED/REMOVED_*(guid, luaSlot, spellId, stackCount, auraLevel,
 -- auraSlot, state), as ChronicleCompanion documents them. luaSlot follows
 -- UnitBuff ordering and shifts as other buffs come and go; auraSlot is the
 -- raw slot and stays put for as long as the aura does, so instances are
 -- keyed by that.
+-- The client sometimes files a mob's debuff under its BUFFS (Nightfall,
+-- Judgement of the Crusader, Shadow Weaving on 10/17): raid value takes
+-- those too, as the debuffs they are.
 local function buffOn(a1, a2, a3, a4, a5, a6, a7)
   C:Buff(a1, a6, a3, true, a7)
+  if W.value then W.value:MobAura(a1, num(a3), a6, a4, true, a7) end
 end
 local function buffOff(a1, a2, a3, a4, a5, a6, a7)
   C:Buff(a1, a6, a3, false, a7)
+  if W.value then W.value:MobAura(a1, num(a3), a6, a4, false, a7) end
 end
 
 dispatch.BUFF_ADDED_SELF = buffOn
@@ -1063,10 +1100,24 @@ dispatch.SPELL_START_OTHER = function(a1, a2, a3, a4, a5, a6, a7, a8)
 end
 dispatch.SPELL_FAILED_OTHER = function(a1) C:CastEnd(a1) end
 
+-- DEBUFF_ADDED/REMOVED_OTHER have the buffs' shape: (guid, luaSlot, spellId,
+-- stackCount, auraLevel, auraSlot, state). Only raid value reads them.
+dispatch.DEBUFF_ADDED_OTHER = function(a1, a2, a3, a4, a5, a6, a7)
+  if W.value then W.value:DebuffOn(a1, num(a3), a6, a4) end
+end
+dispatch.DEBUFF_REMOVED_OTHER = function(a1, a2, a3, a4, a5, a6, a7)
+  if W.value then W.value:DebuffOff(a1, num(a3), a6, a7) end
+end
+-- AURA_CAST_ON_OTHER(spellId, casterGuid, targetGuid, ...)
+dispatch.AURA_CAST_ON_OTHER = function(a1, a2, a3)
+  if W.value then W.value:AuraCast(num(a1), a2, a3) end
+end
+
 dispatch.UNIT_DIED = function(a1)
   W.encounter:Death(a1)
   C:ClearBuffs(a1)
   C.casts[a1] = nil
+  if W.value then W.value:Died(a1) end
   -- So tank mode can tell a mob that died from one that turned away.
   if W.threat then W.threat:OnUnitDied(a1) end
 end

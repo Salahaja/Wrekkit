@@ -151,6 +151,87 @@ function A:DrillLines(ctx, view, count)
   return out
 end
 
+--[[ Raid value and Raid support, announced by EFFECT rather than by player:
+     what Sunder, the curses, Windfury... added over the pulls on show.
+
+     Several players often build one effect -- warriors stacking Sunder,
+     priests stacking Shadow Weaving, warlocks taking turns on a curse -- so
+     W.db.valueAnnounce picks how it is told:
+       combined     (the default) each effect's total and how many players
+                    built it, no names: nobody is singled out for an effect
+                    the raid made together
+       individual   each effect's total, then who added how much of it
+     Estimates say so, as they do on screen. ]]
+local NAMES_PER_LINE = 4
+
+local function supportUnit(name)
+  if name == "Judgement of Wisdom" then return " mana" end
+  return " healing"
+end
+
+function A:ValueLines(ctx, view, count, key)
+  local rows, metric = W.report:Rank(view, key, ctx.filter)
+  local detailKey = (key == "support") and "valueSupport" or "valueEffect"
+  local byName, order = {}, {}
+  for _, r in ipairs(rows) do
+    local who = r.name or "?"
+    W.report.eachAbility(r[detailKey], function(id, a)
+      local amount = a.amount or 0
+      if amount > 0 and a.name then
+        local e = byName[a.name]
+        if not e then
+          e = { name = a.name, total = 0, players = {} }
+          byName[a.name] = e
+          table.insert(order, e)
+        end
+        e.total = e.total + amount
+        table.insert(e.players, { name = who, amount = amount })
+      end
+    end)
+  end
+  table.sort(order, function(x, y) return x.total > y.total end)
+
+  local individual = W.db and W.db.valueAnnounce == "individual"
+  local out = {
+    string.format("Wrekkit  %s by effect - %s (%s)%s", W.metrics.Label(metric),
+      ctx.label or "?", W.Duration(view.rateBase), filterNote(ctx)),
+  }
+  if table.getn(order) == 0 then
+    table.insert(out, "  nothing recorded")
+    return out
+  end
+
+  local estimated = false
+  for i = 1, count do
+    local e = order[i]
+    if not e then break end
+    if string.find(e.name, "(est.)", 1, true) then estimated = true end
+    local unit = (key == "support") and supportUnit(e.name) or ""
+    local n = table.getn(e.players)
+    if individual then
+      table.sort(e.players, function(x, y) return x.amount > y.amount end)
+      local who = {}
+      for j = 1, NAMES_PER_LINE do
+        local pl = e.players[j]
+        if not pl then break end
+        table.insert(who, pl.name .. " " .. W.Short(pl.amount))
+      end
+      if n > NAMES_PER_LINE then table.insert(who, "+" .. (n - NAMES_PER_LINE) .. " more") end
+      table.insert(out, string.format("%d. %s  %s%s: %s", i, e.name, W.Short(e.total), unit,
+        table.concat(who, ", ")))
+    else
+      table.insert(out, string.format("%d. %s  %s%s  (%d player%s)", i, e.name, W.Short(e.total),
+        unit, n, n == 1 and "" or "s"))
+    end
+  end
+  local extra = table.getn(order) - count
+  if extra > 0 then
+    table.insert(out, string.format("  ...and %d more", extra))
+  end
+  if estimated then table.insert(out, "  (est.) = estimated") end
+  return out
+end
+
 function A:Lines(ctx, count)
   count = count or (W.db and W.db.announceCount) or 5
   if count > MAX_LINES then count = MAX_LINES end
@@ -171,6 +252,11 @@ function A:Lines(ctx, count)
   if ctx.drill then
     local drilled = self:DrillLines(ctx, view, count)
     if drilled then return drilled end
+  end
+
+  -- Raid value and support say what each effect added, not who ranked.
+  if table.getn(metrics) == 1 and (metrics[1] == "value" or metrics[1] == "support") then
+    return self:ValueLines(ctx, view, count, metrics[1])
   end
 
   local out = {}

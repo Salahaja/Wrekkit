@@ -1,23 +1,26 @@
-**Enemy cast bars and more control over the mob window, all behind settings.**
+**Raid value: what each player's buffs and debuffs add to everyone else's damage, so a comp or a gear choice can be weighed in numbers.**
 
-Everything new here starts **off**, or as it was, and lives in Settings → Frames & plates → Mob frames.
+Everything new here starts **off**, and lives in Settings → Recording.
 
 ## New
-- **Enemy cast bars** (off until turned on): while a mob casts, a bar shows the spell, its icon and the time left. Gold fills for a cast, and green drains for a channel. It ends the moment the cast lands, is interrupted or the mob dies. Needs Nampower.
-  - **Cast bar:** over the row, inside the window (default), or beside it at a width you set (40–200px).
-  - **Cast bar covers:** who the mob is on (the right part), or everything after its name.
-- **Shift/Ctrl-click spells on mobs** (off until turned on): set a spell for Shift-click and one for Ctrl-click, picked from your spellbook. Clicking a mob's row casts it on that mob. With SuperWoW your target stays put.
-- **Row layout:** split 60/40 (as before), or the mob's name full width, with the player it's hitting as a short tag by the %.
-
-## Changed
-- **The player side of a mob's row is now opt-in.** That's clicking the player a mob is on to heal or target them. While it's off, the whole row acts on the mob. If you had set a player click spell, it stays on for you.
+- **Raid value** (off until turned on): checked per hit, against the attacker's own buffs and the target mob's own debuffs, and credited to whoever provides them, never to the hitter. A new **Raid value** metric sits under Damage, and its drilldown shows which effect added how much.
+  - **Spells:** Sanctity Aura, Power Infusion, Curse of Shadow and of the Elements, Improved Shadow Bolt, Shadow Weaving and Fire Vulnerability (per stack), Nightfall, and Judgement of the Crusader.
+  - **Damage shields:** Retribution Aura goes to the group's paladin, Thorns to the druid who cast it.
+  - **Melee:** Windfury Totem's extra swings go to the group's shaman. Expose Weakness is counted too.
+  - **Stacking debuffs** (Sunder, Shadow Weaving, Fire Vulnerability, Annihilator) are split between everyone who applied them.
+- **Raid support** (under Healing): the mana and health Judgement of Wisdom and Judgement of Light give back, credited to the paladin.
+- **Credit raid value to providers** (off): moves those bonuses into the providers' own damage and healing. The raid total stays the same.
+- **Estimated effects (experimental)** (off): adds the effects with no exact math, each marked "(est.)":
+  - Sunder Armor, Expose Armor, Faerie Fire, Curse of Recklessness, Annihilator. These use the mob's own armor, read from the game where it can be read, and learned by name.
+  - Battle Shout, Blessing of Might, Trueshot Aura, Hunter's Mark and Leader of the Pack.
+- **Announcing raid value** posts what each effect added. Pick **each effect's total** (the default: how many players built it, no names), or **and who added it** (each player's share, e.g. "Sunder Armor (est.) 60k: Wiredbro 40k, Manner 20k").
 
 ## Install
 
-Download `Wrekkit-0.9.25.zip` and extract it into `<your client>\Interface\AddOns\`. You should end up with `Interface\AddOns\Wrekkit\Wrekkit.toc`. Do **not** use the "Source code" links. Coming from 0.9.18 or earlier, **fully restart the client**; from 0.9.19 or later a `/reload` is enough. `/wrek status` should then report **v0.9.25**.
+Download `Wrekkit-0.9.26.zip` and extract it into `<your client>\Interface\AddOns\`. You should end up with `Interface\AddOns\Wrekkit\Wrekkit.toc`. Do **not** use the "Source code" links. Coming from 0.9.18 or earlier, **fully restart the client**; from 0.9.19 or later a `/reload` is enough. `/wrek status` should then report **v0.9.26**.
 
 ## Requirements
 
-- **Nampower** is required for the damage meter, the report, the per-raid files and the cast bars. The threat meter itself works without it.
+- **Nampower** is required for the damage meter, the report, the per-raid files, the cast bars and raid value. The threat meter itself works without it.
 - **SuperWoW** is recommended.
 - **aux** for consumable prices (optional).

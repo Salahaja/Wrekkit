@@ -810,8 +810,8 @@ end
      at. A metric not named here still appears, under "Other", so adding
      one to W.metrics can never make it unreachable. ]]
 local METRIC_GROUPS = {
-  { "Damage", { "damage", "dps", "crit" } },
-  { "Healing", { "healing", "hps", "healingTotal", "overheal", "healCrit" } },
+  { "Damage", { "damage", "dps", "crit", "value" } },
+  { "Healing", { "healing", "hps", "healingTotal", "overheal", "healCrit", "support" } },
   { "Survival", { "taken", "absorbed", "deaths" } },
   { "Utility", { "dispels", "interrupts", "consumes", "consumeCost", "uptime" } },
   { "Enemies", { "enemy", "enemyTaken" } },

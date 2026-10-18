@@ -246,6 +246,7 @@ dofile("threat.lua")
 dofile("talents.lua")
 dofile("prices.lua")
 dofile("ahscan.lua")
+dofile("raidvalue.lua")
 
 WrekkitDB = nil
 Wrekkit.InitDB()
@@ -2798,8 +2799,11 @@ Wrekkit.db.trackAuras = nil
 Wrekkit.capture.buffs = {}
 TH.setRaid({ "Fuff", "Elfpriest", "Moorhunt" })
 
-check("debuffs are not followed: nothing shows them",
-  Wrekkit.capture.dispatch.DEBUFF_ADDED_OTHER, nil)
+-- Debuffs are followed only for Raid value, and only while it is on.
+Wrekkit.db.raidValue = nil
+Wrekkit.value.mob = {}
+fire("DEBUFF_ADDED_OTHER", "0xBoss", 1, 17937, 1, 60, 5, 0)
+check("debuffs are not followed while Raid value is off", next(Wrekkit.value.mob), nil)
 
 -- The flask goes on BEFORE the pull, as it always does.
 fire("BUFF_ADDED_SELF", "0xP1", 1, 17628, 1, 60, 3, 0)
@@ -4205,6 +4209,272 @@ check("your own spec comes from the talent API", TL:Describe(UnitName("player"))
 GetTalentTabInfo = realTab
 TL.specs, TL.pending, TL.queue, TL.asking = {}, {}, {}, nil
 end
+
+----------------------------------------------------------------------
+print("\n-- raid value --")
+----------------------------------------------------------------------
+;(function()
+Wrekkit.ResetData("all")
+local V = Wrekkit.value
+V.mob, V.lastCast, V.buffBy, V.lastJudge, V.lastHit, V.lastTarget = {}, {}, {}, {}, {}, {}
+V.lastShadowCrit, V.recentMelee, V.procScore, V.partyCache = {}, {}, {}, {}
+Wrekkit.capture.buffs = {}
+local realInfo = SpellInfo
+SpellInfo = function(id)
+  if id == 20271 then return "Judgement", nil, "x" end
+  if id == 51750 then return "Judgement of Wisdom", "Rank 5", "x" end
+  if id == 20343 then return "Judgement of Light", "Rank 4", "x" end
+  return realInfo(id)
+end
+defPlayer("0xLock", "Curser", "WARLOCK")
+defPlayer("0xLock2", "Bolter", "WARLOCK")
+defPlayer("0xPri", "Weaver", "PRIEST")
+defPlayer("0xMage", "Scorcher", "MAGE")
+defPlayer("0xPal", "Holyguy", "PALADIN")
+defPlayer("0xPal2", "Retguy", "PALADIN")
+defPlayer("0xWar", "Tanky", "WARRIOR", 6000)
+defPlayer("0xDru", "Barky", "DRUID")
+defPlayer("0xHoly", "Farpriest", "PRIEST")
+for _, g in ipairs({ "0xV1", "0xV2", "0xV3", "0xV4", "0xV5", "0xV6" }) do defNPC(g, "Target " .. g, 1000000) end
+TH.setRaid({ "Curser", "Bolter", "Weaver", "Scorcher", "Holyguy", "Retguy", "Tanky", "Barky", "Farpriest" })
+Wrekkit.capture.subgroups = { Curser = 1, Bolter = 1, Weaver = 1, Scorcher = 1, Holyguy = 1,
+  Retguy = 1, Tanky = 1, Barky = 1, Farpriest = 2 }
+
+Wrekkit.db.raidValue = true
+IN_COMBAT = true
+fire("PLAYER_REGEN_DISABLED")
+local enc = Wrekkit.encounter.live
+local function val(g) local a = enc.actors[g] return a and a.valueAdded or 0 end
+local function eff(g, id) local a = enc.actors[g] local r = a and a.valueEffect[id] return r and r.amount or 0 end
+local function hit(target, caster, id, amount, school, info)
+  fire("SPELL_DAMAGE_EVENT_OTHER", target, caster, id, amount, "0,0,0", info or 0, school)
+end
+
+-- A curse goes to whoever cast it, from another warlock's Shadow Bolt.
+fire("AURA_CAST_ON_OTHER", 17937, "0xLock", "0xV1")
+fire("DEBUFF_ADDED_OTHER", "0xV1", 1, 17937, 1, 60, 5, 0)
+hit("0xV1", "0xLock2", 11661, 1100, 5)
+check("Curse of Shadow credits its caster", val("0xLock"), 100, 0.01)
+check("not the warlock who hit", val("0xLock2"), 0)
+
+-- Shadow Weaving: the priest whose shadow spell just hit, per stack.
+advance(3)
+hit("0xV1", "0xPri", 10894, 500, 5)
+fire("DEBUFF_ADDED_OTHER", "0xV1", 2, 15258, 2, 60, 6, 0)
+hit("0xV1", "0xLock2", 11661, 1166, 5)
+-- 1.10 x 1.06: 166 extra, split by log(1.10) : log(1.06).
+-- (the priest's own 500 was cursed too: 45.45 of it)
+check("two effects split the extra: the curse", eff("0xLock", 17937), 145.45 + 166 * 0.09531 / (0.09531 + 0.05827), 0.05)
+check("and two stacks of Shadow Weaving", eff("0xPri", 15258), 166 * 0.05827 / (0.09531 + 0.05827), 0.05)
+
+-- Improved Shadow Bolt: the warlock whose Shadow Bolt just crit.
+hit("0xV2", "0xLock2", 11661, 2000, 5, 2)
+fire("DEBUFF_ADDED_OTHER", "0xV2", 1, 17794, 4, 60, 5, 0)
+hit("0xV2", "0xLock", 11661, 1200, 5)
+check("Shadow Vulnerability goes to the critter", eff("0xLock2", 17794), 200, 0.01)
+
+-- Power Infusion on the mage, and their own Fire Vulnerability.
+fire("AURA_CAST_ON_OTHER", 10060, "0xPri", "0xMage")
+fire("BUFF_ADDED_OTHER", "0xMage", 5, 10060, 1, 60, 7, 0)
+hit("0xV3", "0xMage", 10207, 600, 2)
+fire("DEBUFF_ADDED_OTHER", "0xV3", 1, 22959, 5, 60, 5, 0)
+check("PI credits the priest who cast it", eff("0xPri", 10060), 100, 0.01)
+hit("0xV3", "0xMage", 10207, 1380, 2)
+check("PI's share beside 5 stacks of Fire Vulnerability", eff("0xPri", 10060), 100 + 380 * 0.18232 / (0.18232 + 0.13976), 0.05)
+check("Fire Vulnerability goes to the mage", eff("0xMage", 22959), 380 * 0.13976 / (0.18232 + 0.13976), 0.05)
+
+-- Sanctity: only for the paladin's own group.
+fire("BUFF_ADDED_OTHER", "0xPal", 1, 20218, 1, 60, 1, 0)
+fire("BUFF_ADDED_OTHER", "0xPal2", 1, 20218, 1, 60, 1, 0)
+fire("BUFF_ADDED_OTHER", "0xHoly", 1, 20218, 1, 60, 1, 0)
+hit("0xV4", "0xPal2", 20293, 1100, 1)
+check("Sanctity credits a paladin who has it", val("0xPal") + val("0xPal2"), 100, 0.01)
+local before = val("0xPal") + val("0xPal2")
+hit("0xV4", "0xHoly", 15261, 1100, 1)
+check("not a paladin of another group", val("0xPal") + val("0xPal2"), before, 0.01)
+check("which is kept unattributed", enc.valueUnknown, 100, 0.01)
+
+-- Judgement of the Crusader: a flat 140 Holy, to the judging paladin.
+fire("SPELL_GO_OTHER", 0, 20271, "0xPal", "0xV5")
+fire("DEBUFF_ADDED_OTHER", "0xV5", 1, 20303, 1, 60, 5, 0)
+local palBefore = val("0xPal")
+hit("0xV5", "0xPri", 15261, 600, 1)
+check("Crusader adds its flat 140", val("0xPal") - palBefore, 140, 0.01)
+hit("0xV5", "0xPri", 15261, 90, 1)
+check("never more than the hit", val("0xPal") - palBefore, 230, 0.01)
+
+-- Damage shields go to the provider, never to the wearer.
+fire("BUFF_ADDED_OTHER", "0xWar", 2, 10301, 1, 60, 2, 0)
+fire("BUFF_ADDED_OTHER", "0xPal", 2, 10301, 1, 60, 2, 0)
+V.partyCache = {}
+fire("DAMAGE_SHIELD_OTHER", "0xWar", "0xV6", 20, 1)
+check("Retribution Aura on a groupmate", eff("0xPal", 10301), 20, 0.01)
+fire("DAMAGE_SHIELD_OTHER", "0xPal", "0xV6", 20, 1)
+check("not on the paladin themselves", eff("0xPal", 10301), 20, 0.01)
+fire("AURA_CAST_ON_OTHER", 9910, "0xDru", "0xWar")
+fire("BUFF_ADDED_OTHER", "0xWar", 3, 9910, 1, 60, 3, 0)
+fire("DAMAGE_SHIELD_OTHER", "0xWar", "0xV6", 18, 3)
+check("Thorns credits the druid", eff("0xDru", 9910), 18, 0.01)
+
+-- Judgement of Wisdom and Light: what the hitter got back, as support.
+fire("SPELL_GO_OTHER", 0, 20271, "0xPal", "0xV6")
+fire("DEBUFF_ADDED_OTHER", "0xV6", 1, 51752, 1, 60, 5, 0)
+fire("SPELL_GO_OTHER", 0, 20271, "0xPal2", "0xV6")
+fire("DEBUFF_ADDED_OTHER", "0xV6", 2, 20346, 1, 60, 6, 0)
+fire("SPELL_DAMAGE_EVENT_OTHER", "0xWar", "0xV6", 25231, 1000, "0,0,0", 0, 0)
+fire("AUTO_ATTACK_OTHER", "0xWar", "0xV6", 400, 2, 0, 1, 0, 0, 0)
+fire("SPELL_ENERGIZE_BY_OTHER", "0xWar", "0xWar", 51750, 0, 59, 0)
+fire("SPELL_HEAL_BY_OTHER", "0xWar", "0xWar", 20343, 61, 0, 0)
+fire("SPELL_HEAL_ON_SELF", "0xWar", "0xWar", 20343, 61, 0, 0)
+check("Judgement of Wisdom: mana to its paladin", enc.actors["0xPal"].valueMana, 59)
+check("Judgement of Light: health, counted once", enc.actors["0xPal2"].valueHeal, 61)
+fire("SPELL_ENERGIZE_BY_OTHER", "0xWar", "0xWar", 51750, 1, 10, 0)
+check("rage is not mana", enc.actors["0xPal"].valueMana, 59)
+
+local view = Wrekkit.report:View({ enc }, {})
+local row = TH.rowOf(view, "support", "Holyguy")
+check("Raid support ranks the paladin", row and Wrekkit.metrics.Get("support").sub(row), "59 mana")
+row = TH.rowOf(view, "value", "Curser")
+check("Raid value drills into the effects", row and row.valueEffect[17937] ~= nil, true)
+
+-- Credited to providers: the curse's share leaves the bolter for the curser.
+local function total(v) local t = 0 for _, r in ipairs(v.rows) do t = t + r.damage end return t end
+local plain = Wrekkit.report:View({ enc }, {})
+local bolterPlain = TH.rowOf(plain, "damage", "Bolter").damage
+Wrekkit.db.valueCredit = true
+local moved = Wrekkit.report:View({ enc }, {})
+local curser = TH.rowOf(moved, "damage", "Curser")
+check("credited: the curser gains what the curse added", curser and curser.damage,
+  TH.rowOf(plain, "damage", "Curser").damage + val("0xLock") - enc.actors["0xLock"].valueGot, 0.01)
+check("the bolter's is less by what others added", TH.rowOf(moved, "damage", "Bolter").damage,
+  bolterPlain - enc.actors["0xLock2"].valueGot + val("0xLock2"), 0.01)
+check("the raid's total does not change", total(moved), total(plain), 0.01)
+check("the drilldown shows the curse as a line", curser and curser.dmgAbility[17937] ~= nil, true)
+check("Judgement of Light's healing moves to its paladin", TH.rowOf(moved, "healing", "Retguy").healing, 61, 0.01)
+Wrekkit.db.valueCredit = nil
+
+-- PHYSICAL. Windfury: the swing in the same moment as the proc is the
+-- totem's, credited to the shaman in the hitter's group.
+defPlayer("0xSham", "Totemguy", "SHAMAN")
+Wrekkit.capture.subgroups.Totemguy = 1
+Wrekkit.capture.units["0xSham"] = nil
+Wrekkit.capture:Unit("0xSham")
+fire("SPELL_GO_OTHER", 0, 8512, "0xSham", "0xSham")
+fire("SPELL_GO_OTHER", 0, 51368, "0xWar", "0xWar")
+fire("AUTO_ATTACK_OTHER", "0xWar", "0xV6", 900, 2, 0, 1, 0, 0, 0)
+check("Windfury's extra swing goes to the shaman", eff("0xSham", 51368), 900)
+advance(0.2)
+fire("AUTO_ATTACK_OTHER", "0xWar", "0xV6", 900, 2, 0, 1, 0, 0, 0)
+check("only that swing", eff("0xSham", 51368), 900)
+
+-- Estimates are off until asked for: armor and attack power count nothing.
+
+defNPC("0xV7", "Armored", 1000000)
+fire("AURA_CAST_ON_OTHER", 11597, "0xWar", "0xV7")
+fire("DEBUFF_ADDED_OTHER", "0xV7", 1, 11597, 5, 60, 5, 0)
+fire("AURA_CAST_ON_OTHER", 11717, "0xLock", "0xV7")
+fire("DEBUFF_ADDED_OTHER", "0xV7", 2, 11717, 1, 60, 6, 0)
+fire("BUFF_ADDED_OTHER", "0xWar", 4, 11551, 1, 60, 4, 0)
+for i = 1, 12 do
+  advance(2.5)
+  fire("AUTO_ATTACK_OTHER", "0xWar", "0xV7", 1000, 2, 0, 1, 0, 0, 0)
+end
+check("estimates off: Sunder counts nothing", eff("0xWar", 11597), 0)
+
+-- On: armor 3731 less 5 x 450 Sunder and 640 Recklessness.
+Wrekkit.db.raidValueEstimates = true
+advance(2.5)
+fire("AUTO_ATTACK_OTHER", "0xWar", "0xV7", 1000, 2, 0, 1, 0, 0, 0)
+local keepBase = 1 - 3731 / (3731 + 5500)
+local keepNow = 1 - 841 / (841 + 5500)
+local armorExtra = 1000 - 1000 * keepBase / keepNow
+local apExtra = 185 / 14 * 2.5 * keepNow
+local scale = (armorExtra + apExtra) > 750 and 750 / (armorExtra + apExtra) or 1
+check("Sunder's estimate, by armor it took off", eff("0xWar", 11597), armorExtra * 2250 / 2890 * scale, 0.5)
+check("Recklessness's, to its warlock", eff("0xLock", 11717), armorExtra * 640 / 2890 * scale, 0.5)
+check("Battle Shout: 185 AP over the 2.5s swings", eff("0xWar", 11551), apExtra * scale, 0.5)
+local sunderRow = enc.actors["0xWar"].valueEffect[11597]
+check("an estimate says so", sunderRow and sunderRow.name, "Sunder Armor (est.)")
+Wrekkit.db.raidValueEstimates = nil
+
+-- Two warriors building one Sunder share it by applications.
+defPlayer("0xWar2", "Second", "WARRIOR", 6000)
+Wrekkit.capture.subgroups.Second = 1
+Wrekkit.capture.units["0xWar2"] = nil
+Wrekkit.capture:Unit("0xWar2")
+defNPC("0xV8", "Shared", 1000000)
+fire("AURA_CAST_ON_OTHER", 11597, "0xWar", "0xV8")
+fire("DEBUFF_ADDED_OTHER", "0xV8", 1, 11597, 1, 60, 5, 0)
+fire("AURA_CAST_ON_OTHER", 11597, "0xWar2", "0xV8")
+fire("DEBUFF_ADDED_OTHER", "0xV8", 1, 11597, 2, 60, 5, 0)
+Wrekkit.db.raidValueEstimates = true
+local w1, w2 = eff("0xWar", 11597), eff("0xWar2", 11597)
+fire("SPELL_DAMAGE_EVENT_OTHER", "0xV8", "0xHoly", 11267, 1000, "0,0,0", 0, 0)
+check("a shared Sunder is split between its warriors", eff("0xWar", 11597) - w1, eff("0xWar2", 11597) - w2, 0.01)
+check("and both get some", eff("0xWar2", 11597) - w2 > 0, true)
+Wrekkit.db.raidValueEstimates = nil
+
+-- Announced by effect: combined names nobody, individual names each.
+local actx = { metric = "value", encounters = { enc }, label = "Test" }
+local lines = Wrekkit.announce:Lines(actx, 15)
+local function find(ls, pat)
+  for _, l in ipairs(ls) do if string.find(l, pat, 1, true) then return l end end
+  return nil
+end
+local sunderLine = find(lines, "Sunder Armor (est.)")
+check("combined: Sunder's total and how many built it", sunderLine and string.find(sunderLine, "(2 players)", 1, true) ~= nil, true)
+check("combined names no one", sunderLine and string.find(sunderLine, "Tanky", 1, true), nil)
+check("estimates are flagged", find(lines, "(est.) = estimated") ~= nil, true)
+Wrekkit.db.valueAnnounce = "individual"
+lines = Wrekkit.announce:Lines(actx, 15)
+sunderLine = find(lines, "Sunder Armor (est.)")
+check("individual: each warrior's share", sunderLine and string.find(sunderLine, "Tanky", 1, true) ~= nil
+  and string.find(sunderLine, "Second", 1, true) ~= nil, true)
+Wrekkit.db.valueAnnounce = nil
+lines = Wrekkit.announce:Lines({ metric = "support", encounters = { enc }, label = "Test" }, 15)
+check("support is announced in mana and healing", find(lines, "mana") ~= nil, true)
+
+-- Nightfall filed under the mob's BUFFS still counts, and a player's
+-- buff of the same id is not mistaken for it.
+defNPC("0xV10", "Buffed debuff", 1000000)
+fire("AUTO_ATTACK_OTHER", "0xWar", "0xV10", 500, 2, 0, 1, 0, 0, 0)
+fire("BUFF_ADDED_OTHER", "0xV10", 3, 23605, 1, 60, 9, 0)
+local nfBefore = eff("0xWar", 23605)
+hit("0xV10", "0xLock2", 11661, 1100, 5)
+check("a debuff filed as a mob's buff counts", eff("0xWar", 23605) - nfBefore, 100, 0.01)
+fire("BUFF_REMOVED_OTHER", "0xV10", 3, 23605, 0, 0, 9, 1)
+check("and ends with it", Wrekkit.value.mob["0xV10"], nil)
+fire("BUFF_ADDED_OTHER", "0xMage", 9, 23605, 1, 60, 9, 0)
+check("the same id on a player is not a mob debuff", Wrekkit.value.mob["0xMage"], nil)
+
+-- Armor read off the mob itself, and remembered by name.
+local realField = GetUnitField
+GetUnitField = function(guid, f)
+  if guid == "0xV9" and f == "resistances" then return { 2000, 0, 0, 0, 0, 0, 0 } end
+  return ""
+end
+defNPC("0xV9", "Softie", 1000000)
+check("a mob's own armor, when the client gives it", Wrekkit.value:MobArmor("0xV9", 0), 2000)
+check("is learned by name", Wrekkit.db.mobArmor and Wrekkit.db.mobArmor.Softie, 2000)
+GetUnitField = realField
+Wrekkit.value.armorOf = {}
+check("and used when it cannot be read", Wrekkit.value:MobArmor("0xV9", 0), 2000)
+check("a mob never read is a raid boss", Wrekkit.value:MobArmor("0xV8", 0), 3731)
+Wrekkit.db.mobArmor = nil
+
+-- Switched off, nothing more is counted.
+Wrekkit.db.raidValue = nil
+local total = val("0xLock")
+hit("0xV1", "0xLock2", 11661, 1100, 5)
+check("off: hits add nothing", val("0xLock"), total, 0.01)
+
+IN_COMBAT = false
+fire("PLAYER_REGEN_ENABLED")
+SpellInfo = realInfo
+TH.clearRaid()
+Wrekkit.capture.buffs = {}
+Wrekkit.ResetData("all")
+end)()
 
 ----------------------------------------------------------------------
 print("\n-- saved settings --")
