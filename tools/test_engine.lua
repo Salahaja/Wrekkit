@@ -4397,6 +4397,58 @@ local sunderRow = enc.actors["0xWar"].valueEffect[11597]
 check("an estimate says so", sunderRow and sunderRow.name, "Sunder Armor (est.)")
 Wrekkit.db.raidValueEstimates = nil
 
+-- Two warriors building one Sunder share it by applications.
+defPlayer("0xWar2", "Second", "WARRIOR", 6000)
+Wrekkit.capture.subgroups.Second = 1
+Wrekkit.capture.units["0xWar2"] = nil
+Wrekkit.capture:Unit("0xWar2")
+defNPC("0xV8", "Shared", 1000000)
+fire("AURA_CAST_ON_OTHER", 11597, "0xWar", "0xV8")
+fire("DEBUFF_ADDED_OTHER", "0xV8", 1, 11597, 1, 60, 5, 0)
+fire("AURA_CAST_ON_OTHER", 11597, "0xWar2", "0xV8")
+fire("DEBUFF_ADDED_OTHER", "0xV8", 1, 11597, 2, 60, 5, 0)
+Wrekkit.db.raidValueEstimates = true
+local w1, w2 = eff("0xWar", 11597), eff("0xWar2", 11597)
+fire("SPELL_DAMAGE_EVENT_OTHER", "0xV8", "0xHoly", 11267, 1000, "0,0,0", 0, 0)
+check("a shared Sunder is split between its warriors", eff("0xWar", 11597) - w1, eff("0xWar2", 11597) - w2, 0.01)
+check("and both get some", eff("0xWar2", 11597) - w2 > 0, true)
+Wrekkit.db.raidValueEstimates = nil
+
+-- Announced by effect: combined names nobody, individual names each.
+local actx = { metric = "value", encounters = { enc }, label = "Test" }
+local lines = Wrekkit.announce:Lines(actx, 15)
+local function find(ls, pat)
+  for _, l in ipairs(ls) do if string.find(l, pat, 1, true) then return l end end
+  return nil
+end
+local sunderLine = find(lines, "Sunder Armor (est.)")
+check("combined: Sunder's total and how many built it", sunderLine and string.find(sunderLine, "(2 players)", 1, true) ~= nil, true)
+check("combined names no one", sunderLine and string.find(sunderLine, "Tanky", 1, true), nil)
+check("estimates are flagged", find(lines, "(est.) = estimated") ~= nil, true)
+Wrekkit.db.valueAnnounce = "individual"
+lines = Wrekkit.announce:Lines(actx, 15)
+sunderLine = find(lines, "Sunder Armor (est.)")
+check("individual: each warrior's share", sunderLine and string.find(sunderLine, "Tanky", 1, true) ~= nil
+  and string.find(sunderLine, "Second", 1, true) ~= nil, true)
+Wrekkit.db.valueAnnounce = nil
+lines = Wrekkit.announce:Lines({ metric = "support", encounters = { enc }, label = "Test" }, 15)
+check("support is announced in mana and healing", find(lines, "mana") ~= nil, true)
+
+-- Armor read off the mob itself, and remembered by name.
+local realField = GetUnitField
+GetUnitField = function(guid, f)
+  if guid == "0xV9" and f == "resistances" then return { 2000, 0, 0, 0, 0, 0, 0 } end
+  return ""
+end
+defNPC("0xV9", "Softie", 1000000)
+check("a mob's own armor, when the client gives it", Wrekkit.value:MobArmor("0xV9", 0), 2000)
+check("is learned by name", Wrekkit.db.mobArmor and Wrekkit.db.mobArmor.Softie, 2000)
+GetUnitField = realField
+Wrekkit.value.armorOf = {}
+check("and used when it cannot be read", Wrekkit.value:MobArmor("0xV9", 0), 2000)
+check("a mob never read is a raid boss", Wrekkit.value:MobArmor("0xV8", 0), 3731)
+Wrekkit.db.mobArmor = nil
+
 -- Switched off, nothing more is counted.
 Wrekkit.db.raidValue = nil
 local total = val("0xLock")

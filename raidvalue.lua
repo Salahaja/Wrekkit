@@ -65,9 +65,9 @@ V.EFFECTS = {
   [23605] = { name = "Spell Vulnerability (Nightfall)", on = "target", bonus = 0.10, schools = SPELLS, credit = "melee" },
   [17794] = { name = "Shadow Vulnerability", on = "target", bonus = 0.20, schools = { [SHADOW] = true }, credit = "shadowcrit" },
   [15258] = { name = "Shadow Weaving", on = "target", perStack = 0.03, schools = { [SHADOW] = true },
-              credit = "lasthit", class = "PRIEST", school = SHADOW },
+              credit = "lasthit", class = "PRIEST", school = SHADOW, stacking = true },
   [22959] = { name = "Fire Vulnerability", on = "target", perStack = 0.03, schools = { [FIRE] = true },
-              credit = "lasthit", class = "MAGE", school = FIRE },
+              credit = "lasthit", class = "MAGE", school = FIRE, stacking = true },
   [1490]  = { name = "Curse of the Elements", on = "target", bonus = 0.06, schools = { [FIRE] = true, [FROST] = true }, credit = "aura" },
   [11721] = { name = "Curse of the Elements", on = "target", bonus = 0.08, schools = { [FIRE] = true, [FROST] = true }, credit = "aura" },
   [11722] = { name = "Curse of the Elements", on = "target", bonus = 0.10, schools = { [FIRE] = true, [FROST] = true }, credit = "aura" },
@@ -92,8 +92,8 @@ end
      player's attack power or weapon -- so they are ESTIMATES, counted only
      with "Estimated effects" on (W.db.raidValueEstimates) and named
      "(est.)" wherever they show:
-       armor     armor taken off per stack. Every mob is taken to start
-                 with a raid boss's (BOSS_ARMOR)
+       armor     armor taken off per stack, from the mob's own armor:
+                 read live, learned, or a raid boss's (V:MobArmor)
        ap        attack power added: AP / 14 x weapon speed per hit, the
                  speed read from that player's own swing gaps (a dual
                  wielder reads short, so it errs low), after armor
@@ -112,7 +112,7 @@ local function physical(ids, base)
   end
 end
 physical({ [7386] = 90, [7405] = 180, [8380] = 270, [11596] = 360, [11597] = 450, [47383] = 600 },
-  { field = "armor", name = "Sunder Armor", on = "target", credit = "aura", estimate = true })
+  { field = "armor", name = "Sunder Armor", on = "target", credit = "aura", estimate = true, stacking = true })
 physical({ [770] = 175, [778] = 285, [9749] = 395, [9907] = 505,
            [16857] = 175, [17390] = 285, [17391] = 395, [17392] = 505 },
   { field = "armor", name = "Faerie Fire", on = "target", credit = "aura", estimate = true })
@@ -122,7 +122,7 @@ physical({ [8647] = 400, [8648] = 400, [8649] = 725, [8651] = 725, [8650] = 1050
            [11197] = 1375, [11199] = 1375, [11198] = 1700, [11200] = 1700 },
   { field = "armor", name = "Expose Armor", on = "target", credit = "aura", estimate = true })
 physical({ [16928] = 100 },
-  { field = "armor", name = "Annihilator", on = "target", credit = "melee", estimate = true })
+  { field = "armor", name = "Annihilator", on = "target", credit = "melee", estimate = true, stacking = true })
 physical({ [1130] = 20, [14323] = 45, [14324] = 75, [14325] = 110 },
   { field = "rangedAp", name = "Hunter's Mark", on = "target", credit = "aura", estimate = true })
 physical({ [6673] = 15, [5242] = 35, [6192] = 55, [11549] = 85, [11550] = 130, [11551] = 185,
@@ -255,9 +255,16 @@ function V:AuraCast(spellId, caster, target)
     self.lastCast[target] = t
   end
   t[spellId] = { by = caster, at = GetTime() }
-  -- Recast on a debuff already up (a curse refreshed): the new caster.
+  -- Recast on a debuff already up: a curse refreshed is the new caster's;
+  -- one more Sunder is one more share for whoever put it on.
   local d = self.mob[target] and self.mob[target][spellId]
-  if d then d.by = caster end
+  if d then
+    d.by = caster
+    if e.stacking then
+      d.appliers = d.appliers or {}
+      d.appliers[caster] = (d.appliers[caster] or 0) + 1
+    end
+  end
 end
 
 --- A cast went off: a Judgement is about to put its debuff on the target;
@@ -321,14 +328,23 @@ function V:DebuffOn(guid, spellId, slot, stacks)
     self.mob[guid] = set
   end
   local d = set[spellId]
-  if not d then
+  local fresh = not d
+  if fresh then
     d = { slots = {} }
     set[spellId] = d
   end
   d.slots[slot or "anon"] = true
   stacks = tonumber(stacks)
   if stacks and stacks > 0 then d.stacks = stacks end
-  d.by = self:Provider(guid, spellId, effect) or d.by
+  local by = self:Provider(guid, spellId, effect)
+  d.by = by or d.by
+  --[[ A stacking debuff (Sunder, Shadow Weaving) is several players' work:
+       each application or refresh is a share. An aura-cast one counts its
+       later casts in AuraCast, so only the first is counted here. ]]
+  if effect.stacking and by and (fresh or effect.credit ~= "aura") then
+    d.appliers = d.appliers or {}
+    d.appliers[by] = (d.appliers[by] or 0) + 1
+  end
 end
 
 function V:DebuffOff(guid, spellId, slot, state)
@@ -344,6 +360,8 @@ end
 
 function V:Died(guid)
   self.mob[guid] = nil
+  self.armorOf[guid] = nil
+  self.armorOf[guid .. "?"] = nil
   self.lastCast[guid] = nil
   self.lastShadowCrit[guid] = nil
   self.lastHit[guid] = nil
@@ -421,15 +439,28 @@ end
 local mults = {}        -- reused: { id, size = bonus, by } x n
 local flats = {}        -- reused: { id, size = flat, by } x n
 
-local function push(list, n, id, size, by)
+local function push(list, n, id, size, by, d)
   n = n + 1
   local m = list[n]
   if not m then
     m = {}
     list[n] = m
   end
-  m.id, m.size, m.by = id, size, by
+  m.id, m.size, m.by, m.d = id, size, by, d
   return n
+end
+
+--- Credit `amount` of an effect: to its provider, or for a stacking debuff
+--- split between everyone who applied it, by how often each did.
+local function credit(id, name, amount, by, d, from)
+  local ap = d and d.appliers
+  if ap and next(ap) ~= nil then
+    local total = 0
+    for _, c in pairs(ap) do total = total + c end
+    for g, c in pairs(ap) do W.encounter:Value(g, id, name, amount * c / total, from) end
+    return
+  end
+  W.encounter:Value(by, id, name, amount, from)
 end
 
 local function noteSpeed(self, key, now)
@@ -461,22 +492,25 @@ function V:Physical(attacker, target, amount, crit, ranged, swing)
   local n = 0
 
   -- Armor: what was taken off, and by whom.
-  local keepNow = 1 - BOSS_ARMOR / (BOSS_ARMOR + ARMOR_K)
+  local removed = 0
   if estimates and mobSet then
-    local removed = 0
     for id, d in pairs(mobSet) do
       local e = self.EFFECTS[id]
       if e.armor then removed = removed + e.armor * (d.stacks or 1) end
     end
+  end
+  local base = estimates and self:MobArmor(target, removed) or BOSS_ARMOR
+  local keepNow = 1 - base / (base + ARMOR_K)
+  if estimates and mobSet then
     if removed > 0 then
       local keepBase = keepNow
-      local left = BOSS_ARMOR - removed
+      local left = base - removed
       if left < 0 then left = 0 end
       keepNow = 1 - left / (left + ARMOR_K)
       local extra = amount - amount * keepBase / keepNow
       for id, d in pairs(mobSet) do
         local e = self.EFFECTS[id]
-        if e.armor then n = push(shares, n, id, extra * e.armor * (d.stacks or 1) / removed, d.by) end
+        if e.armor then n = push(shares, n, id, extra * e.armor * (d.stacks or 1) / removed, d.by, d) end
       end
     end
   end
@@ -485,10 +519,10 @@ function V:Physical(attacker, target, amount, crit, ranged, swing)
     for id, d in pairs(mobSet) do
       local e = self.EFFECTS[id]
       if e.flat and e.schools[0] then
-        n = push(shares, n, id, e.flat < amount and e.flat or amount, d.by)
+        n = push(shares, n, id, e.flat < amount and e.flat or amount, d.by, d)
       elseif estimates and e.rangedAp and ranged then
         local sp = self.speed[attacker .. "r"]
-        if sp then n = push(shares, n, id, e.rangedAp / 14 * sp * keepNow * (crit and 2 or 1), d.by) end
+        if sp then n = push(shares, n, id, e.rangedAp / 14 * sp * keepNow * (crit and 2 or 1), d.by, d) end
       end
     end
   end
@@ -505,7 +539,7 @@ function V:Physical(attacker, target, amount, crit, ranged, swing)
         elseif e.crit then
           size = e.crit * (crit and amount / 2 or amount)
         end
-        if size then n = push(shares, n, id, size, buffProvider(self, e, attacker, id)) end
+        if size then n = push(shares, n, id, size, buffProvider(self, e, attacker, id), nil) end
       end
     end
   end
@@ -518,8 +552,48 @@ function V:Physical(attacker, target, amount, crit, ranged, swing)
   for i = 1, n do
     local s = shares[i]
     local e = self.EFFECTS[s.id]
-    W.encounter:Value(s.by, s.id, e.estimate and (e.name .. " (est.)") or e.name, s.size * scale, attacker)
+    credit(s.id, e.estimate and (e.name .. " (est.)") or e.name, s.size * scale, s.by, s.d, attacker)
   end
+end
+
+--[[ A mob's armor before anyone's debuffs, best source first:
+       live    the client's own unit field (GetUnitField "resistances",
+               armor first), which already has the debuffs taken off --
+               so the base is what it reads plus what they removed
+       learned what a live read gave for a mob of that name before, kept
+               in W.db.mobArmor so the table grows as you raid
+       default a raid boss's, BOSS_ARMOR
+     Read once per mob: the debuffs are followed here, so the live number
+     only has to say where the mob started. ]]
+V.armorOf = {}   -- mob guid -> its base armor, once known
+
+function V:MobArmor(guid, removed)
+  local known = self.armorOf[guid]
+  if known then return known end
+  local u = W.capture.units[guid] or W.capture:Unit(guid)
+  local name = u and u.name
+  if GetUnitField and not self.armorOf[guid .. "?"] then
+    self.armorOf[guid .. "?"] = true    -- asked once, answer or not
+    local ok, r = pcall(GetUnitField, guid, "resistances")
+    local live = ok and type(r) == "table" and tonumber(r[1])
+    -- 0 is what a hidden field reads: no answer, not "no armor".
+    if live and live > 0 then
+      local b = live + (removed or 0)
+      self.armorOf[guid] = b
+      if name and W.db then
+        W.db.mobArmor = W.db.mobArmor or {}
+        -- Learned only from a clean read: nothing of ours on it yet.
+        if (removed or 0) == 0 then W.db.mobArmor[name] = b end
+      end
+      return b
+    end
+  end
+  local learned = name and W.db and W.db.mobArmor and W.db.mobArmor[name]
+  if learned then
+    self.armorOf[guid] = learned
+    return learned
+  end
+  return BOSS_ARMOR
 end
 
 --- A melee swing landed: a candidate for a melee proc on that mob.
@@ -582,9 +656,9 @@ function V:SpellHit(caster, target, spellId, amount, school, crit)
       local e = self.EFFECTS[id]
       if e and e.schools[school] then
         if e.flat then
-          nf = push(flats, nf, id, e.flat, d.by)
+          nf = push(flats, nf, id, e.flat, d.by, d)
         else
-          n = push(mults, n, id, e.bonus or e.perStack * (d.stacks or 1), d.by)
+          n = push(mults, n, id, e.bonus or e.perStack * (d.stacks or 1), d.by, d)
         end
       end
     end
@@ -608,7 +682,7 @@ function V:SpellHit(caster, target, spellId, amount, school, crit)
   local extra = amount - amount / product
   for i = 1, n do
     local m = mults[i]
-    W.encounter:Value(m.by, m.id, self.EFFECTS[m.id].name, extra * math.log(1 + m.size) / logs, caster)
+    credit(m.id, self.EFFECTS[m.id].name, extra * math.log(1 + m.size) / logs, m.by, m.d, caster)
   end
   -- A flat bonus comes before the multipliers, and is no more than what the
   -- hit had left once they are taken out.
@@ -617,7 +691,7 @@ function V:SpellHit(caster, target, spellId, amount, school, crit)
     local f = flats[i]
     local share = f.size < left and f.size or left
     left = left - share
-    W.encounter:Value(f.by, f.id, self.EFFECTS[f.id].name, share, caster)
+    credit(f.id, self.EFFECTS[f.id].name, share, f.by, f.d, caster)
   end
 end
 

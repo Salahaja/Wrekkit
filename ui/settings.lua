@@ -518,6 +518,18 @@ function S:Create()
       "Hunter's Mark, Leader of the Pack. Each shows",
       "as (est.). Windfury is exact and always in." })
 
+  choice(self, "Announce raid value",
+    {
+      { value = "combined", label = "each effect's total" },
+      { value = "individual", label = "and who added it" },
+    },
+    function() return W.db.valueAnnounce or "combined" end,
+    function(v) W.db.valueAnnounce = (v == "individual") and "individual" or nil end,
+    { "Announcing Raid value or Raid support posts",
+      "what each effect added. Its total, and how many",
+      "players built it -- or each one's share, as in",
+      "Sunder 60k: Wiredbro 40k, Manner 20k." })
+
   choice(self, "Per-second basis",
     {
       { value = "combat", label = "combat time" },
