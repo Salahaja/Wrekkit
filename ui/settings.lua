@@ -1267,6 +1267,17 @@ function S:BuildThreat()
     { "Attack: target it and start melee (never", "stops a swing already going). Taunt: your",
       "taunt on it. Left-click always just targets." })
 
+  get, set = pick("mobAttackWith")
+  choice(self, "Right-click attacks with",
+    {
+      { value = "melee", label = "melee" },
+      { value = "ranged", label = "Auto Shot / wand" },
+      { value = "range", label = "whichever reaches" },
+    }, get, set,
+    { "The attack a right-click starts. Hunters: Auto", "Shot. Warriors, rogues: their bow, gun or throw.",
+      "Priests, mages, warlocks: a wand. Whichever", "reaches shoots from 8 yards out, swings closer.",
+      "Never switches off an attack already going." })
+
   -- Also by dragging its corner while the frames are being placed.
   stepper(self, "Width",
     function() return ts().mobFramesWidth end,

@@ -138,6 +138,7 @@ T.defaults = {
   mobFrames = true,
   mobFramesFor = "tank",   -- "tank" | "everyone"
   mobRightClick = "auto",  -- right-click a mob: "auto" (taunt tanking, else attack) | "attack" | "taunt"
+  mobAttackWith = "melee", -- that attack: "melee" | "ranged" (Auto Shot, a wand) | "range" (whichever reaches)
   mobCasts = false,        -- enemy cast bars in the mob window (opt-in)
   mobCastStyle = "over",   -- "over" the row's right part | "beside" it
   mobCastWidth = 100,      -- beside: how wide, px
@@ -257,6 +258,7 @@ function T:Sanitize(s)
   s.mobsX, s.mobsY = tonumber(s.mobsX), tonumber(s.mobsY)
   s.mobFramesFor = oneOf(s.mobFramesFor, { "tank", "everyone" }, d.mobFramesFor)
   s.mobRightClick = oneOf(s.mobRightClick, { "auto", "attack", "taunt" }, d.mobRightClick)
+  s.mobAttackWith = oneOf(s.mobAttackWith, { "melee", "ranged", "range" }, d.mobAttackWith)
   s.mobCastStyle = oneOf(s.mobCastStyle, { "over", "beside" }, d.mobCastStyle)
   -- The player side of the mob rows became opt-in. Whoever had set a
   -- spell on it is using it, so it stays on for them; once, then theirs.
