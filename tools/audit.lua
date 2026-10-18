@@ -101,6 +101,7 @@ declare(WOW, [[
   GetNumSpellTabs GetSpellTabInfo IsPassiveSpell CursorHasSpell ClearCursor PickupSpell
   GetPlayerBuff GetPlayerBuffTexture
   TargetUnit TargetByName TargetLastTarget ClearTarget UnitCanAssist AttackTarget
+  CheckInteractDistance GetInventoryItemLink
   this event arg1 arg2 arg3 arg4 arg5 arg6 arg7 arg8 arg9
 ]])
 
@@ -117,6 +118,7 @@ declare(SUPER, [[
 
 declare(NAMPOWER, [[
   WriteCustomFile ReadCustomFile CustomFileExists NAMPOWER_VERSION
+  IsSpellInRange GetSpellNameAndRankForId GetSpellRecField GetSpellIconTexture
 ]])
 
 -- Other addons Wrekkit cooperates with when they are there, and never
@@ -1282,6 +1284,79 @@ step("threat meter", function()
     row:GetScript("OnClick")()
     if taunted or attacks ~= 2 then error("set to attack, a tank's right-click did not attack") end
     T:Settings().mobRightClick = "auto"
+
+    -- A hunter: Auto Shot instead, or whichever reaches.
+    local shots = {}
+    local realClass, realCast, realRange = STUB.UnitClass, STUB.CastSpellByName, STUB.IsSpellInRange
+    STUB.UnitClass = function(u) if u == "player" then return "Hunter", "HUNTER" end return realClass(u) end
+    STUB.CastSpellByName = function(n) table.insert(shots, n) end
+    local inRange = 1
+    STUB.IsSpellInRange = function(id, u) return inRange end
+    local s = T:Settings()
+    s.mobRightClick = "attack"      -- the audit is still the tank here
+    s.mobAttackWith = "melee"
+    MF.swinging, MF.shooting = false, false
+    local realClose = STUB.CheckInteractDistance
+    local close = false
+    STUB.CheckInteractDistance = function(u, i) return close and 1 or nil end
+    row:GetScript("OnClick")()
+    if table.getn(shots) ~= 0 or attacks ~= 3 then error("melee mode shot, or did not swing") end
+    s.mobAttackWith = "ranged"
+    row:GetScript("OnClick")()
+    if shots[1] ~= "Auto Shot" or attacks ~= 3 then error("ranged mode did not start Auto Shot") end
+    MF.shooting = true
+    row:GetScript("OnClick")()
+    if table.getn(shots) ~= 1 then error("right-click toggled off an Auto Shot already going") end
+    MF.shooting = false
+    s.mobAttackWith = "range"
+    inRange, close = 0, true
+    row:GetScript("OnClick")()
+    if table.getn(shots) ~= 1 or attacks ~= 4 then error("inside 8 yards, 'whichever reaches' did not swing") end
+    inRange, close = 1, false
+    row:GetScript("OnClick")()
+    if shots[2] ~= "Auto Shot" then error("in range, 'whichever reaches' did not shoot") end
+    inRange, close = 0, false
+    row:GetScript("OnClick")()
+    if shots[3] ~= "Auto Shot" then error("beyond Auto Shot's range, it did not try to shoot") end
+    -- A rogue throws; a priest shoots a wand; a paladin always swings.
+    local realLink, realItem = STUB.GetInventoryItemLink, STUB.GetItemInfo
+    local sub = "Thrown"
+    STUB.GetInventoryItemLink = function(u, slot) return slot == 18 and "|Hitem:9999:0:0:0|h[x]|h" or nil end
+    STUB.GetItemInfo = function(id) if id == 9999 then return "x", "x", 1, 1, "Weapon", sub end return realItem(id) end
+    local as = "ROGUE"
+    STUB.UnitClass = function(u) if u == "player" then return as, as end return realClass(u) end
+    s.mobAttackWith = "ranged"
+    row:GetScript("OnClick")()
+    if shots[4] ~= "Throw" then error("a rogue with a thrown weapon did not throw") end
+    as, sub = "PRIEST", "Wands"
+    row:GetScript("OnClick")()
+    if shots[5] ~= "Shoot" then error("a priest with a wand did not shoot it") end
+    as = "PALADIN"
+    local before = attacks
+    row:GetScript("OnClick")()
+    if table.getn(shots) ~= 5 or attacks ~= before + 1 then error("a paladin did not swing") end
+    STUB.GetInventoryItemLink, STUB.GetItemInfo = realLink, realItem
+
+    -- A spell of this character's own instead: a mage's Frostbolt.
+    as = "MAGE"
+    MF:SetRightSpell("Frostbolt")
+    row:GetScript("OnClick")()
+    if shots[6] ~= "Frostbolt" then error("the right-click spell was not cast: " .. tostring(shots[6])) end
+    local realName = STUB.UnitName
+    STUB.UnitName = function(u) if u == "player" then return "Somealt" end return realName(u) end
+    before = attacks
+    s.mobAttackWith = "melee"
+    row:GetScript("OnClick")()
+    if table.getn(shots) ~= 6 or attacks ~= before + 1 then error("another character got the mage's right-click spell") end
+    STUB.UnitName = realName
+    MF:SetRightSpell("")
+    if MF:RightSpell() ~= nil then error("clearing the right-click spell left it set") end
+
+    s.mobAttackWith, s.mobRightClick = "melee", "auto"
+    STUB.UnitClass, STUB.CastSpellByName, STUB.IsSpellInRange = realClass, realCast, realRange
+    STUB.CheckInteractDistance = realClose
+    MF.shooting = false
+
     arg1, MF.swinging = was, false
     STUB.AttackTarget, STUB.TargetUnit, T.IsTank, T.Taunt = real.attack, real.target, real.tank, real.taunt
 

@@ -2106,11 +2106,40 @@ local realSpellInfo = SpellInfo
 SpellInfo = nil
 Wrekkit.db.spellNames = {}
 
+REAL_NP = GetSpellNameAndRankForId
+GetSpellNameAndRankForId = nil
+-- Names learned before 0.9.27 were paired loosely and are dropped.
+Wrekkit.db.spellNamesVersion = nil
+Wrekkit.db.spellNames = { [75] = "Roasted Boar Meat" }
+check("names learned the old way are dropped", Wrekkit.capture:LearnedNames()[75], nil)
+
 local freshId = 25309
-fire("SPELLCAST_START", "Immolate")
+fire("SPELLCAST_START", "Immolate", 2000)
+advance(2)
 fire("SPELL_GO_SELF", 0, freshId, "0xP1", "0xBoss")
 check("the name was learned from the cast",
   Wrekkit.db.spellNames[freshId], "Immolate")
+
+-- An instant landing mid-cast (an Auto Shot while eating) is not the cast.
+fire("SPELLCAST_START", "Roasted Boar Meat", 3000)
+advance(1)
+fire("SPELL_GO_SELF", 0, 75, "0xP1", "0xBoss")
+check("an instant mid-cast does not take the name", Wrekkit.db.spellNames[75], nil)
+-- Nor someone else's cast landing when yours was due.
+advance(2)
+fire("SPELL_GO_OTHER", 0, 25312, "0xP2", "0xBoss")
+check("someone else's cast does not take it", Wrekkit.db.spellNames[25312], nil)
+fire("SPELL_GO_SELF", 0, 25313, "0xP1", "0xBoss")
+check("your own, on time, does", Wrekkit.db.spellNames[25313], "Roasted Boar Meat")
+fire("SPELL_GO_SELF", 0, 25314, "0xP1", "0xBoss")
+check("and a name is used once", Wrekkit.db.spellNames[25314], nil)
+
+-- Nampower names any id, instants too, when SuperWoW is missing.
+GetSpellNameAndRankForId = function(id)
+  if id == 14285 then return "Arcane Shot", "Rank 6" end
+end
+check("nampower names a spell without SuperWoW", Wrekkit.capture:Spell(14285), "Arcane Shot (Rank 6)")
+GetSpellNameAndRankForId = nil
 
 -- A stale cast start must not label an unrelated spell seconds later.
 fire("SPELLCAST_START", "Corruption")
@@ -2120,6 +2149,7 @@ check("a stale cast name is not bound", Wrekkit.db.spellNames[25310], nil)
 
 -- And with SuperWoW present, learning is skipped entirely.
 SpellInfo = realSpellInfo
+GetSpellNameAndRankForId = REAL_NP
 fire("SPELLCAST_START", "Shadow Bolt")
 fire("SPELL_GO_SELF", 0, 25311, "0xP1", "0xBoss")
 check("SuperWoW makes learning unnecessary",

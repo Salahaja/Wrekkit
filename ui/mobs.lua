@@ -362,7 +362,8 @@ local function makeRow(parent, i)
       elseif arg1 == "RightButton" then
         if MF:RightAction() == "attack" then
           MF:TargetMob(m)
-          MF:StartAttack()
+          local own = MF:RightSpell()
+          if own then MF:CastOnMob(m, own) else MF:StartAttack() end
         else
           T:Taunt({ guid = m.guid, unit = m.unit, name = m.name, who = m.who })
         end
@@ -473,6 +474,29 @@ function MF:ModifierSpell()
   return nil
 end
 
+--- Who "this character" is, for settings kept per character.
+function MF:CharKey()
+  local realm = (GetCVar and GetCVar("realmName")) or (GetRealmName and GetRealmName()) or ""
+  return (UnitName and UnitName("player") or "?") .. "-" .. realm
+end
+
+--[[ The spell a right-click casts in place of attacking -- Frostbolt for a
+     mage, Arcane Shot for a hunter -- set per character under Mob frames.
+     Nil when none is set: right-click attacks (mobAttackWith). ]]
+function MF:RightSpell()
+  local by = T:Settings().mobRightSpellBy
+  local spell = type(by) == "table" and by[self:CharKey()]
+  if spell and spell ~= "" then return spell end
+  return nil
+end
+
+function MF:SetRightSpell(spell)
+  local s = T:Settings()
+  if type(s.mobRightSpellBy) ~= "table" then s.mobRightSpellBy = {} end
+  if spell == "" then spell = nil end
+  s.mobRightSpellBy[self:CharKey()] = spell
+end
+
 --- Cast on a row's mob. With SuperWoW straight at its guid, your target
 --- untouched; without, it is targeted first, so the spell lands on it.
 function MF:CastOnMob(m, spell)
@@ -498,9 +522,79 @@ end
      say (those are the auto-attack's own, not the combat flag's). The
      swing follows a change of target, so already swinging is enough. ]]
 MF.swinging = false
+MF.shooting = false
+
+--[[ The ranged attack you have, as (spell id, name), by class and what is
+     in the ranged slot:
+       hunter                  Auto Shot
+       warrior, rogue          Shoot Bow / Gun / Crossbow, or Throw
+       priest, mage, warlock   Shoot, with a wand
+     Paladins, shamans and druids have none, and always swing. ]]
+local AUTO_SHOT = 75
+local BY_WEAPON = {
+  Bows = { 2480, "Shoot Bow" }, Guns = { 7918, "Shoot Gun" },
+  Crossbows = { 7919, "Shoot Crossbow" }, Thrown = { 2764, "Throw" },
+}
+local WAND = { 5019, "Shoot" }
+local WAND_CLASSES = { PRIEST = true, MAGE = true, WARLOCK = true }
+
+local function rangedSubtype()
+  local link = GetInventoryItemLink and GetInventoryItemLink("player", 18)
+  if not link or not GetItemInfo then return nil end
+  -- Not "link and string.find(...)": an "and" keeps only find's first value.
+  local _, _, id = string.find(link, "item:(%d+)")
+  if not id then return nil end
+  -- 1.12: name, link, quality, level, type, SUBTYPE, ...
+  local _, _, _, _, _, sub = GetItemInfo(tonumber(id))
+  return sub
+end
+
+function MF:RangedAttack()
+  local _, class = UnitClass("player")
+  if class == "HUNTER" then return AUTO_SHOT, "Auto Shot" end
+  local a
+  if class == "WARRIOR" or class == "ROGUE" then
+    a = BY_WEAPON[rangedSubtype() or ""]
+  elseif WAND_CLASSES[class] and rangedSubtype() == "Wands" then
+    a = WAND
+  end
+  if a then return a[1], a[2] end
+  return nil
+end
+
+--[[ Which attack a right-click starts (mobAttackWith):
+       melee   auto-attack, always
+       ranged  your ranged attack when you have one, else melee
+       range   whichever reaches. Ranged from 8 yards out -- nampower's
+               IsSpellInRange says when Auto Shot (or the wand) can fire;
+               melee inside that, within ~10 yards (CheckInteractDistance
+               3, the duel range). Out of both, or when nothing can tell,
+               ranged: a ranged player is usually standing back. ]]
+function MF:AttackKind()
+  local how = T:Settings().mobAttackWith or "melee"
+  if how == "melee" then return "melee" end
+  local id, name = self:RangedAttack()
+  if not id then return "melee" end
+  if how == "ranged" then return "ranged", name end
+  if IsSpellInRange then
+    local ok, r = pcall(IsSpellInRange, id, "target")
+    if ok and r == 1 then return "ranged", name end
+  end
+  if CheckInteractDistance and CheckInteractDistance("target", 3) then return "melee" end
+  return "ranged", name
+end
+
 function MF:StartAttack()
-  if self.swinging or not AttackTarget then return end
   if UnitExists and not UnitExists("target") then return end
+  local kind, name = self:AttackKind()
+  if kind == "ranged" then
+    -- Auto Shot and a wand repeat, and casting them again would switch
+    -- them off; a bow, gun or throw is one shot a click.
+    if self.shooting or not CastSpellByName then return end
+    CastSpellByName(name)
+    return
+  end
+  if self.swinging or not AttackTarget then return end
   AttackTarget()
 end
 
@@ -1012,6 +1106,15 @@ if CreateFrame then
   local swing = CreateFrame("Frame", "WrekkitMobsSwing")
   swing:RegisterEvent("PLAYER_ENTER_COMBAT")
   swing:RegisterEvent("PLAYER_LEAVE_COMBAT")
-  swing:SetScript("OnEvent", function() MF.swinging = (event == "PLAYER_ENTER_COMBAT") end)
+  -- And Auto Shot or a wand repeating: stock 1.12's auto-repeat events.
+  swing:RegisterEvent("START_AUTOREPEAT_SPELL")
+  swing:RegisterEvent("STOP_AUTOREPEAT_SPELL")
+  swing:SetScript("OnEvent", function()
+    if event == "START_AUTOREPEAT_SPELL" or event == "STOP_AUTOREPEAT_SPELL" then
+      MF.shooting = (event == "START_AUTOREPEAT_SPELL")
+    else
+      MF.swinging = (event == "PLAYER_ENTER_COMBAT")
+    end
+  end)
   MF.swingFrame = swing
 end
