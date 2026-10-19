@@ -4409,7 +4409,7 @@ for i = 1, 12 do
   advance(2.5)
   fire("AUTO_ATTACK_OTHER", "0xWar", "0xV7", 1000, 2, 0, 1, 0, 0, 0)
 end
-check("estimates off: Sunder counts nothing", eff("0xWar", 11597), 0)
+check("estimates off: Sunder counts nothing", eff("0xWar", -11597), 0)
 
 -- On: armor 3731 less 5 x 450 Sunder and 640 Recklessness.
 Wrekkit.db.raidValueEstimates = true
@@ -4420,10 +4420,10 @@ local keepNow = 1 - 841 / (841 + 5500)
 local armorExtra = 1000 - 1000 * keepBase / keepNow
 local apExtra = 185 / 14 * 2.5 * keepNow
 local scale = (armorExtra + apExtra) > 750 and 750 / (armorExtra + apExtra) or 1
-check("Sunder's estimate, by armor it took off", eff("0xWar", 11597), armorExtra * 2250 / 2890 * scale, 0.5)
-check("Recklessness's, to its warlock", eff("0xLock", 11717), armorExtra * 640 / 2890 * scale, 0.5)
-check("Battle Shout: 185 AP over the 2.5s swings", eff("0xWar", 11551), apExtra * scale, 0.5)
-local sunderRow = enc.actors["0xWar"].valueEffect[11597]
+check("Sunder's estimate, by armor it took off", eff("0xWar", -11597), armorExtra * 2250 / 2890 * scale, 0.5)
+check("Recklessness's, to its warlock", eff("0xLock", -11717), armorExtra * 640 / 2890 * scale, 0.5)
+check("Battle Shout: 185 AP over the 2.5s swings", eff("0xWar", -11551), apExtra * scale, 0.5)
+local sunderRow = enc.actors["0xWar"].valueEffect[-11597]
 check("an estimate says so", sunderRow and sunderRow.name, "Sunder Armor (est.)")
 Wrekkit.db.raidValueEstimates = nil
 
@@ -4438,10 +4438,10 @@ fire("DEBUFF_ADDED_OTHER", "0xV8", 1, 11597, 1, 60, 5, 0)
 fire("AURA_CAST_ON_OTHER", 11597, "0xWar2", "0xV8")
 fire("DEBUFF_ADDED_OTHER", "0xV8", 1, 11597, 2, 60, 5, 0)
 Wrekkit.db.raidValueEstimates = true
-local w1, w2 = eff("0xWar", 11597), eff("0xWar2", 11597)
+local w1, w2 = eff("0xWar", -11597), eff("0xWar2", -11597)
 fire("SPELL_DAMAGE_EVENT_OTHER", "0xV8", "0xHoly", 11267, 1000, "0,0,0", 0, 0)
-check("a shared Sunder is split between its warriors", eff("0xWar", 11597) - w1, eff("0xWar2", 11597) - w2, 0.01)
-check("and both get some", eff("0xWar2", 11597) - w2 > 0, true)
+check("a shared Sunder is split between its warriors", eff("0xWar", -11597) - w1, eff("0xWar2", -11597) - w2, 0.01)
+check("and both get some", eff("0xWar2", -11597) - w2 > 0, true)
 Wrekkit.db.raidValueEstimates = nil
 
 -- Announced by effect: combined names nobody, individual names each.
@@ -4490,6 +4490,61 @@ GetUnitField = realField
 Wrekkit.value.armorOf = {}
 check("and used when it cannot be read", Wrekkit.value:MobArmor("0xV9", 0), 2000)
 check("a mob never read is a raid boss", Wrekkit.value:MobArmor("0xV8", 0), 3731)
+Wrekkit.db.mobArmor = nil
+
+-- The game's own armor readings make armor debuffs EXACT: no estimates
+-- switch needed, no "(est.)", and the real drop is what counts.
+ARMOR_NOW = {}
+GetUnitField = function(guid, f)
+  if f == "resistances" and ARMOR_NOW[guid] then return { ARMOR_NOW[guid], 0, 0, 0, 0, 0, 0 } end
+  return ""
+end
+Wrekkit.value.armorOf, Wrekkit.value.liveArmor = {}, {}
+defNPC("0xV11", "Plated", 1000000)
+ARMOR_NOW["0xV11"] = 3000
+fire("AUTO_ATTACK_OTHER", "0xWar2", "0xV11", 800, 2, 0, 1, 0, 0, 0)
+check("a clean reading is where the mob started", Wrekkit.value.armorOf["0xV11"], 3000)
+check("and is learned by name", Wrekkit.db.mobArmor and Wrekkit.db.mobArmor.Plated, 3000)
+for i = 1, 5 do
+  fire("AURA_CAST_ON_OTHER", 11597, "0xWar2", "0xV11")
+  fire("DEBUFF_ADDED_OTHER", "0xV11", 1, 11597, i, 60, 5, 0)
+end
+ARMOR_NOW["0xV11"] = 750
+advance(1)
+local exBefore = eff("0xWar2", 11597)
+fire("AUTO_ATTACK_OTHER", "0xWar2", "0xV11", 1000, 2, 0, 1, 0, 0, 0)
+local kb, kn = 1 - 3000 / 8500, 1 - 750 / 6250
+check("live armor: Sunder is exact with estimates off", eff("0xWar2", 11597) - exBefore, 1000 - 1000 * kb / kn, 0.01)
+local srow = enc.actors["0xWar2"].valueEffect[11597]
+check("and says nothing of estimates", srow and srow.name, "Sunder Armor")
+
+-- A 3-point Expose Armor: nominal 1700, the reading says 1020.
+defPlayer("0xRog", "Stabby", "ROGUE")
+Wrekkit.capture.subgroups.Stabby = 1
+Wrekkit.capture.units["0xRog"] = nil
+Wrekkit.capture:Unit("0xRog")
+defNPC("0xV12", "Exposed", 1000000)
+ARMOR_NOW["0xV12"] = 3000
+fire("AUTO_ATTACK_OTHER", "0xRog", "0xV12", 500, 2, 0, 1, 0, 0, 0)
+fire("AURA_CAST_ON_OTHER", 11198, "0xRog", "0xV12")
+fire("DEBUFF_ADDED_OTHER", "0xV12", 1, 11198, 1, 60, 5, 0)
+ARMOR_NOW["0xV12"] = 1980
+advance(1)
+fire("AUTO_ATTACK_OTHER", "0xRog", "0xV12", 1000, 2, 0, 1, 0, 0, 0)
+check("Expose Armor counts what it really took off", eff("0xRog", 11198), 1000 - 1000 * kb / (1 - 1980 / 7480), 0.01)
+
+-- A reading that never dropped is no reading: estimates only.
+defNPC("0xV13", "Stubborn", 1000000)
+ARMOR_NOW["0xV13"] = 3000
+fire("AUTO_ATTACK_OTHER", "0xRog", "0xV13", 500, 2, 0, 1, 0, 0, 0)
+fire("AURA_CAST_ON_OTHER", 11198, "0xRog", "0xV13")
+fire("DEBUFF_ADDED_OTHER", "0xV13", 1, 11198, 1, 60, 5, 0)
+advance(1)
+local exRog = eff("0xRog", 11198)
+fire("AUTO_ATTACK_OTHER", "0xRog", "0xV13", 1000, 2, 0, 1, 0, 0, 0)
+check("an armor reading that did not drop counts nothing exact", eff("0xRog", 11198), exRog, 0.01)
+ARMOR_NOW = nil
+GetUnitField = function() return "" end
 Wrekkit.db.mobArmor = nil
 
 -- Switched off, nothing more is counted.

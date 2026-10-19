@@ -473,6 +473,8 @@ local spellCache = {}
 --- which the stock 1.12 API cannot do (GetSpellTexture is spellbook-indexed).
 function C:Spell(spellId)
   if not spellId or spellId == 0 then return "Melee", nil end
+  -- Raid value files an estimate under its spell's negative id; same spell.
+  if type(spellId) == "number" and spellId < 0 then spellId = -spellId end
   local hit = spellCache[spellId]
   if hit then return hit[1], hit[2] end
 
