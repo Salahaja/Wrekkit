@@ -172,14 +172,22 @@ local function creditedHealing(a)
   return h
 end
 
-local function addAbilities(dst, src)
+--[[ `pet`: a pet folded into its owner's row. Its abilities stay lines of
+     their own, named for it ("Raptor: Melee"), rather than vanishing into
+     the owner's -- melee is spell 0 for everyone, so the pet's swings used
+     to land in the hunter's own "Melee". The key is a string, so it never
+     meets an id of the owner's; baseId keeps the real spell. ]]
+local function addAbilities(dst, src, pet)
   eachAbility(src, function(id, row)
-    local d = dst[id]
+    local key = pet and ("pet:" .. pet .. ":" .. tostring(id)) or id
+    local d = dst[key]
     if not d then
-      d = { id = id, name = row.name, amount = 0, over = 0,
+      d = { id = key, name = pet and (pet .. ": " .. (row.name or ("Spell " .. tostring(id)))) or row.name,
+            amount = 0, over = 0,
             hits = 0, crits = 0, misses = 0,
             max = 0, min = nil, critAmount = 0 }
-      dst[id] = d
+      if pet then d.baseId = id end
+      dst[key] = d
     end
     --[[ Carried, not summed. This is the third place an ability is rebuilt
          from a named list of fields, and the third place a field that is not
@@ -287,6 +295,12 @@ local DETAIL = { auras = true, dmgAbility = true, healAbility = true,
                  takenAbility = true, consumeItem = true, dispelAbility = true,
                  valueEffect = true, valueSupport = true }
 
+--- The pet's name when `a` is a pet folded into another's row, else nil.
+local function foldedPet(row, a)
+  if a.class == "PET" and a.name and row.name ~= a.name then return a.name end
+  return nil
+end
+
 lazyDetail.__index = function(row, k)
   if not DETAIL[k] then return nil end
   local src = rawget(row, "_src") or {}
@@ -300,9 +314,10 @@ lazyDetail.__index = function(row, k)
   for i = 1, table.getn(src), 2 do
     local a, enc = src[i], src[i + 1]
     addAuras(row, a.auras, enc)
-    addAbilities(row.dmgAbility, a.dmgAbility)
-    addAbilities(row.healAbility, a.healAbility)
-    addAbilities(row.takenAbility, a.takenAbility)
+    local pet = foldedPet(row, a)
+    addAbilities(row.dmgAbility, a.dmgAbility, pet)
+    addAbilities(row.healAbility, a.healAbility, pet)
+    addAbilities(row.takenAbility, a.takenAbility, pet)
     addAbilities(row.consumeItem, a.consumeItem)
     addAbilities(row.dispelAbility, a.dispelAbility)
     addAbilities(row.valueEffect, a.valueEffect)
@@ -318,9 +333,10 @@ local function addDetail(row, a, enc)
     if getmetatable(row) ~= lazyDetail then
       -- Detail already built (a remote-only row touched early): add now.
       addAuras(row, a.auras, enc)
-      addAbilities(row.dmgAbility, a.dmgAbility)
-      addAbilities(row.healAbility, a.healAbility)
-      addAbilities(row.takenAbility, a.takenAbility)
+      local pet = foldedPet(row, a)
+      addAbilities(row.dmgAbility, a.dmgAbility, pet)
+      addAbilities(row.healAbility, a.healAbility, pet)
+      addAbilities(row.takenAbility, a.takenAbility, pet)
       addAbilities(row.consumeItem, a.consumeItem)
       addAbilities(row.dispelAbility, a.dispelAbility)
       addAbilities(row.valueEffect, a.valueEffect)
@@ -738,7 +754,7 @@ function R:Abilities(row, metricKey, ctx)
          Nothing was recorded before this existed, so older encounters show
          no school rather than a wrong one. ]]
     local name = a.name or ("Spell " .. tostring(id))
-    local school = W.SchoolName(a.school, id)
+    local school = W.SchoolName(a.school, a.baseId or id)
 
     table.insert(out, {
       id = id, name = name, school = a.school,
