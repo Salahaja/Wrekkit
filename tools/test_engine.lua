@@ -379,6 +379,14 @@ for _, r in ipairs(rows) do byName[r.name] = r end
 
 check("Fuff damage", byName["Fuff"] and byName["Fuff"].damage, 300 + 700 + 500 + 4000)
 check("Moorhunt damage incl. pet", byName["Moorhunt"] and byName["Moorhunt"].damage, 400 + 250)
+;(function()
+  -- The pet's swings are a line of their own, not folded into the hunter's.
+  local lines = {}
+  for _, ab in ipairs(Wrekkit.report:Abilities(byName["Moorhunt"], "damage")) do lines[ab.name] = ab end
+  check("a merged pet keeps its own melee line", lines["Raptor: Melee"] and lines["Raptor: Melee"].amount, 250)
+  check("and the hunter's melee is the hunter's", lines["Melee"] and lines["Melee"].amount, 400)
+  check("still reads as physical", lines["Raptor: Melee"] and lines["Raptor: Melee"].label, "Raptor: Melee (Physical)")
+end)()
 check("raid damage total", view.totals.damage, 300 + 700 + 500 + 250 + 400 + 4000)
 
 print("\n-- healing --")
