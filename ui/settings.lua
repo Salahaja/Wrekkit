@@ -512,11 +512,11 @@ function S:Create()
     function() return W.db.raidValueEstimates == true end,
     function(v) W.db.raidValueEstimates = v and true or nil end,
     { "Adds to Raid value what has no exact math:",
-      "Sunder, Expose Armor, Faerie Fire, Curse of",
-      "Recklessness, Annihilator (armor, assuming a",
-      "raid boss's), Battle Shout, Might, Trueshot,",
-      "Hunter's Mark, Leader of the Pack. Each shows",
-      "as (est.). Windfury is exact and always in." })
+      "Battle Shout, Might, Trueshot, Hunter's Mark,",
+      "Leader of the Pack -- and the armor debuffs on a",
+      "mob whose armor the game does not report (it",
+      "usually does: then they are exact, always in).",
+      "Each estimate shows as (est.)." })
 
   choice(self, "Announce raid value",
     {

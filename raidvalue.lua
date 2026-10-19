@@ -92,8 +92,9 @@ end
      player's attack power or weapon -- so they are ESTIMATES, counted only
      with "Estimated effects" on (W.db.raidValueEstimates) and named
      "(est.)" wherever they show:
-       armor     armor taken off per stack, from the mob's own armor:
-                 read live, learned, or a raid boss's (V:MobArmor)
+       armor     armor taken off per stack. EXACT, and counted with Raid
+                 value alone, whenever the game reports the mob's armor
+                 (V:LiveArmor); an estimate otherwise
        ap        attack power added: AP / 14 x weapon speed per hit, the
                  speed read from that player's own swing gaps (a dual
                  wielder reads short, so it errs low), after armor
@@ -373,7 +374,7 @@ end
 function V:Died(guid)
   self.mob[guid] = nil
   self.armorOf[guid] = nil
-  self.armorOf[guid .. "?"] = nil
+  self.liveArmor[guid] = nil
   self.lastCast[guid] = nil
   self.lastShadowCrit[guid] = nil
   self.lastHit[guid] = nil
@@ -451,14 +452,14 @@ end
 local mults = {}        -- reused: { id, size = bonus, by } x n
 local flats = {}        -- reused: { id, size = flat, by } x n
 
-local function push(list, n, id, size, by, d)
+local function push(list, n, id, size, by, d, est)
   n = n + 1
   local m = list[n]
   if not m then
     m = {}
     list[n] = m
   end
-  m.id, m.size, m.by, m.d = id, size, by, d
+  m.id, m.size, m.by, m.d, m.est = id, size, by, d, est
   return n
 end
 
@@ -503,26 +504,42 @@ function V:Physical(attacker, target, amount, crit, ranged, swing)
   local mobSet = self.mob[target]
   local n = 0
 
-  -- Armor: what was taken off, and by whom.
-  local removed = 0
-  if estimates and mobSet then
+  --[[ Armor: what was taken off, and by whom. With the game's own armor
+       readings it is EXACT -- the mob's armor now against where it
+       started -- and counted with Raid value alone; the drop is shared
+       between the debuffs on it by their nominal sizes (so a 3-point
+       Expose Armor, or an Improved one, counts as what it really did).
+       Without a reading it is an estimate, under "Estimated effects". ]]
+  local nominal = 0
+  if mobSet then
     for id, d in pairs(mobSet) do
       local e = self.EFFECTS[id]
-      if e.armor then removed = removed + e.armor * (d.stacks or 1) end
+      if e.armor then nominal = nominal + e.armor * (d.stacks or 1) end
     end
   end
-  local base = estimates and self:MobArmor(target, removed) or BOSS_ARMOR
-  local keepNow = 1 - base / (base + ARMOR_K)
-  if estimates and mobSet then
-    if removed > 0 then
-      local keepBase = keepNow
-      local left = base - removed
-      if left < 0 then left = 0 end
-      keepNow = 1 - left / (left + ARMOR_K)
-      local extra = amount - amount * keepBase / keepNow
-      for id, d in pairs(mobSet) do
-        local e = self.EFFECTS[id]
-        if e.armor then n = push(shares, n, id, extra * e.armor * (d.stacks or 1) / removed, d.by, d) end
+  local live = self:LiveArmor(target)
+  self:NoteArmor(target, live, nominal)
+  local base = self:MobArmor(target, nominal)
+  local now = live
+  local exact = live ~= nil and nominal > 0 and base - live > 0
+  if not now then
+    now = base - nominal
+    if now < 0 then now = 0 end
+  end
+  local keepNow = 1 - now / (now + ARMOR_K)
+  if nominal > 0 and (exact or estimates) then
+    local keepBase = 1 - base / (base + ARMOR_K)
+    if not exact and live then
+      -- A reading that did not drop: go by the debuffs' sizes instead.
+      now = base - nominal
+      if now < 0 then now = 0 end
+      keepNow = 1 - now / (now + ARMOR_K)
+    end
+    local extra = amount - amount * keepBase / keepNow
+    for id, d in pairs(mobSet) do
+      local e = self.EFFECTS[id]
+      if e.armor then
+        n = push(shares, n, id, extra * e.armor * (d.stacks or 1) / nominal, d.by, d, not exact)
       end
     end
   end
@@ -534,7 +551,7 @@ function V:Physical(attacker, target, amount, crit, ranged, swing)
         n = push(shares, n, id, e.flat < amount and e.flat or amount, d.by, d)
       elseif estimates and e.rangedAp and ranged then
         local sp = self.speed[attacker .. "r"]
-        if sp then n = push(shares, n, id, e.rangedAp / 14 * sp * keepNow * (crit and 2 or 1), d.by, d) end
+        if sp then n = push(shares, n, id, e.rangedAp / 14 * sp * keepNow * (crit and 2 or 1), d.by, d, true) end
       end
     end
   end
@@ -551,59 +568,95 @@ function V:Physical(attacker, target, amount, crit, ranged, swing)
         elseif e.crit then
           size = e.crit * (crit and amount / 2 or amount)
         end
-        if size then n = push(shares, n, id, size, buffProvider(self, e, attacker, id), nil) end
+        if size then n = push(shares, n, id, size, buffProvider(self, e, attacker, id), nil, true) end
       end
     end
   end
   if n == 0 then return end
 
-  -- Estimates never claim most of a hit.
-  local total = 0
-  for i = 1, n do total = total + shares[i].size end
-  local scale = total > amount * 0.75 and amount * 0.75 / total or 1
+  -- Estimates never claim most of a hit; what is exact is taken as it is.
+  local total, exactTotal = 0, 0
+  for i = 1, n do
+    if shares[i].est then total = total + shares[i].size else exactTotal = exactTotal + shares[i].size end
+  end
+  local room = amount * 0.75 - exactTotal
+  if room < 0 then room = 0 end
+  local scale = total > room and (total > 0 and room / total or 0) or 1
   for i = 1, n do
     local s = shares[i]
     local e = self.EFFECTS[s.id]
-    credit(s.id, e.estimate and (e.name .. " (est.)") or e.name, s.size * scale, s.by, s.d, attacker)
+    if s.est then
+      -- Its own row (a negative id): exact and estimated never share one.
+      credit(-s.id, e.name .. " (est.)", s.size * scale, s.by, s.d, attacker)
+    else
+      credit(s.id, e.name, s.size, s.by, s.d, attacker)
+    end
   end
 end
 
---[[ A mob's armor before anyone's debuffs, best source first:
-       live    the client's own unit field (GetUnitField "resistances",
-               armor first), which already has the debuffs taken off --
-               so the base is what it reads plus what they removed
-       learned what a live read gave for a mob of that name before, kept
-               in W.db.mobArmor so the table grows as you raid
-       default a raid boss's, BOSS_ARMOR
-     Read once per mob: the debuffs are followed here, so the live number
-     only has to say where the mob started. ]]
-V.armorOf = {}   -- mob guid -> its base armor, once known
+--[[ A mob's armor, from the game itself (GetUnitField "resistances",
+     armor first). Checked on 10/18: it reads each mob's own armor, and it
+     drops by 450 a Sunder -- so it is the armor NOW, debuffs and all.
+
+       LiveArmor  what it reads now; read at most every half second per
+                  mob. A hidden field reads 0, which is no answer unless
+                  the mob's starting armor is already known
+       MobArmor   where the mob started: a read with none of the tracked
+                  debuffs on it (kept by name in W.db.mobArmor, so the
+                  table grows as you raid); else the first read plus what
+                  the tracked debuffs took off; else a raid boss's ]]
+V.armorOf = {}     -- mob guid -> its starting armor, once known
+V.liveArmor = {}   -- mob guid -> { v, at }
+local LIVE_EVERY = 0.5
+
+function V:LiveArmor(guid)
+  if not GetUnitField then return nil end
+  local now = GetTime()
+  local c = self.liveArmor[guid]
+  if c and now - c.at < LIVE_EVERY then return c.v end
+  local ok, r = pcall(GetUnitField, guid, "resistances")
+  local v = ok and type(r) == "table" and tonumber(r[1]) or nil
+  if v and v <= 0 and not self.armorOf[guid] then v = nil end
+  self.liveArmor[guid] = { v = v, at = now }
+  return v
+end
+
+local function mobName(guid)
+  local u = W.capture.units[guid] or W.capture:Unit(guid)
+  return u and u.name
+end
+
+--- Note a live read: a clean one (none of the tracked debuffs on) is
+--- where the mob started, and is remembered for mobs of its name.
+function V:NoteArmor(guid, live, nominal)
+  if not live then return end
+  if nominal == 0 then
+    self.armorOf[guid] = live
+    local name = mobName(guid)
+    if name and W.db and live > 0 then
+      W.db.mobArmor = W.db.mobArmor or {}
+      W.db.mobArmor[name] = live
+    end
+  elseif not self.armorOf[guid] then
+    local name = mobName(guid)
+    local learned = name and W.db and W.db.mobArmor and W.db.mobArmor[name]
+    self.armorOf[guid] = learned or (live + nominal)
+  end
+end
 
 function V:MobArmor(guid, removed)
   local known = self.armorOf[guid]
   if known then return known end
-  local u = W.capture.units[guid] or W.capture:Unit(guid)
-  local name = u and u.name
-  if GetUnitField and not self.armorOf[guid .. "?"] then
-    self.armorOf[guid .. "?"] = true    -- asked once, answer or not
-    local ok, r = pcall(GetUnitField, guid, "resistances")
-    local live = ok and type(r) == "table" and tonumber(r[1])
-    -- 0 is what a hidden field reads: no answer, not "no armor".
-    if live and live > 0 then
-      local b = live + (removed or 0)
-      self.armorOf[guid] = b
-      if name and W.db then
-        W.db.mobArmor = W.db.mobArmor or {}
-        -- Learned only from a clean read: nothing of ours on it yet.
-        if (removed or 0) == 0 then W.db.mobArmor[name] = b end
-      end
-      return b
-    end
-  end
+  local name = mobName(guid)
   local learned = name and W.db and W.db.mobArmor and W.db.mobArmor[name]
   if learned then
     self.armorOf[guid] = learned
     return learned
+  end
+  local live = self:LiveArmor(guid)
+  if live then
+    self:NoteArmor(guid, live, removed or 0)
+    return self.armorOf[guid]
   end
   return BOSS_ARMOR
 end
