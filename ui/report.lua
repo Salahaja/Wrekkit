@@ -27,6 +27,9 @@ R.tabs = {
   { key = "enemies", label = "Enemies", metric = "enemy" },
   { key = "dispels", label = "Dispels", metric = "dispels" },
   { key = "consumes", label = "Consumes", metric = "consumeCost" },
+  -- Raid value by effect (W.report:Effects): what Sunder, the curses,
+  -- Windfury... added, and who built each. Announces as raid value.
+  { key = "contrib", label = "Raid Contrib", metric = "value", width = 84 },
   { key = "deaths", label = "Deaths" },
 }
 
@@ -301,6 +304,9 @@ function R:AnnounceContext()
     petMode = self.state.petMode,
     drill = self.state.drill,
     drillAbility = self.state.drillAbility,
+    -- The Raid Contrib tab: by effect, both ways on offer, or one effect.
+    contrib = (tab == "contrib") or nil,
+    contribEffect = (tab == "contrib") and self.state.contribDrill or nil,
   }
 end
 
@@ -504,10 +510,20 @@ function R:Create()
        Guarded because the state assignments happen before Refresh, so an
        error here would escape the trap inside Refresh. ]]
   self.tabButtons = {}
-  local x = 8
+  self.tabStrip = tabStrip
+  -- Chained, each to the one before: fitting them to a narrow window
+  -- (LayoutTabs) only changes widths, never re-anchors anything.
+  local prev
   for _, tab in ipairs(self.tabs) do
-    local b = UI.Button(tabStrip, tab.label, 66, TAB_H - 2, nil)
-    b:SetPoint("BOTTOMLEFT", tabStrip, "BOTTOMLEFT", x, 0)
+    local w = tab.width or 66
+    local b = UI.Button(tabStrip, tab.label, w, TAB_H - 2, nil)
+    b.naturalW = w
+    if prev then
+      b:SetPoint("BOTTOMLEFT", prev, "BOTTOMRIGHT", 2, 0)
+    else
+      b:SetPoint("BOTTOMLEFT", tabStrip, "BOTTOMLEFT", 8, 0)
+    end
+    prev = b
     b.tabKey = tab.key
     b.tabMetric = tab.metric
 
@@ -516,14 +532,13 @@ function R:Create()
       W.Guard("tab click", function()
         if not R.state then R.state = {} end
         R.state.tab = btn.tabKey or "summary"
-        R.state.drill = nil R.state.deathDrill = nil
+        R.state.drill = nil R.state.deathDrill = nil R.state.contribDrill = nil
         if btn.tabMetric then R.state.sortKey = btn.tabMetric end
         R:Refresh()
       end)
     end)
 
     self.tabButtons[tab.key] = b
-    x = x + 68
   end
 
   ------------------------------------------------------------------
@@ -974,9 +989,30 @@ function R:Refresh()
   W.Guard("report refresh", function() R:RefreshInner() end)
 end
 
+--- Fit the tabs to the strip: their own widths when there is room, all
+--- narrowed alike when the window is too small for them.
+function R:LayoutTabs()
+  local strip = self.tabStrip
+  if not strip then return end
+  local have = UI.FrameWidth(strip) - 16
+  local want, n = 0, 0
+  for _, tab in ipairs(self.tabs) do
+    want = want + (tab.width or 66)
+    n = n + 1
+  end
+  local gaps = 2 * (n - 1)
+  local scale = 1
+  if have > 0 and want + gaps > have then scale = (have - gaps) / want end
+  for _, tab in ipairs(self.tabs) do
+    local b = self.tabButtons[tab.key]
+    if b then b:SetWidth(math.floor((b.naturalW or 66) * scale)) end
+  end
+end
+
 function R:RefreshInner()
   local f = self.frame
   if not f or not f:IsShown() then return end
+  self:LayoutTabs()
 
   for key, b in pairs(self.tabButtons) do b:SetActive(key == self.state.tab) end
   if self.groupBtn then self.groupBtn:SetLit(self.state.groupOnly == true) end
@@ -1022,6 +1058,10 @@ function R:RefreshInner()
     self.chart:Hide() self.sumLeft:Hide() self.sumRight:Hide()
     self.mainPane:Show()
     self:FillDeaths(view)
+  elseif tab == "contrib" then
+    self.chart:Hide() self.sumLeft:Hide() self.sumRight:Hide()
+    self.mainPane:Show()
+    self:FillContrib(view)
   else
     self.chart:Hide() self.sumLeft:Hide() self.sumRight:Hide()
     self.mainPane:Show()
@@ -1031,6 +1071,72 @@ function R:RefreshInner()
     end
     self:FillTable(self.mainPane, self.mainList, view, metricKey)
   end
+end
+
+--[[ The Raid Contrib tab: one row per effect -- its total and how many
+     players built it -- damage effects first, then the mana and health
+     judgements give back. Click one for who added how much of it; click
+     again to go back. Empty until Raid value is recording. ]]
+function R:FillContrib(view)
+  local filter = self:Filter()
+  local effects = {}
+  for _, e in ipairs(W.report:Effects(view, "value", filter)) do table.insert(effects, e) end
+  for _, e in ipairs(W.report:Effects(view, "support", filter)) do table.insert(effects, e) end
+  local pane, list = self.mainPane, self.mainList
+
+  local function unit(e)
+    if e.kind ~= "support" then return "" end
+    return e.name == "Judgement of Wisdom" and " mana" or " heal"
+  end
+
+  if self.state.contribDrill then
+    local target
+    for _, e in ipairs(effects) do
+      if e.name == self.state.contribDrill then target = e end
+    end
+    if target then
+      pane.titleText:SetText(target.name)
+      pane.totalText:SetText(W.Short(target.total) .. unit(target) .. "   (click to go back)")
+      list:SetData(target.players, function(row, p, i)
+        local pct = target.total > 0 and (p.amount / target.total * 100) or 0
+        row:SetData(i, p.name, W.Short(p.amount) .. unit(target), string.format("%.1f%%", pct),
+          target.total > 0 and p.amount / target.total or 0, W.ClassColor(p.class), 110)
+        row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+        row:SetScript("OnClick", function()
+          R.state.contribDrill = nil
+          R:Refresh()
+        end)
+      end)
+      return
+    end
+    self.state.contribDrill = nil
+  end
+
+  pane.titleText:SetText("Raid Contrib")
+  if table.getn(effects) == 0 then
+    pane.totalText:SetText(W.value and W.value:Enabled() and "nothing recorded"
+      or "turn on Raid value (Settings > Recording)")
+  else
+    local dmg = 0
+    for _, e in ipairs(effects) do if e.kind == "value" then dmg = dmg + e.total end end
+    pane.totalText:SetText(W.Short(dmg) .. " added   (click an effect for who)")
+  end
+  local top = 0
+  for _, e in ipairs(effects) do
+    if e.kind == "value" and e.total > top then top = e.total end
+  end
+  list:SetData(effects, function(row, e, i)
+    local n = table.getn(e.players)
+    local frac = (e.kind == "value" and top > 0) and e.total / top or 0
+    row:SetData(i, e.name, W.Short(e.total) .. unit(e),
+      n .. " player" .. (n == 1 and "" or "s"), frac, W.color.accent, 110)
+    row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    local name = e.name
+    row:SetScript("OnClick", function()
+      R.state.contribDrill = name
+      R:Refresh()
+    end)
+  end)
 end
 
 function R:FillDeaths(view)

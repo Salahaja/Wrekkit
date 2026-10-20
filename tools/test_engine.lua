@@ -570,12 +570,17 @@ check("named from the table when the client has not cached it",
   Wrekkit.capture.groupMembers = { Fuff = true }
   E.live, E.inCombat, E.held = nil, false, {}
   fire("SPELL_GO_SELF", 13446, 17534, "0xP1", "0xP1")    -- you, before the pull
-  fire("SPELL_GO_OTHER", 0, 17534, "0xP2", "0xP2")       -- not in your group
-  check("used between pulls: held", table.getn(E.held), 1)
+  fire("SPELL_GO_OTHER", 0, 17534, "0xP2", "0xP2")       -- not in your group (yet)
+  check("used between pulls: held, whoever drank", table.getn(E.held), 2)
   E:CombatStart()
-  local fuff
-  for _, a in pairs(E.live.actors) do if a.name == "Fuff" then fuff = a end end
+  local fuff, priest
+  for _, a in pairs(E.live.actors) do
+    if a.name == "Fuff" then fuff = a end
+    if a.name == "Elfpriest" then priest = a end
+  end
   check("  and credited to the next pull", fuff and fuff.consumes, 1)
+  check("  only if in the group when it starts", priest and priest.consumes or 0, 0)
+  check("  and unmarked, so it can count later", Wrekkit.db.consumeCredit["0xP2:17534"], nil)
   check("  the hold emptied", table.getn(E.held), 0)
   -- Long before (yesterday's flask): not tonight's first pull's.
   E.live, E.inCombat = nil, false
@@ -616,6 +621,20 @@ end)()
   -- A buff that is no consumable's: nothing.
   C:Buff("0xP1", 4, 25290, true, 0)
   check("other buffs are not consumables", table.getn(E.held), 3)
+  -- 10/17 Molten Core: a tank flasks before the invite. Its drink is
+  -- not the group's yet, but its flask, found on them once they are, is.
+  E.held = {}
+  C.groupMembers = { Fuff = true }
+  fire("SPELL_GO_OTHER", 0, 17626, "0xP2", "0xP2")   -- Elfpriest, not yet invited
+  E:CombatStart()
+  E:CombatEnd()
+  C.groupMembers = { Fuff = true, Elfpriest = true }
+  UnitBuff = function(unit, i) if unit == "0xP2" and i == 1 then return "tex", 1, 17626 end end
+  C.buffs["0xP2"] = nil
+  E.live, E.held = nil, {}
+  C:SeedBuffs("0xP2")
+  UnitBuff = realUB
+  check("a flask drunk before the invite counts once they join", E.held[1] and E.held[1].itemId, 13510)
   E.live, E.held, C.buffs = realLive, {}, realBuffs
   C.groupMembers, Wrekkit.db.consumeCredit = realGroup, {}
 end)()
@@ -4260,6 +4279,7 @@ Wrekkit.capture.buffs = {}
 local realInfo = SpellInfo
 SpellInfo = function(id)
   if id == 20271 then return "Judgement", nil, "x" end
+  if id == 20218 then return "Sanctity Aura", nil, "x" end
   if id == 51750 then return "Judgement of Wisdom", "Rank 5", "x" end
   if id == 20343 then return "Judgement of Light", "Rank 4", "x" end
   return realInfo(id)
@@ -4321,16 +4341,43 @@ hit("0xV3", "0xMage", 10207, 1380, 2)
 check("PI's share beside 5 stacks of Fire Vulnerability", eff("0xPri", 10060), 100 + 380 * 0.18232 / (0.18232 + 0.13976), 0.05)
 check("Fire Vulnerability goes to the mage", eff("0xMage", 22959), 380 * 0.13976 / (0.18232 + 0.13976), 0.05)
 
--- Sanctity: only for the paladin's own group.
+-- Sanctity: only for the paladin's own group -- and only the paladin who
+-- put it up, not another one holding it.
+fire("AURA_CAST_ON_OTHER", 20218, "0xPal", "0xPal")
 fire("BUFF_ADDED_OTHER", "0xPal", 1, 20218, 1, 60, 1, 0)
 fire("BUFF_ADDED_OTHER", "0xPal2", 1, 20218, 1, 60, 1, 0)
 fire("BUFF_ADDED_OTHER", "0xHoly", 1, 20218, 1, 60, 1, 0)
 hit("0xV4", "0xPal2", 20293, 1100, 1)
-check("Sanctity credits a paladin who has it", val("0xPal") + val("0xPal2"), 100, 0.01)
+check("Sanctity credits the paladin who cast it", val("0xPal"), 100, 0.01)
+check("not another paladin holding it", val("0xPal2"), 0)
 local before = val("0xPal") + val("0xPal2")
 hit("0xV4", "0xHoly", 15261, 1100, 1)
 check("not a paladin of another group", val("0xPal") + val("0xPal2"), before, 0.01)
 check("which is kept unattributed", enc.valueUnknown, 100, 0.01)
+;(function()
+  -- Nothing seen cast: two paladins hold it, and you (Retguy) run another
+  -- aura -- your stance bar says so -- so it is the other one's.
+  local V = Wrekkit.value
+  V.castBy, V.partyCache = {}, {}
+  local realPlayer = WORLD["player"]
+  WORLD["player"] = WORLD["0xPal2"]
+  GetNumShapeshiftForms = function() return 2 end
+  GetShapeshiftFormInfo = function(i)
+    if i == 1 then return "x", "Retribution Aura", 1 end
+    return "x", "Devotion Aura", nil
+  end
+  local before = val("0xPal")
+  hit("0xV4", "0xPal2", 20293, 1100, 1)
+  check("your own aura rules you out of another's Sanctity", val("0xPal") - before, 100, 0.01)
+  GetShapeshiftFormInfo = function(i) return "x", "Sanctity Aura", i == 1 and 1 or nil end
+  V.partyCache = {}
+  local both = val("0xPal") + val("0xPal2")
+  hit("0xV4", "0xPal2", 20293, 1100, 1)
+  check("two who could be it, none known: nobody guessed", val("0xPal") + val("0xPal2"), both, 0.01)
+  GetNumShapeshiftForms, GetShapeshiftFormInfo = nil, nil
+  WORLD["player"] = realPlayer
+  V.partyCache = {}
+end)()
 
 -- Judgement of the Crusader: a flat 140 Holy, to the judging paladin.
 fire("SPELL_GO_OTHER", 0, 20271, "0xPal", "0xV5")
@@ -4554,6 +4601,42 @@ check("an armor reading that did not drop counts nothing exact", eff("0xRog", 11
 ARMOR_NOW = nil
 GetUnitField = function() return "" end
 Wrekkit.db.mobArmor = nil
+
+-- By effect, for the report's Raid Contrib tab: biggest first, each with
+-- who added how much, biggest first too.
+local byEffect = Wrekkit.report:Effects(Wrekkit.report:View({ enc }, {}), "value")
+check("effects come biggest first", byEffect[1] and byEffect[2] and byEffect[1].total >= byEffect[2].total, true)
+local sunderE
+for _, e in ipairs(byEffect) do if e.name == "Sunder Armor (est.)" then sunderE = e end end
+check("a shared effect lists both its builders", sunderE and table.getn(sunderE.players), 2)
+check("its biggest builder first", sunderE and sunderE.players[1].amount >= sunderE.players[2].amount, true)
+check("support is its own list", table.getn(Wrekkit.report:Effects(Wrekkit.report:View({ enc }, {}), "support")) > 0, true)
+
+-- Announced from the Raid Contrib tab: either way, whatever the setting,
+-- support included; and drilled in, one effect's builders.
+;(function()
+  local function has(ls, pat)
+    for _, l in ipairs(ls) do if string.find(l, pat, 1, true) then return l end end
+    return nil
+  end
+  local ctx = { metric = "value", metrics = { "value" }, encounters = { enc }, label = "Test",
+                contrib = true, valueMode = "combined" }
+  local lines = Wrekkit.announce:Lines(ctx, 15)
+  local sl = has(lines, "Sunder Armor (est.)")
+  check("contrib, totals: Sunder's builders counted", sl and string.find(sl, "(2 players)", 1, true) ~= nil, true)
+  check("contrib, totals: and not named", sl and string.find(sl, "Tanky", 1, true), nil)
+  check("contrib includes what judgements give back", has(lines, "Judgement of Wisdom") ~= nil, true)
+  ctx.valueMode = "individual"
+  lines = Wrekkit.announce:Lines(ctx, 15)
+  sl = has(lines, "Sunder Armor (est.)")
+  check("contrib, individual: each builder named", sl and string.find(sl, "Tanky", 1, true) ~= nil
+    and string.find(sl, "Second", 1, true) ~= nil, true)
+  ctx.contribEffect = "Sunder Armor (est.)"
+  lines = Wrekkit.announce:Lines(ctx, 15)
+  check("one effect: its total in the header", string.find(lines[1], "Sunder Armor (est.)", 1, true) ~= nil
+    and string.find(lines[1], "from 2 players", 1, true) ~= nil, true)
+  check("one effect: a line per builder", lines[2] and lines[3] and string.find(lines[2], "%%") ~= nil, true)
+end)()
 
 -- Switched off, nothing more is counted.
 Wrekkit.db.raidValue = nil

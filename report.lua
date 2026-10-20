@@ -650,6 +650,36 @@ end
 --- Produce the ranked, filtered rows for a metric.
 --- Each returned row carries _v (the ranked number), _rank, _pct (share of
 --- the visible total) and _frac (bar length, 0..1 against the leader).
+--[[ Raid value by EFFECT rather than by player: each effect's total over
+     the view, and who added how much of it, biggest first. key is "value"
+     (damage) or "support" (mana and healing). Used by the report's Raid
+     Contrib tab and by announcing raid value. ]]
+function R:Effects(view, key, filter)
+  local rows = self:Rank(view, key, filter)
+  local detail = (key == "support") and "valueSupport" or "valueEffect"
+  local byName, order = {}, {}
+  for _, r in ipairs(rows) do
+    local who, class = r.name or "?", r.class
+    eachAbility(r[detail], function(id, a)
+      local amount = a.amount or 0
+      if amount > 0 and a.name then
+        local e = byName[a.name]
+        if not e then
+          e = { name = a.name, total = 0, players = {}, kind = key }
+          byName[a.name] = e
+          table.insert(order, e)
+        end
+        e.total = e.total + amount
+        table.insert(e.players, { name = who, class = class, amount = amount })
+      end
+    end)
+  end
+  local byAmount = function(x, y) return x.amount > y.amount end
+  for _, e in ipairs(order) do table.sort(e.players, byAmount) end
+  table.sort(order, function(x, y) return x.total > y.total end)
+  return order
+end
+
 function R:Rank(view, metricKey, filter)
   local metric = W.metrics.Get(metricKey)
   local ctx = { duration = view.rateBase, view = view }

@@ -943,28 +943,48 @@ end
      Greater Fire Protection Potion drunk on the pull -- and a tracker that
      only listened during a fight missed exactly those.
 
-     Only your own group's: out of a pull you are as likely as not standing
-     in a city full of strangers eating. And only from the last two hours,
-     so a flask from last night's raid is not credited to tonight's first
-     pull. Kept to HELD_MAX, oldest dropped first. ]]
+     Your own group's -- but judged when the pull STARTS, not when they
+     drank. A raid flasks while it forms, before half of it is invited:
+     judged at the drink, those were dropped, yet marked as counted, so the
+     flask found running on them later was skipped too. On 10/17 that lost
+     8 of 15 flasks in Molten Core, Flask of the Titans every time. Held
+     from anyone, then; whoever is still not in the group when the pull
+     starts is dropped and unmarked, so their running flask counts later.
+
+     Only from the last two hours, so a flask from last night's raid is not
+     credited to tonight's first pull. Kept to HELD_MAX, oldest dropped
+     first (and unmarked). ]]
 local HELD_MAX = 400
 local HELD_FOR = 7200
 E.held = {}
 
 function E:HoldConsumable(guid, itemId, spellId)
   local u = W.capture.units[guid] or W.capture:Unit(guid)
-  if not u or not u.name or not W.capture:InGroup(u.name) then return end
-  if table.getn(self.held) >= HELD_MAX then table.remove(self.held, 1) end
+  if not u or not u.name or u.isPlayer == false then
+    W.capture:ForgetCredit(guid, spellId)
+    return
+  end
+  if table.getn(self.held) >= HELD_MAX then
+    local old = table.remove(self.held, 1)
+    W.capture:ForgetCredit(old.guid, old.spellId)
+  end
   table.insert(self.held, { guid = guid, itemId = itemId, spellId = spellId, at = GetTime() })
 end
 
---- A pull has started: everything held goes to it.
+--- A pull has started: everything held from its group goes to it.
 function E:CreditHeld()
   local held = self.held
   self.held = {}
   local now = GetTime()
   for _, h in ipairs(held) do
-    if now - h.at <= HELD_FOR then self:Consumable(h.guid, h.itemId, h.spellId) end
+    local u = W.capture.units[h.guid]
+    if now - h.at <= HELD_FOR and u and u.name and W.capture:InGroup(u.name) then
+      self:Consumable(h.guid, h.itemId, h.spellId)
+    else
+      -- Not ours to count now -- but if they join and are found wearing
+      -- it, that should count, so it must not read as counted already.
+      W.capture:ForgetCredit(h.guid, h.spellId)
+    end
   end
 end
 

@@ -1337,6 +1337,83 @@ step("windows render during a LIVE pull", function()
   UI.report.state.tab = "summary"
 end)
 
+step("report: the Raid Contrib tab lists effects and drills into one", function()
+  local real = Wrekkit.report.Effects
+  Wrekkit.report.Effects = function(self, view, key)
+    if key == "support" then
+      return { { name = "Judgement of Wisdom", total = 900, kind = "support",
+                 players = { { name = "Holyguy", class = "PALADIN", amount = 900 } } } }
+    end
+    return { { name = "Sunder Armor", total = 60000, kind = "value",
+               players = { { name = "Wiredbro", class = "WARRIOR", amount = 40000 },
+                           { name = "Manner", class = "WARRIOR", amount = 20000 } } } }
+  end
+  UI.report.state.tab = "contrib"
+  UI.report:Refresh()
+  local rows = UI.report.mainList.rows
+  if not (rows[1] and rows[1]:IsShown() and rows[2] and rows[2]:IsShown()) then
+    Wrekkit.report.Effects = real
+    error("the Raid Contrib tab did not show its two effects")
+  end
+  arg1 = "LeftButton"
+  rows[1]:GetScript("OnClick")()
+  if UI.report.state.contribDrill ~= "Sunder Armor" then
+    Wrekkit.report.Effects = real
+    error("clicking an effect did not open it")
+  end
+  if not (rows[2] and rows[2]:IsShown()) then
+    Wrekkit.report.Effects = real
+    error("the effect did not list its two builders")
+  end
+  -- Drilled in, announcing offers the channels once: that effect's builders.
+  local ctx = UI.report:AnnounceContext()
+  if ctx.contribEffect ~= "Sunder Armor" then
+    Wrekkit.report.Effects = real
+    error("drilled in, the announcement is not about that effect")
+  end
+  rows[1]:GetScript("OnClick")()
+  Wrekkit.report.Effects = real
+  if UI.report.state.contribDrill ~= nil then error("clicking again did not go back") end
+  -- Not drilled in: both ways on offer, each with its channels.
+  ctx = UI.report:AnnounceContext()
+  if not ctx.contrib or ctx.contribEffect then error("the tab's announcement is not by effect") end
+  UI.report.state.tab = "summary"
+  UI.report:Refresh()
+end)
+
+step("announce: lines can be left out, and contrib names who added each", function()
+  local real = Wrekkit.report.Effects
+  Wrekkit.report.Effects = function(self, view, key)
+    if key == "support" then return {} end
+    return {
+      { name = "Sunder Armor", total = 60000, kind = "value",
+        players = { { name = "Wiredbro", amount = 40000 }, { name = "Manner", amount = 20000 } } },
+      { name = "Curse of Shadow", total = 30000, kind = "value", players = { { name = "Nuse", amount = 30000 } } },
+      { name = "Windfury Totem", total = 20000, kind = "value", players = { { name = "Totem", amount = 20000 } } },
+    }
+  end
+  local ctx = { metric = "value", metrics = { "value" }, encounters = {}, label = "Test", contrib = true }
+  local lines = Wrekkit.announce:Lines(ctx, 5)
+  local sent
+  UI.ConfirmAnnounce(lines, "SAY", nil, function(_, final) sent = final end, ctx)
+  local dlg = _G["WrekkitConfirm"]
+  local fail
+  if not dlg.contribCheck:IsShown() then fail = "the contrib dialog has no 'who added it' box" end
+  -- Leave Curse of Shadow out: line 3 (the header is line 1).
+  arg1 = "LeftButton"
+  if not fail then dlg.rowBtns[3]:GetScript("OnClick")() end
+  -- Name who added each.
+  if not fail then dlg.contribCheck:GetScript("OnClick")() end
+  if not fail then dlg.sendBtn:GetScript("OnClick")() end
+  Wrekkit.report.Effects = real
+  if fail then error(fail) end
+  if not sent then error("nothing was sent") end
+  local joined = table.concat(sent, "|")
+  if string.find(joined, "Curse of Shadow", 1, true) then error("a line left out was still sent") end
+  if not string.find(joined, "Wiredbro", 1, true) then error("ticking 'who added it' did not name the builders") end
+  if not string.find(joined, "2. Windfury Totem", 1, true) then error("the lines were not numbered again: " .. joined) end
+end)
+
 step("clicking real handlers (not just setting state)", function()
   -- Driving state directly skips the closures the buttons actually run, so
   -- a nil upvalue inside one would never surface. Fire them for real.
