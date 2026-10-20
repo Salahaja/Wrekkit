@@ -570,12 +570,17 @@ check("named from the table when the client has not cached it",
   Wrekkit.capture.groupMembers = { Fuff = true }
   E.live, E.inCombat, E.held = nil, false, {}
   fire("SPELL_GO_SELF", 13446, 17534, "0xP1", "0xP1")    -- you, before the pull
-  fire("SPELL_GO_OTHER", 0, 17534, "0xP2", "0xP2")       -- not in your group
-  check("used between pulls: held", table.getn(E.held), 1)
+  fire("SPELL_GO_OTHER", 0, 17534, "0xP2", "0xP2")       -- not in your group (yet)
+  check("used between pulls: held, whoever drank", table.getn(E.held), 2)
   E:CombatStart()
-  local fuff
-  for _, a in pairs(E.live.actors) do if a.name == "Fuff" then fuff = a end end
+  local fuff, priest
+  for _, a in pairs(E.live.actors) do
+    if a.name == "Fuff" then fuff = a end
+    if a.name == "Elfpriest" then priest = a end
+  end
   check("  and credited to the next pull", fuff and fuff.consumes, 1)
+  check("  only if in the group when it starts", priest and priest.consumes or 0, 0)
+  check("  and unmarked, so it can count later", Wrekkit.db.consumeCredit["0xP2:17534"], nil)
   check("  the hold emptied", table.getn(E.held), 0)
   -- Long before (yesterday's flask): not tonight's first pull's.
   E.live, E.inCombat = nil, false
@@ -616,6 +621,20 @@ end)()
   -- A buff that is no consumable's: nothing.
   C:Buff("0xP1", 4, 25290, true, 0)
   check("other buffs are not consumables", table.getn(E.held), 3)
+  -- 10/17 Molten Core: a tank flasks before the invite. Its drink is
+  -- not the group's yet, but its flask, found on them once they are, is.
+  E.held = {}
+  C.groupMembers = { Fuff = true }
+  fire("SPELL_GO_OTHER", 0, 17626, "0xP2", "0xP2")   -- Elfpriest, not yet invited
+  E:CombatStart()
+  E:CombatEnd()
+  C.groupMembers = { Fuff = true, Elfpriest = true }
+  UnitBuff = function(unit, i) if unit == "0xP2" and i == 1 then return "tex", 1, 17626 end end
+  C.buffs["0xP2"] = nil
+  E.live, E.held = nil, {}
+  C:SeedBuffs("0xP2")
+  UnitBuff = realUB
+  check("a flask drunk before the invite counts once they join", E.held[1] and E.held[1].itemId, 13510)
   E.live, E.held, C.buffs = realLive, {}, realBuffs
   C.groupMembers, Wrekkit.db.consumeCredit = realGroup, {}
 end)()

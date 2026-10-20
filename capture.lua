@@ -973,6 +973,12 @@ function C:NoteCredit(guid, spellId, aura)
   end
 end
 
+--- Not counted after all (see E:CreditHeld): its buff may still be.
+function C:ForgetCredit(guid, spellId)
+  local store = self:CreditStore()
+  store[creditKey(guid, spellId)] = nil
+end
+
 --- A consumable's buff came up on a group member (or was found up).
 function C:BuffConsumable(guid, spellId)
   if not (W.consumesDB and W.consumesDB[spellId])
