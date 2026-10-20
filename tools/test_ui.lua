@@ -1337,6 +1337,41 @@ step("windows render during a LIVE pull", function()
   UI.report.state.tab = "summary"
 end)
 
+step("report: the Raid Contrib tab lists effects and drills into one", function()
+  local real = Wrekkit.report.Effects
+  Wrekkit.report.Effects = function(self, view, key)
+    if key == "support" then
+      return { { name = "Judgement of Wisdom", total = 900, kind = "support",
+                 players = { { name = "Holyguy", class = "PALADIN", amount = 900 } } } }
+    end
+    return { { name = "Sunder Armor", total = 60000, kind = "value",
+               players = { { name = "Wiredbro", class = "WARRIOR", amount = 40000 },
+                           { name = "Manner", class = "WARRIOR", amount = 20000 } } } }
+  end
+  UI.report.state.tab = "contrib"
+  UI.report:Refresh()
+  local rows = UI.report.mainList.rows
+  if not (rows[1] and rows[1]:IsShown() and rows[2] and rows[2]:IsShown()) then
+    Wrekkit.report.Effects = real
+    error("the Raid Contrib tab did not show its two effects")
+  end
+  arg1 = "LeftButton"
+  rows[1]:GetScript("OnClick")()
+  if UI.report.state.contribDrill ~= "Sunder Armor" then
+    Wrekkit.report.Effects = real
+    error("clicking an effect did not open it")
+  end
+  if not (rows[2] and rows[2]:IsShown()) then
+    Wrekkit.report.Effects = real
+    error("the effect did not list its two builders")
+  end
+  rows[1]:GetScript("OnClick")()
+  Wrekkit.report.Effects = real
+  if UI.report.state.contribDrill ~= nil then error("clicking again did not go back") end
+  UI.report.state.tab = "summary"
+  UI.report:Refresh()
+end)
+
 step("clicking real handlers (not just setting state)", function()
   -- Driving state directly skips the closures the buttons actually run, so
   -- a nil upvalue inside one would never surface. Fire them for real.

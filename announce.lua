@@ -170,26 +170,8 @@ local function supportUnit(name)
 end
 
 function A:ValueLines(ctx, view, count, key)
-  local rows, metric = W.report:Rank(view, key, ctx.filter)
-  local detailKey = (key == "support") and "valueSupport" or "valueEffect"
-  local byName, order = {}, {}
-  for _, r in ipairs(rows) do
-    local who = r.name or "?"
-    W.report.eachAbility(r[detailKey], function(id, a)
-      local amount = a.amount or 0
-      if amount > 0 and a.name then
-        local e = byName[a.name]
-        if not e then
-          e = { name = a.name, total = 0, players = {} }
-          byName[a.name] = e
-          table.insert(order, e)
-        end
-        e.total = e.total + amount
-        table.insert(e.players, { name = who, amount = amount })
-      end
-    end)
-  end
-  table.sort(order, function(x, y) return x.total > y.total end)
+  local metric = W.metrics.Get(key)
+  local order = W.report:Effects(view, key, ctx.filter)
 
   local individual = W.db and W.db.valueAnnounce == "individual"
   local out = {
@@ -209,7 +191,6 @@ function A:ValueLines(ctx, view, count, key)
     local unit = (key == "support") and supportUnit(e.name) or ""
     local n = table.getn(e.players)
     if individual then
-      table.sort(e.players, function(x, y) return x.amount > y.amount end)
       local who = {}
       for j = 1, NAMES_PER_LINE do
         local pl = e.players[j]

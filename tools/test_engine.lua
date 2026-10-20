@@ -4555,6 +4555,16 @@ ARMOR_NOW = nil
 GetUnitField = function() return "" end
 Wrekkit.db.mobArmor = nil
 
+-- By effect, for the report's Raid Contrib tab: biggest first, each with
+-- who added how much, biggest first too.
+local byEffect = Wrekkit.report:Effects(Wrekkit.report:View({ enc }, {}), "value")
+check("effects come biggest first", byEffect[1] and byEffect[2] and byEffect[1].total >= byEffect[2].total, true)
+local sunderE
+for _, e in ipairs(byEffect) do if e.name == "Sunder Armor (est.)" then sunderE = e end end
+check("a shared effect lists both its builders", sunderE and table.getn(sunderE.players), 2)
+check("its biggest builder first", sunderE and sunderE.players[1].amount >= sunderE.players[2].amount, true)
+check("support is its own list", table.getn(Wrekkit.report:Effects(Wrekkit.report:View({ enc }, {}), "support")) > 0, true)
+
 -- Switched off, nothing more is counted.
 Wrekkit.db.raidValue = nil
 local total = val("0xLock")
