@@ -304,6 +304,9 @@ function R:AnnounceContext()
     petMode = self.state.petMode,
     drill = self.state.drill,
     drillAbility = self.state.drillAbility,
+    -- The Raid Contrib tab: by effect, both ways on offer, or one effect.
+    contrib = (tab == "contrib") or nil,
+    contribEffect = (tab == "contrib") and self.state.contribDrill or nil,
   }
 end
 

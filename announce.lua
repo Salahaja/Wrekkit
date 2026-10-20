@@ -169,13 +169,84 @@ local function supportUnit(name)
   return " healing"
 end
 
+--- Every effect, damage then support, as the report's Raid Contrib tab
+--- lists them.
+local function allEffects(view, filter)
+  local out = {}
+  for _, e in ipairs(W.report:Effects(view, "value", filter)) do table.insert(out, e) end
+  for _, e in ipairs(W.report:Effects(view, "support", filter)) do table.insert(out, e) end
+  return out
+end
+
+--[[ How raid value is told: ctx.valueMode when the announcement picked one
+     (the Raid Contrib tab offers both), else the "Announce raid value"
+     setting. "individual" names who added each effect; "combined" only
+     says how many players built it. ]]
+local function individualMode(ctx)
+  local mode = ctx.valueMode or (W.db and W.db.valueAnnounce)
+  return mode == "individual"
+end
+
+--- One effect, everyone who built it -- the Raid Contrib tab drilled in.
+function A:EffectLines(ctx, view, count, name)
+  local target
+  for _, e in ipairs(allEffects(view, ctx.filter)) do
+    if e.name == name then target = e end
+  end
+  if not target then return nil end
+  local unit = (target.kind == "support") and supportUnit(target.name) or ""
+  local n = table.getn(target.players)
+  local out = {
+    string.format("Wrekkit  %s - %s (%s): %s%s from %d player%s%s", target.name, ctx.label or "?",
+      W.Duration(view.rateBase), W.Short(target.total), unit, n, n == 1 and "" or "s", filterNote(ctx)),
+  }
+  for i = 1, count do
+    local p = target.players[i]
+    if not p then break end
+    local pct = target.total > 0 and p.amount / target.total * 100 or 0
+    table.insert(out, string.format("%d. %s  %s%s (%.1f%%)", i, p.name, W.Short(p.amount), unit, pct))
+  end
+  if n > count then table.insert(out, string.format("  ...and %d more", n - count)) end
+  if string.find(target.name, "(est.)", 1, true) then table.insert(out, "  (est.) = estimated") end
+  return out
+end
+
+--[[ The Raid Contrib tab's list, fitted to `count` lines: the damage
+     effects, but with room kept at the end for what the judgements give
+     back -- otherwise a long list never reaches them. Returns the lines'
+     effects and how many effects there were in all. ]]
+local function contribOrder(view, filter, count)
+  local dmg = W.report:Effects(view, "value", filter)
+  local sup = W.report:Effects(view, "support", filter)
+  local keep = table.getn(sup)
+  if keep > 2 then keep = 2 end
+  if keep > count - 1 then keep = count - 1 end
+  if keep < 0 then keep = 0 end
+  local out = {}
+  for i = 1, count - keep do
+    if not dmg[i] then break end
+    table.insert(out, dmg[i])
+  end
+  for i = 1, count - table.getn(out) do
+    if not sup[i] then break end
+    table.insert(out, sup[i])
+  end
+  return out, table.getn(dmg) + table.getn(sup)
+end
+
 function A:ValueLines(ctx, view, count, key)
   local metric = W.metrics.Get(key)
-  local order = W.report:Effects(view, key, ctx.filter)
+  local order, all
+  if ctx.contrib then
+    order, all = contribOrder(view, ctx.filter, count)
+  else
+    order = W.report:Effects(view, key, ctx.filter)
+    all = table.getn(order)
+  end
 
-  local individual = W.db and W.db.valueAnnounce == "individual"
+  local individual = individualMode(ctx)
   local out = {
-    string.format("Wrekkit  %s by effect - %s (%s)%s", W.metrics.Label(metric),
+    string.format("Wrekkit  %s by effect - %s (%s)%s", ctx.contrib and "Raid contribution" or W.metrics.Label(metric),
       ctx.label or "?", W.Duration(view.rateBase), filterNote(ctx)),
   }
   if table.getn(order) == 0 then
@@ -188,7 +259,7 @@ function A:ValueLines(ctx, view, count, key)
     local e = order[i]
     if not e then break end
     if string.find(e.name, "(est.)", 1, true) then estimated = true end
-    local unit = (key == "support") and supportUnit(e.name) or ""
+    local unit = (e.kind == "support") and supportUnit(e.name) or ""
     local n = table.getn(e.players)
     if individual then
       local who = {}
@@ -205,7 +276,8 @@ function A:ValueLines(ctx, view, count, key)
         unit, n, n == 1 and "" or "s"))
     end
   end
-  local extra = table.getn(order) - count
+  local shown = table.getn(order) < count and table.getn(order) or count
+  local extra = all - shown
   if extra > 0 then
     table.insert(out, string.format("  ...and %d more", extra))
   end
@@ -235,6 +307,11 @@ function A:Lines(ctx, count)
     if drilled then return drilled end
   end
 
+  -- The Raid Contrib tab drilled into one effect: who built it.
+  if ctx.contribEffect then
+    local lines = self:EffectLines(ctx, view, count, ctx.contribEffect)
+    if lines then return lines end
+  end
   -- Raid value and support say what each effect added, not who ranked.
   if table.getn(metrics) == 1 and (metrics[1] == "value" or metrics[1] == "support") then
     return self:ValueLines(ctx, view, count, metrics[1])

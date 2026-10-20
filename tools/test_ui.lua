@@ -1365,9 +1365,18 @@ step("report: the Raid Contrib tab lists effects and drills into one", function(
     Wrekkit.report.Effects = real
     error("the effect did not list its two builders")
   end
+  -- Drilled in, announcing offers the channels once: that effect's builders.
+  local ctx = UI.report:AnnounceContext()
+  if ctx.contribEffect ~= "Sunder Armor" then
+    Wrekkit.report.Effects = real
+    error("drilled in, the announcement is not about that effect")
+  end
   rows[1]:GetScript("OnClick")()
   Wrekkit.report.Effects = real
   if UI.report.state.contribDrill ~= nil then error("clicking again did not go back") end
+  -- Not drilled in: both ways on offer, each with its channels.
+  ctx = UI.report:AnnounceContext()
+  if not ctx.contrib or ctx.contribEffect then error("the tab's announcement is not by effect") end
   UI.report.state.tab = "summary"
   UI.report:Refresh()
 end)

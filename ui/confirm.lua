@@ -425,17 +425,35 @@ end
 --- Picking one leads to the confirmation, never straight to chat.
 function UI.AnnounceMenu(parent, anchor, ctx)
   local items = {}
-  for _, c in ipairs(W.announce.channels) do
-    local ok = c.available()
-    table.insert(items, {
-      text = ok and c.label or (c.label .. "  (not available)"),
-      value = c.key,
-      disabled = not ok,
-    })
+  local function channels(prefix)
+    for _, c in ipairs(W.announce.channels) do
+      local ok = c.available()
+      table.insert(items, {
+        text = ok and c.label or (c.label .. "  (not available)"),
+        value = prefix .. c.key,
+        disabled = not ok,
+      })
+    end
+  end
+  --[[ The Raid Contrib tab, not drilled in: both ways of telling it, each
+       with its channels -- totals only, or who added each effect. ]]
+  local both = ctx and ctx.contrib and not ctx.contribEffect
+  if both then
+    table.insert(items, { text = "-- each effect's total --", disabled = true })
+    channels("combined:")
+    table.insert(items, { text = "-- and who added it --", disabled = true })
+    channels("individual:")
+  else
+    channels("")
   end
 
   UI.Menu(parent, anchor, items, function(key)
     W.Guard("announce menu", function()
+      local _, _, mode, channel = string.find(key or "", "^(%a+):(.+)$")
+      if mode then
+        ctx.valueMode = mode
+        key = channel
+      end
       W.announce:Request(ctx, key, nil, nil)
     end)
   end, 165)

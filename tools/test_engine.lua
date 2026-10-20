@@ -4565,6 +4565,32 @@ check("a shared effect lists both its builders", sunderE and table.getn(sunderE.
 check("its biggest builder first", sunderE and sunderE.players[1].amount >= sunderE.players[2].amount, true)
 check("support is its own list", table.getn(Wrekkit.report:Effects(Wrekkit.report:View({ enc }, {}), "support")) > 0, true)
 
+-- Announced from the Raid Contrib tab: either way, whatever the setting,
+-- support included; and drilled in, one effect's builders.
+;(function()
+  local function has(ls, pat)
+    for _, l in ipairs(ls) do if string.find(l, pat, 1, true) then return l end end
+    return nil
+  end
+  local ctx = { metric = "value", metrics = { "value" }, encounters = { enc }, label = "Test",
+                contrib = true, valueMode = "combined" }
+  local lines = Wrekkit.announce:Lines(ctx, 15)
+  local sl = has(lines, "Sunder Armor (est.)")
+  check("contrib, totals: Sunder's builders counted", sl and string.find(sl, "(2 players)", 1, true) ~= nil, true)
+  check("contrib, totals: and not named", sl and string.find(sl, "Tanky", 1, true), nil)
+  check("contrib includes what judgements give back", has(lines, "Judgement of Wisdom") ~= nil, true)
+  ctx.valueMode = "individual"
+  lines = Wrekkit.announce:Lines(ctx, 15)
+  sl = has(lines, "Sunder Armor (est.)")
+  check("contrib, individual: each builder named", sl and string.find(sl, "Tanky", 1, true) ~= nil
+    and string.find(sl, "Second", 1, true) ~= nil, true)
+  ctx.contribEffect = "Sunder Armor (est.)"
+  lines = Wrekkit.announce:Lines(ctx, 15)
+  check("one effect: its total in the header", string.find(lines[1], "Sunder Armor (est.)", 1, true) ~= nil
+    and string.find(lines[1], "from 2 players", 1, true) ~= nil, true)
+  check("one effect: a line per builder", lines[2] and lines[3] and string.find(lines[2], "%%") ~= nil, true)
+end)()
+
 -- Switched off, nothing more is counted.
 Wrekkit.db.raidValue = nil
 local total = val("0xLock")
