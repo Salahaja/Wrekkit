@@ -238,6 +238,7 @@ end
 --- for a buff (Power Infusion, Thorns), who it came from.
 function V:AuraCast(spellId, caster, target)
   if not self:Enabled() or not target then return end
+  self:NoteGroupCast(spellId, caster)
   local e = self.EFFECTS[spellId]
   if not e and not self.shieldIds[spellId] then return end
   if self.shieldIds[spellId] or e.on == "attacker" then
@@ -386,8 +387,49 @@ end
 -- the paladin's auras, and buffs cast on players
 ----------------------------------------------------------------------
 
+--[[ Who CAST a group aura or shout. Holding the buff proves nothing: a
+     paladin in Shieldbarbie's group carries her Sanctity Aura too, and
+     was credited with it -- 10/18 Scholomance. So:
+       castBy        spellId -> guid -> when they cast it (AURA_CAST)
+       paladinAuras  a paladin's NAME -> the aura they last put up, kept in
+                     W.db: an aura is cast once and then runs for hours, so
+                     a reload must not forget whose it is ]]
+V.castBy = {}
+
+function V:NoteGroupCast(spellId, caster)
+  if not caster then return end
+  local u = W.capture.units[caster]
+  if u and u.class == "PALADIN" and u.name and W.db then
+    local name = spellName(spellId)
+    if name and string.find(name, " Aura$") then
+      W.db.paladinAuras = W.db.paladinAuras or {}
+      W.db.paladinAuras[u.name] = name
+    end
+  end
+  -- Only the ones credited to the group's caster are kept.
+  local e = self.EFFECTS[spellId]
+  if not ((e and e.credit == "party") or self.shieldIds[spellId]) then return end
+  local t = self.castBy[spellId]
+  if not t then
+    t = {}
+    self.castBy[spellId] = t
+  end
+  t[caster] = GetTime()
+end
+
+--- Your own paladin aura, from the stance bar (where 1.12 keeps them).
+local function myAura()
+  if not GetNumShapeshiftForms or not GetShapeshiftFormInfo then return nil end
+  for i = 1, GetNumShapeshiftForms() do
+    local _, name, active = GetShapeshiftFormInfo(i)
+    if active and name then return name end
+  end
+  return nil
+end
+
 --- The player of `class` (the paladin by default) in an attacker's own
---- group with this aura up, or nil. Remembered a few seconds per spell.
+--- group whose aura or shout this is, or nil when that cannot be told.
+--- Remembered a few seconds per spell.
 function V:PartyProvider(attacker, spellId, class)
   class = class or "PALADIN"
   local now = GetTime()
@@ -400,15 +442,38 @@ function V:PartyProvider(attacker, spellId, class)
   if c and now - c.at < 5 then return c.by end
   local me = W.capture.units[attacker]
   local group = me and W.capture:Subgroup(me.name)
-  local by
+  -- Everyone of that class in the group holding it.
+  local cands = {}
   for guid, buffs in pairs(W.capture.buffs) do
     local u = W.capture.units[guid]
     if buffs[spellId] and u and u.isPlayer and u.class == class then
       if guid == attacker or (group and W.capture:Subgroup(u.name) == group) then
-        by = guid
-        if guid == attacker then break end
+        table.insert(cands, guid)
       end
     end
+  end
+  local by
+  -- 1. Whoever was seen casting it, the latest.
+  local cast, at = self.castBy[spellId], nil
+  if cast then
+    for _, g in ipairs(cands) do
+      if cast[g] and (not at or cast[g] > at) then by, at = g, cast[g] end
+    end
+  end
+  -- 2. Else drop the paladins known to run some other aura; one left is it.
+  if not by then
+    local auraName = spellName(spellId)
+    local known = W.db and W.db.paladinAuras
+    local me = UnitName and UnitName("player")
+    local left = {}
+    for _, g in ipairs(cands) do
+      local u = W.capture.units[g]
+      local theirs = known and u and known[u.name]
+      -- Yours is on your stance bar, whatever was or was not seen cast.
+      if u and u.name == me and class == "PALADIN" then theirs = myAura() or theirs end
+      if not (class == "PALADIN" and theirs and theirs ~= auraName) then table.insert(left, g) end
+    end
+    if table.getn(left) == 1 then by = left[1] end
   end
   cache[spellId] = { by = by, at = now }
   return by

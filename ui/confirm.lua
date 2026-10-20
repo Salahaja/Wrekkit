@@ -208,13 +208,32 @@ local function build()
   f.box = box
 
   f.rows = {}
+  f.rowBtns = {}
   for i = 1, MAX_ROWS do
     local t = UI.Text(box, 10, W.color.text)
     t:SetPoint("TOPLEFT", box, "TOPLEFT", 8, -(4 + (i - 1) * ROW_H))
     t:SetPoint("TOPRIGHT", box, "TOPRIGHT", -8, -(4 + (i - 1) * ROW_H))
     t:Hide()
     f.rows[i] = t
+    -- Clicking a numbered line leaves it out of the post (or puts it back).
+    local b = CreateFrame("Button", nil, box)
+    b:SetPoint("TOPLEFT", t, "TOPLEFT", 0, 0)
+    b:SetPoint("BOTTOMRIGHT", t, "BOTTOMRIGHT", 0, 0)
+    b:SetHeight(ROW_H)
+    b._index = i
+    b:Hide()
+    f.rowBtns[i] = b
   end
+
+  -- The Raid Contrib tab: totals only, or who added each effect.
+  f.contribCheck = UI.Check(f, "Name who added each effect",
+    function() return f.valueIndividual == true end,
+    function(v)
+      f.valueIndividual = v and true or false
+      if f.Rebuild then f:Rebuild() end
+    end)
+  f.contribCheck:SetWidth(260)
+  f.contribCheck:Hide()
 
   -- buttons
   local send = UI.Button(f, "Send", 90, 22)
@@ -269,6 +288,13 @@ function UI.ConfirmAnnounce(lines, channel, target, onAccept, ctx)
       picked[k] = true
     end
   end
+  --[[ Lines left out of this post, by what they name (the text after the
+       number, up to the two-space gap) -- so a line stays out when the
+       preview is rebuilt. Reset every open, like the picker. ]]
+  local skip = {}
+  f.skip = skip
+  local contrib = ctx and ctx.contrib and not ctx.contribEffect
+  f.valueIndividual = ((ctx and ctx.valueMode) or (W.db and W.db.valueAnnounce)) == "individual"
   topCount = (ctx and ctx.count) or (W.db and W.db.announceCount) or 5
 
 
@@ -292,9 +318,29 @@ function UI.ConfirmAnnounce(lines, channel, target, onAccept, ctx)
   local anchorTop = needsTarget and f.targetBox or f.headFill
 
   local function layoutControls()
-    local drilled = ctx and ctx.drill
+    local drilled = ctx and (ctx.drill or ctx.contribEffect)
     local controlH = 0
 
+    f.contribCheck:Hide()
+    if contrib then
+      local top = anchorTop
+      for _, chk in ipairs(f.metricChecks) do chk:Hide() end
+      f.contribCheck:ClearAllPoints()
+      f.contribCheck:SetPoint("TOPLEFT", top, "BOTTOMLEFT", (needsTarget and -12 or 12), -8)
+      f.contribCheck:Show()
+      f.contribCheck:Refresh()
+      f.countStepper:ClearAllPoints()
+      f.countStepper:SetPoint("TOPLEFT", top, "BOTTOMLEFT", (needsTarget and -12 or 12), -32)
+      f.countStepper:Show()
+      f.countStepper:Refresh()
+      f.viewNote:ClearAllPoints()
+      f.viewNote:SetPoint("LEFT", f.countStepper, "RIGHT", 12, 0)
+      f.viewNote:SetText("click a line to leave it out")
+      f.viewNote:Show()
+      f.previewLabel:ClearAllPoints()
+      f.previewLabel:SetPoint("TOPLEFT", f.countStepper, "BOTTOMLEFT", 0, -10)
+      return 52
+    end
     if ctx and not drilled then
       local top = anchorTop
       for _, chk in ipairs(f.metricChecks) do
@@ -345,20 +391,59 @@ function UI.ConfirmAnnounce(lines, channel, target, onAccept, ctx)
     return controlH
   end
 
+  local function skipKey(line)
+    local _, _, name = string.find(line or "", "^%d+%. (.-)  ")
+    return name
+  end
+
+  -- What is sent: the lines not left out, numbered again 1, 2, 3...
+  local function kept(all)
+    local out, n = {}, 0
+    for _, l in ipairs(all) do
+      local k = skipKey(l)
+      if not (k and skip[k]) then
+        if k then
+          n = n + 1
+          l = string.gsub(l, "^%d+%. ", n .. ". ", 1)
+        end
+        table.insert(out, l)
+      end
+    end
+    return out
+  end
+
+  local allLines = lines
   local function paint(newLines)
-    lines = newLines
+    allLines = newLines
+    lines = kept(allLines)
     local n = table.getn(lines)
-    local vis = n
+    local vis = table.getn(allLines)
     local cut = false
     if vis > MAX_ROWS then vis = MAX_ROWS cut = true end
 
     for i = 1, MAX_ROWS do
       local t = f.rows[i]
+      local b = f.rowBtns[i]
       if i <= vis then
-        t:SetText(lines[i])
+        local k = skipKey(allLines[i])
+        if k and skip[k] then
+          t:SetText("|cff6f6f6f" .. allLines[i] .. "  (left out)|r")
+        else
+          t:SetText(allLines[i])
+        end
         t:Show()
+        if k then
+          b:Show()
+          b:SetScript("OnClick", function()
+            skip[k] = not skip[k] or nil
+            paint(allLines)
+          end)
+        else
+          b:Hide()
+        end
       else
         t:Hide()
+        b:Hide()
       end
     end
 
@@ -372,7 +457,7 @@ function UI.ConfirmAnnounce(lines, channel, target, onAccept, ctx)
       f.note:SetText("|cffd44f53nothing selected to post|r")
     else
       f.note:SetText(n .. " line" .. (n == 1 and "" or "s") ..
-        (cut and ("  (" .. (n - MAX_ROWS) .. " more not previewed)") or ""))
+        (cut and ("  (" .. (table.getn(allLines) - MAX_ROWS) .. " more not previewed)") or ""))
     end
     f.sendBtn:SetActive(n > 0)
 
@@ -384,14 +469,24 @@ function UI.ConfirmAnnounce(lines, channel, target, onAccept, ctx)
        context's, so two people reading the same post see the same order. ]]
   f.Rebuild = function()
     if not ctx then return end
-    local chosen = {}
-    for _, m in ipairs(ANNOUNCE_METRICS) do
-      if picked[m.key] then table.insert(chosen, m.key) end
-    end
     local probe = {}
     for k, v in pairs(ctx) do probe[k] = v end
-    probe.metrics = chosen
-    probe.metric = chosen[1] or ctx.metric
+    if contrib then
+      probe.valueMode = f.valueIndividual and "individual" or "combined"
+    else
+      local chosen = {}
+      for _, m in ipairs(ANNOUNCE_METRICS) do
+        if picked[m.key] then table.insert(chosen, m.key) end
+      end
+      -- A metric the picker has no box for (Raid value) stays as it came.
+      local listed = {}
+      for _, m in ipairs(ANNOUNCE_METRICS) do listed[m.key] = true end
+      for _, k in ipairs(ctx.metrics or { ctx.metric }) do
+        if k and not listed[k] then table.insert(chosen, k) end
+      end
+      probe.metrics = chosen
+      probe.metric = chosen[1] or ctx.metric
+    end
     paint(W.announce:Lines(probe, topCount))
   end
 
@@ -435,25 +530,10 @@ function UI.AnnounceMenu(parent, anchor, ctx)
       })
     end
   end
-  --[[ The Raid Contrib tab, not drilled in: both ways of telling it, each
-       with its channels -- totals only, or who added each effect. ]]
-  local both = ctx and ctx.contrib and not ctx.contribEffect
-  if both then
-    table.insert(items, { text = "-- each effect's total --", disabled = true })
-    channels("combined:")
-    table.insert(items, { text = "-- and who added it --", disabled = true })
-    channels("individual:")
-  else
-    channels("")
-  end
+  channels("")
 
   UI.Menu(parent, anchor, items, function(key)
     W.Guard("announce menu", function()
-      local _, _, mode, channel = string.find(key or "", "^(%a+):(.+)$")
-      if mode then
-        ctx.valueMode = mode
-        key = channel
-      end
       W.announce:Request(ctx, key, nil, nil)
     end)
   end, 165)

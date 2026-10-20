@@ -4260,6 +4260,7 @@ Wrekkit.capture.buffs = {}
 local realInfo = SpellInfo
 SpellInfo = function(id)
   if id == 20271 then return "Judgement", nil, "x" end
+  if id == 20218 then return "Sanctity Aura", nil, "x" end
   if id == 51750 then return "Judgement of Wisdom", "Rank 5", "x" end
   if id == 20343 then return "Judgement of Light", "Rank 4", "x" end
   return realInfo(id)
@@ -4321,16 +4322,43 @@ hit("0xV3", "0xMage", 10207, 1380, 2)
 check("PI's share beside 5 stacks of Fire Vulnerability", eff("0xPri", 10060), 100 + 380 * 0.18232 / (0.18232 + 0.13976), 0.05)
 check("Fire Vulnerability goes to the mage", eff("0xMage", 22959), 380 * 0.13976 / (0.18232 + 0.13976), 0.05)
 
--- Sanctity: only for the paladin's own group.
+-- Sanctity: only for the paladin's own group -- and only the paladin who
+-- put it up, not another one holding it.
+fire("AURA_CAST_ON_OTHER", 20218, "0xPal", "0xPal")
 fire("BUFF_ADDED_OTHER", "0xPal", 1, 20218, 1, 60, 1, 0)
 fire("BUFF_ADDED_OTHER", "0xPal2", 1, 20218, 1, 60, 1, 0)
 fire("BUFF_ADDED_OTHER", "0xHoly", 1, 20218, 1, 60, 1, 0)
 hit("0xV4", "0xPal2", 20293, 1100, 1)
-check("Sanctity credits a paladin who has it", val("0xPal") + val("0xPal2"), 100, 0.01)
+check("Sanctity credits the paladin who cast it", val("0xPal"), 100, 0.01)
+check("not another paladin holding it", val("0xPal2"), 0)
 local before = val("0xPal") + val("0xPal2")
 hit("0xV4", "0xHoly", 15261, 1100, 1)
 check("not a paladin of another group", val("0xPal") + val("0xPal2"), before, 0.01)
 check("which is kept unattributed", enc.valueUnknown, 100, 0.01)
+;(function()
+  -- Nothing seen cast: two paladins hold it, and you (Retguy) run another
+  -- aura -- your stance bar says so -- so it is the other one's.
+  local V = Wrekkit.value
+  V.castBy, V.partyCache = {}, {}
+  local realPlayer = WORLD["player"]
+  WORLD["player"] = WORLD["0xPal2"]
+  GetNumShapeshiftForms = function() return 2 end
+  GetShapeshiftFormInfo = function(i)
+    if i == 1 then return "x", "Retribution Aura", 1 end
+    return "x", "Devotion Aura", nil
+  end
+  local before = val("0xPal")
+  hit("0xV4", "0xPal2", 20293, 1100, 1)
+  check("your own aura rules you out of another's Sanctity", val("0xPal") - before, 100, 0.01)
+  GetShapeshiftFormInfo = function(i) return "x", "Sanctity Aura", i == 1 and 1 or nil end
+  V.partyCache = {}
+  local both = val("0xPal") + val("0xPal2")
+  hit("0xV4", "0xPal2", 20293, 1100, 1)
+  check("two who could be it, none known: nobody guessed", val("0xPal") + val("0xPal2"), both, 0.01)
+  GetNumShapeshiftForms, GetShapeshiftFormInfo = nil, nil
+  WORLD["player"] = realPlayer
+  V.partyCache = {}
+end)()
 
 -- Judgement of the Crusader: a flat 140 Holy, to the judging paladin.
 fire("SPELL_GO_OTHER", 0, 20271, "0xPal", "0xV5")

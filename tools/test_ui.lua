@@ -1381,6 +1381,39 @@ step("report: the Raid Contrib tab lists effects and drills into one", function(
   UI.report:Refresh()
 end)
 
+step("announce: lines can be left out, and contrib names who added each", function()
+  local real = Wrekkit.report.Effects
+  Wrekkit.report.Effects = function(self, view, key)
+    if key == "support" then return {} end
+    return {
+      { name = "Sunder Armor", total = 60000, kind = "value",
+        players = { { name = "Wiredbro", amount = 40000 }, { name = "Manner", amount = 20000 } } },
+      { name = "Curse of Shadow", total = 30000, kind = "value", players = { { name = "Nuse", amount = 30000 } } },
+      { name = "Windfury Totem", total = 20000, kind = "value", players = { { name = "Totem", amount = 20000 } } },
+    }
+  end
+  local ctx = { metric = "value", metrics = { "value" }, encounters = {}, label = "Test", contrib = true }
+  local lines = Wrekkit.announce:Lines(ctx, 5)
+  local sent
+  UI.ConfirmAnnounce(lines, "SAY", nil, function(_, final) sent = final end, ctx)
+  local dlg = _G["WrekkitConfirm"]
+  local fail
+  if not dlg.contribCheck:IsShown() then fail = "the contrib dialog has no 'who added it' box" end
+  -- Leave Curse of Shadow out: line 3 (the header is line 1).
+  arg1 = "LeftButton"
+  if not fail then dlg.rowBtns[3]:GetScript("OnClick")() end
+  -- Name who added each.
+  if not fail then dlg.contribCheck:GetScript("OnClick")() end
+  if not fail then dlg.sendBtn:GetScript("OnClick")() end
+  Wrekkit.report.Effects = real
+  if fail then error(fail) end
+  if not sent then error("nothing was sent") end
+  local joined = table.concat(sent, "|")
+  if string.find(joined, "Curse of Shadow", 1, true) then error("a line left out was still sent") end
+  if not string.find(joined, "Wiredbro", 1, true) then error("ticking 'who added it' did not name the builders") end
+  if not string.find(joined, "2. Windfury Totem", 1, true) then error("the lines were not numbered again: " .. joined) end
+end)
+
 step("clicking real handlers (not just setting state)", function()
   -- Driving state directly skips the closures the buttons actually run, so
   -- a nil upvalue inside one would never surface. Fire them for real.
