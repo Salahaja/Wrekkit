@@ -29,6 +29,12 @@ local MERGE_GAP = 5
 -- a mob walking home), and holding the pull open for it swallowed the next
 -- pack into it.
 local IDLE_END = 15
+--[[ A pull too short to keep is held this long in case the fight it opened
+     is still coming: a tank's opener on a mob they then pull back to the
+     raid, before anyone else is in combat, made a pull of its own that
+     ended and was dropped as too short -- and the opener with it (10/20
+     Molten Core: a Holy Strike and a Judgement, every line-of-sight pull). ]]
+local OPENER_HOLD = 30
 
 -- Read-only stand-in for an event that carried no details, so a missing
 -- table costs nothing rather than a new empty one per event.
@@ -1369,6 +1375,20 @@ function E:CombatStart()
 
   if self.live then self:Finish() end
 
+  -- The opener of this fight, held as too short a pull of its own: go on
+  -- in it rather than lose it. Only within the same session, and soon.
+  local held = self.heldPull
+  self.heldPull = nil
+  if held and now - (self.heldPullAt or 0) <= OPENER_HOLD and self.session
+     and held.sessionId == self.session.id then
+    self.live = held
+    self.lastGroupHit = now
+    self.inCombat = true
+    self.combatMark = now
+    if W.sync then W.sync:StartLive() end
+    return
+  end
+
   self.live = newEncounter(self.session, now)
   self.lastGroupHit = now
   self.inCombat = true
@@ -1581,10 +1601,14 @@ function E:Finish()
   end
   enc.duration = enc.stopT - enc.startT
   if enc.duration < (W.db and W.db.minTrashDuration or 6) then
-    W.Debug("dropped a " .. string.format("%.1f", enc.duration) .. "s combat")
+    -- Not dropped yet: the fight it opened may be on its way (OPENER_HOLD).
+    W.Debug("holding a " .. string.format("%.1f", enc.duration) .. "s combat")
+    enc.duration = nil
+    self.heldPull, self.heldPullAt = enc, GetTime()
     W.capture:TrimUnits()
     return
   end
+  self.heldPull = nil
 
   -- Anything still up when the pull ended was up until the pull ended.
   -- Without this, a flask that was never removed reads as zero uptime --

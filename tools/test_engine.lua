@@ -4697,6 +4697,38 @@ end)()
   E.live, E.inCombat = realLive, realIn
 end)()
 
+;(function()
+  -- A line-of-sight pull: the tank's opener, then nothing while the mob
+  -- runs back. Too short a pull of its own, it is held, and the fight
+  -- that follows goes on in it -- opener and all.
+  local E = Wrekkit.encounter
+  local realLive, realIn = E.live, E.inCombat
+  E.live, E.inCombat, E.heldPull = nil, false, nil
+  fire("SPELL_DAMAGE_EVENT_OTHER", "0xBoss", "0xP3", 11267, 640, "0,0,0", 0, 0)
+  local opener = E.live
+  E:CombatEnd()
+  advance(6)
+  E:Finish()
+  check("an opener on its own is held, not kept or dropped", E.heldPull, opener)
+  advance(8)
+  E:CombatStart()
+  check("the fight that follows goes on in it", E.live, opener)
+  local hunter
+  for _, a in pairs(E.live.actors) do if a.name == "Moorhunt" then hunter = a end end
+  check("  with the opener's damage", hunter and hunter.damage, 640)
+  -- Nothing follows: it is dropped, as before.
+  E.live, E.inCombat, E.heldPull = nil, false, nil
+  fire("SPELL_DAMAGE_EVENT_OTHER", "0xBoss", "0xP3", 11267, 640, "0,0,0", 0, 0)
+  local lone = E.live
+  E:CombatEnd()
+  advance(6)
+  E:Finish()
+  advance(40)
+  E:CombatStart()
+  check("but not past the hold", E.live ~= lone, true)
+  E.live, E.inCombat, E.heldPull = realLive, realIn, nil
+end)()
+
 ----------------------------------------------------------------------
 print("\n-- saved settings --")
 ----------------------------------------------------------------------
