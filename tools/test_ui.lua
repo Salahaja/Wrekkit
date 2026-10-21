@@ -1445,14 +1445,26 @@ step("mob frames: distance in yards, coloured by this character's bands", functi
   if not row then error("the mob frames have no rows to paint") end
   if not fail and row then
     MF:PaintRange(row, { guid = "0xMob", name = "Mob" })
-    if row.range:GetText() ~= "21y" then fail = "the row did not say 21y: " .. tostring(row.range:GetText()) end
+    -- Beside the frame by default, in a box of its own; the row's own text empty.
+    if row.rangeBox.text:GetText() ~= "21y" or not row.rangeBox:IsShown() then
+      fail = "the box beside the row did not say 21y: " .. tostring(row.rangeBox.text:GetText())
+    elseif (row.range:GetText() or "") ~= "" then
+      fail = "beside the frame, the row itself still showed the distance"
+    end
+    -- Inside the row, if chosen: next to the %, no box.
+    if not fail then
+      r.place = "inside"
+      MF:PaintRange(row, { guid = "0xMob", name = "Mob" })
+      if row.range:GetText() ~= "21y" or row.rangeBox:IsShown() then fail = "inside the row, it did not move in" end
+      r.place = "beside"
+    end
   end
   -- No UnitXP: SuperWoW's centre-to-centre, marked as such.
   UnitXP = nil
   UnitPosition = function(u) if u == "player" then return 0, 0, 0 end return 3, 4, 0 end
   if not fail and row then
     MF:PaintRange(row, { guid = "0xMob", name = "Mob" })
-    if row.range:GetText() ~= "~5y" then fail = "the estimate was not marked: " .. tostring(row.range:GetText()) end
+    if row.rangeBox.text:GetText() ~= "~5y" then fail = "the estimate was not marked: " .. tostring(row.rangeBox.text:GetText()) end
   end
   -- Per character: another one starts from their own class.
   local realName = UnitName

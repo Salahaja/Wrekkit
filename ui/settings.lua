@@ -1338,6 +1338,15 @@ function S:BuildThreat()
     function(v) local r = rs() if r then r.on = v and true or false end relayout() end,
     { "How far each mob is, in yards, on its row,", "coloured by your bands below -- kept for this",
       "character. Exact with UnitXP_SP3; ~ is SuperWoW's", "centre-to-centre estimate." })
+  choice(self, "Distance shown",
+    {
+      { value = "beside", label = "beside the frame" },
+      { value = "inside", label = "inside the row" },
+    },
+    function() local r = rs() return r and r.place or "beside" end,
+    function(v) local r = rs() if r then r.place = (v == "inside") and "inside" or "beside" end relayout() end,
+    { "Beside: a box of its own just right of the", "mob frame, so names keep their room. Inside:",
+      "next to the %, taking room from the name." })
   check(self, "Show the yards",
     function() local r = rs() return r and r.number ~= false end,
     function(v) local r = rs() if r then r.number = v and true or false end relayout() end,
