@@ -4726,6 +4726,27 @@ end)()
   advance(40)
   E:CombatStart()
   check("but not past the hold", E.live ~= lone, true)
+  -- A quick kill while you drank, with nothing after it: kept, not lost.
+  E.live, E.inCombat, E.heldPull = nil, false, nil
+  local before = table.getn(Wrekkit.db.encounters)
+  fire("SPELL_DAMAGE_EVENT_OTHER", "0xBoss", "0xP3", 11267, 900, "0,0,0", 0, 0)
+  local quick = E.live
+  E:CombatEnd()
+  advance(4)
+  E:Finish()
+  advance(31)
+  E:ExpireHeld(quick)
+  check("a short fight that did real damage is kept", table.getn(Wrekkit.db.encounters), before + 1)
+  -- A flicker that hurt nothing: dropped.
+  E.live, E.inCombat, E.heldPull = nil, false, nil
+  E:CombatStart()
+  local flicker = E.live
+  E:CombatEnd()
+  advance(2)
+  E:Finish()
+  advance(31)
+  E:ExpireHeld(flicker)
+  check("a combat that hurt nothing is dropped", table.getn(Wrekkit.db.encounters), before + 1)
   E.live, E.inCombat, E.heldPull = realLive, realIn, nil
 end)()
 

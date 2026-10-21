@@ -1590,25 +1590,48 @@ function W.IsBoss(enc)
   return enc and enc.boss == true
 end
 
-function E:Finish()
-  local enc = self.live
-  self.live = nil
+--[[ A held pull's time is up and no fight came. Kept if the group did real
+     damage to a mob -- a quick kill while you were still drinking is a
+     fight -- and dropped only when nothing was hurt at all (a critter, the
+     combat flag flickering). ]]
+function E:ExpireHeld(enc)
+  if not enc or self.heldPull ~= enc then return end
+  self.heldPull = nil
+  if (enc.totals and enc.totals.damage or 0) > 0 and self.session and enc.sessionId == self.session.id then
+    self:Finish(enc)
+  else
+    W.Debug("dropped a short combat")
+  end
+end
+
+--- Settle a held pull now (logging out, changing zone).
+function E:FlushHeld()
+  if self.heldPull then self:ExpireHeld(self.heldPull) end
+end
+
+--- `held`: a pull held as too short (see ExpireHeld), stored as it is.
+function E:Finish(held)
+  local enc = held or self.live
+  if not held then self.live = nil end
   if not enc then return end
 
-  if self.inCombat then
+  if not held and self.inCombat then
     enc.combat = enc.combat + (GetTime() - (self.combatMark or GetTime()))
     self.inCombat = false
   end
   enc.duration = enc.stopT - enc.startT
-  if enc.duration < (W.db and W.db.minTrashDuration or 6) then
+  if not held and enc.duration < (W.db and W.db.minTrashDuration or 6) then
     -- Not dropped yet: the fight it opened may be on its way (OPENER_HOLD).
     W.Debug("holding a " .. string.format("%.1f", enc.duration) .. "s combat")
     enc.duration = nil
+    self:FlushHeld()
     self.heldPull, self.heldPullAt = enc, GetTime()
+    W.After(OPENER_HOLD + 0.5, function()
+      W.Guard("held pull", function() E:ExpireHeld(enc) end)
+    end, "heldPull")
     W.capture:TrimUnits()
     return
   end
-  self.heldPull = nil
 
   -- Anything still up when the pull ended was up until the pull ended.
   -- Without this, a flask that was never removed reads as zero uptime --

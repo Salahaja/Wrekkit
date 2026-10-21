@@ -215,7 +215,7 @@ W.defaults = {
   archiveFiles = true,     -- one file per raid ID / dungeon run (archive.lua)
   maxEncounters = 0,       -- optional count cap; 0 = no limit
   maxAbilities = 24,       -- per-actor ability rows persisted
-  minTrashDuration = 6,    -- seconds; shorter combats are dropped
+  minTrashDuration = 6,    -- seconds; shorter combats are held 30s, then kept only if they hurt a mob
   trackOpenWorld = false,  -- only record inside instances by default
   -- Sharing is OFF until asked for: it broadcasts your name and what you
   -- have recorded to whichever channel you pick.
