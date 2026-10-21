@@ -130,6 +130,9 @@ local function newEncounter(session, now)
     -- both acted twice. Keyed by the player's name, which is what the view
     -- merges on.
     activeGroup = {},
+    -- Who was in your group while they took part, by name: "group only"
+    -- keeps them after they leave (see R:Rank's filter).
+    inGroup = {},
   }
 end
 
@@ -546,6 +549,9 @@ local function markActive(enc, a, now)
     owner = a.ownerName
   end
   if owner and owner ~= "?" then
+    if enc.inGroup and not enc.inGroup[owner] and W.capture:InGroup(owner) then
+      enc.inGroup[owner] = true
+    end
     local g = enc.activeGroup[owner]
     if not g then
       g = { active = 0 }
@@ -1837,6 +1843,12 @@ function E:Persist(enc)
 
   for name, g in pairs(enc.activeGroup or {}) do
     rec.activeGroup[name] = g.active
+  end
+  -- In the group while they fought -- or by the end, for a late invite.
+  rec.inGroup = {}
+  for name in pairs(enc.inGroup or {}) do rec.inGroup[name] = true end
+  for name in pairs(enc.activeGroup or {}) do
+    if W.capture:InGroup(name) then rec.inGroup[name] = true end
   end
 
   table.insert(W.db.encounters, rec)

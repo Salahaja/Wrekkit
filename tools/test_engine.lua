@@ -517,6 +517,32 @@ end)(), true)
 local enemyRows = Wrekkit.report:Rank(view, "enemy", { groupOnly = true })
 check("enemies are not group-filtered", table.getn(enemyRows) > 0, true)
 
+;(function()
+  -- 10/20 Molten Core: two healers left after the raid, and "group only"
+  -- took them out of every pull they had healed. Someone in your group
+  -- during a pull stays in it; a passer-by still does not show.
+  local was = enc.inGroup
+  enc.inGroup = { Elfpriest = true, Fuff = true }
+  Wrekkit.capture.groupMembers = { Fuff = true }   -- Elfpriest has left
+  local rows = Wrekkit.report:Rank(Wrekkit.report:View({ enc }, { petMode = "merge" }), "healing", { groupOnly = true })
+  local seen = {}
+  for _, r in ipairs(rows) do seen[r.name] = true end
+  check("someone who left still counts for the pulls they were in", seen["Elfpriest"], true)
+  rows = Wrekkit.report:Rank(Wrekkit.report:View({ enc }, { petMode = "merge" }), "damage", { groupOnly = true })
+  seen = {}
+  for _, r in ipairs(rows) do seen[r.name] = true end
+  check("a passer-by is still left out", seen["Moorhunt"], nil)
+  -- Someone invited since the pull counts too (the group as it is now).
+  enc.inGroup = {}
+  Wrekkit.capture.groupMembers = { Fuff = true, Elfpriest = true }
+  rows = Wrekkit.report:Rank(Wrekkit.report:View({ enc }, { petMode = "merge" }), "healing", { groupOnly = true })
+  seen = {}
+  for _, r in ipairs(rows) do seen[r.name] = true end
+  check("and someone in the group now, as before", seen["Elfpriest"], true)
+  enc.inGroup = was
+  Wrekkit.capture.groupMembers = {}
+end)()
+
 Wrekkit.capture.groupMembers = {}
 
 ----------------------------------------------------------------------
