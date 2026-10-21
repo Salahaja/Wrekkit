@@ -1414,6 +1414,64 @@ step("announce: lines can be left out, and contrib names who added each", functi
   if not string.find(joined, "2. Windfury Totem", 1, true) then error("the lines were not numbered again: " .. joined) end
 end)
 
+step("mob frames: distance in yards, coloured by this character's bands", function()
+  local MF = UI.mobs
+  local s = Wrekkit.threat:Settings()
+  local realBy = s.mobRangeBy
+  s.mobRangeBy = nil
+  local realXP, realPos = UnitXP, UnitPosition
+  -- A hunter: the dead zone, Auto Shot's range, beyond.
+  local realClass = UnitClass
+  UnitClass = function(u) if u == "player" then return "Hunter", "HUNTER" end return realClass(u) end
+  local r = MF:RangeSettings()
+  local fail
+  if r.on then fail = "distance was on before anyone switched it on" end
+  r.on = true
+  local c3, c20, c50 = MF:RangeColour(3, r), MF:RangeColour(20, r), MF:RangeColour(50, r)
+  if not fail and not (c3 and c20 and c50 and c3 ~= c20) then fail = "the hunter's bands did not colour 3, 20 and 50 yards apart" end
+  -- A golden zone of their own: up to 21, gold.
+  r.bands[4].on, r.bands[4].max, r.bands[4].c = true, 21, { 1, 0.6, 0.1 }
+  if not fail and MF:RangeColour(20, r)[3] ~= 0.1 then fail = "a band of their own did not take a distance inside it" end
+  -- Exact, from UnitXP by the mob's GUID.
+  UnitXP = function(what, a, b) if what == "distanceBetween" then return 20.6 end end
+  -- The sample rows the frames show while being placed.
+  local tf = UI.threatFrames
+  local wasMoving = tf and tf.moving
+  if tf then tf.moving = true end
+  MF.lastUpdate = nil
+  MF:Update()
+  if tf then tf.moving = wasMoving end
+  local row = MF.rows and MF.rows[1]
+  if not row then error("the mob frames have no rows to paint") end
+  if not fail and row then
+    MF:PaintRange(row, { guid = "0xMob", name = "Mob" })
+    if row.range:GetText() ~= "21y" then fail = "the row did not say 21y: " .. tostring(row.range:GetText()) end
+  end
+  -- No UnitXP: SuperWoW's centre-to-centre, marked as such.
+  UnitXP = nil
+  UnitPosition = function(u) if u == "player" then return 0, 0, 0 end return 3, 4, 0 end
+  if not fail and row then
+    MF:PaintRange(row, { guid = "0xMob", name = "Mob" })
+    if row.range:GetText() ~= "~5y" then fail = "the estimate was not marked: " .. tostring(row.range:GetText()) end
+  end
+  -- Per character: another one starts from their own class.
+  local realName = UnitName
+  UnitName = function(u) if u == "player" then return "Somemage" end return realName(u) end
+  UnitClass = function(u) if u == "player" then return "Mage", "MAGE" end return realClass(u) end
+  local other = MF:RangeSettings()
+  if not fail and (other == r or other.on) then fail = "another character shared the hunter's distance settings" end
+  UnitName, UnitClass = realName, realClass
+  UnitXP, UnitPosition = realXP, realPos
+  -- The settings have the bands, a swatch each.
+  UI.settings:Create()
+  if not fail and not (UI.settings.rangeBands and UI.settings.rangeBands[6] and UI.settings.rangeBands.beyond
+                       and UI.settings.rangeBands[1].swatch) then
+    fail = "the settings have no distance bands"
+  end
+  s.mobRangeBy = realBy
+  if fail then error(fail) end
+end)
+
 step("clicking real handlers (not just setting state)", function()
   -- Driving state directly skips the closures the buttons actually run, so
   -- a nil upvalue inside one would never surface. Fire them for real.
