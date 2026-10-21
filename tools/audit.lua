@@ -110,10 +110,12 @@ declare(FRAMEXML, [[
   DEFAULT_CHAT_FRAME GameTooltip SlashCmdList StaticPopupDialogs
   StaticPopup_Show UISpecialFrames
   UNKNOWN MouseIsOver RaidWarningFrame IsMouseButtonDown
+  ColorPickerFrame
 ]])
 
 declare(SUPER, [[
-  SpellInfo GetUnitGUID GetUnitData GetUnitField
+  SpellInfo GetUnitGUID GetUnitData GetUnitField UnitPosition
+  UnitXP
 ]])
 
 declare(NAMPOWER, [[

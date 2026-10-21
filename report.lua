@@ -463,6 +463,10 @@ function R:View(encounters, opts)
       row.valueAdded = row.valueAdded + (a.valueAdded or 0)
       row.valueMana = row.valueMana + (a.valueMana or 0)
       row.valueHeal = row.valueHeal + (a.valueHeal or 0)
+      -- In your group during this pull? (A pull from before this was kept
+      -- cannot say: those fall back to the group as it is now.)
+      local member = a.isPlayer and a.name or a.ownerName
+      if enc.inGroup and member and enc.inGroup[member] then row.wasInGroup = true end
 
       --[[ Active time is NOT summed here. Two actors on one row -- an owner
            and their pet, or two whelps of one name -- acting at the same
@@ -620,14 +624,17 @@ local function matches(row, filter)
   --[[ Ignore players who are not in your party or raid.
 
        Applies to players and their pets only -- enemies are never "in the
-       group", and filtering them here would empty the Enemies tab. Group
-       membership is read live rather than stored on the encounter, so a
-       report from a night when someone was in the raid still shows them if
-       they are in it now; the alternative is stamping membership at capture
-       time, which would then be wrong for anyone who joined mid-raid. ]]
+       group", and filtering them here would empty the Enemies tab.
+
+       In your group during the pulls shown, OR in it now. Read only live,
+       two healers who left after Molten Core (10/20) vanished from every
+       pull they had healed; read only from the pulls, someone invited
+       since would. Each pull keeps who was in the group while they took
+       part (inGroup); a pull from before that was kept uses the live group
+       alone, as it always did. ]]
   if filter.groupOnly then
     local who = row.ownerName or row.name
-    if (row.isPlayer or row.class == "PET") and not W.capture:InGroup(who) then
+    if (row.isPlayer or row.class == "PET") and not row.wasInGroup and not W.capture:InGroup(who) then
       return false
     end
   end

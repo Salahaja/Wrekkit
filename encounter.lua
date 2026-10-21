@@ -130,6 +130,9 @@ local function newEncounter(session, now)
     -- both acted twice. Keyed by the player's name, which is what the view
     -- merges on.
     activeGroup = {},
+    -- Who was in your group while they took part, by name: "group only"
+    -- keeps them after they leave (see R:Rank's filter).
+    inGroup = {},
   }
 end
 
@@ -546,6 +549,9 @@ local function markActive(enc, a, now)
     owner = a.ownerName
   end
   if owner and owner ~= "?" then
+    if enc.inGroup and not enc.inGroup[owner] and W.capture:InGroup(owner) then
+      enc.inGroup[owner] = true
+    end
     local g = enc.activeGroup[owner]
     if not g then
       g = { active = 0 }
@@ -734,6 +740,9 @@ local function noteAmount(row, amount, isCrit)
   if isCrit then row.critAmount = (row.critAmount or 0) + amount end
 end
 
+--- A player or a pet: our side, as far as damage done is concerned.
+local function onOurSide(a) return a and (a.isPlayer or a.class == "PET") end
+
 function E:Damage(sourceGuid, targetGuid, spellId, amount, info)
   if not self.live then self:CombatStart() end
   local enc = self.live
@@ -747,6 +756,14 @@ function E:Damage(sourceGuid, targetGuid, spellId, amount, info)
   local now = GetTime()
   local b = bucketFor(enc, now)
   local spellName = W.capture:Spell(spellId)
+
+  --[[ Friendly fire is not damage DONE: Living Bomb going off on a warrior,
+       Molten Core's fires spreading from one player to the next, Bloodrage
+       on yourself. The client names the player as the source, so it was
+       counted as theirs -- 35k of one warrior's 513k on 10/20, and most of
+       why Wrekkit read up to 10% above other meters. Still damage TAKEN by
+       whoever it hit. ]]
+  if onOurSide(src) and onOurSide(dst) then src = nil end
 
   if src then
     src.damage = src.damage + amount
@@ -1837,6 +1854,12 @@ function E:Persist(enc)
 
   for name, g in pairs(enc.activeGroup or {}) do
     rec.activeGroup[name] = g.active
+  end
+  -- In the group while they fought -- or by the end, for a late invite.
+  rec.inGroup = {}
+  for name in pairs(enc.inGroup or {}) do rec.inGroup[name] = true end
+  for name in pairs(enc.activeGroup or {}) do
+    if W.capture:InGroup(name) then rec.inGroup[name] = true end
   end
 
   table.insert(W.db.encounters, rec)

@@ -1965,6 +1965,53 @@ end
      Used where the exact number matters and dragging to it would be fiddly
      at 1.12's frame sizes -- row height, how many rows, how many days. Where
      the feel matters more than the figure, UI.Slider is the better control. ]]
+--[[ A colour swatch: click for the client's own colour picker. get()
+     returns { r, g, b }; set(c) is called as the picker moves, and with the
+     colour it started from if the picker is cancelled. ]]
+function UI.Swatch(parent, get, set)
+  local b = CreateFrame("Button", nil, parent)
+  b:SetWidth(28)
+  b:SetHeight(14)
+  local edge = b:CreateTexture(nil, "BACKGROUND")
+  edge:SetAllPoints(b)
+  edge:SetTexture(UI.media.white)
+  edge:SetVertexColor(0, 0, 0, 1)
+  local fill = b:CreateTexture(nil, "ARTWORK")
+  fill:SetPoint("TOPLEFT", b, "TOPLEFT", 1, -1)
+  fill:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", -1, 1)
+  fill:SetTexture(UI.media.white)
+  b.Refresh = function(self)
+    local c = get() or { 1, 1, 1 }
+    fill:SetVertexColor(c[1] or 1, c[2] or 1, c[3] or 1, 1)
+  end
+  b:SetScript("OnClick", function()
+    W.Guard("colour swatch", function()
+      local picker = ColorPickerFrame
+      if not picker then return end
+      local c = get() or { 1, 1, 1 }
+      local before = { c[1], c[2], c[3] }
+      picker.func = nil   -- set below, after the picker is on the right colour
+      picker.hasOpacity = false
+      picker.previousValues = before
+      picker:SetColorRGB(before[1], before[2], before[3])
+      picker.func = function()
+        local r, g, bl = picker:GetColorRGB()
+        set({ r, g, bl })
+        b:Refresh()
+      end
+      picker.cancelFunc = function(prev)
+        prev = prev or before
+        set({ prev[1], prev[2], prev[3] })
+        b:Refresh()
+      end
+      picker:Hide()
+      picker:Show()
+    end)
+  end)
+  b:Refresh()
+  return b
+end
+
 function UI.Stepper(parent, label, get, set, min, max, step, format)
   step = step or 1
   local f = CreateFrame("Frame", nil, parent)

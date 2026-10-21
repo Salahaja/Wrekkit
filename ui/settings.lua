@@ -172,6 +172,48 @@ local function slider(self, label, get, set, min, max, step, fmt)
     true, true)
 end
 
+--[[ One distance band: on/off, "up to N yards", its colour -- a row of its
+     own. `i` is the band, or "beyond" for the colour past them all. ]]
+local function rangeBand(self, i)
+  local mobs = function() return UI.mobs end
+  local function bd()
+    local m = mobs()
+    if not m then return nil end
+    local r = m:RangeSettings()
+    if i == "beyond" then return r.beyond end
+    return r.bands[i]
+  end
+  local function changed() if UI.mobs and UI.mobs.ApplyWidth then UI.mobs:ApplyWidth() end end
+  local f = CreateFrame("Frame", nil, self.body)
+  f:SetHeight(20)
+  local label = (i == "beyond") and "Beyond them" or ("Band " .. i)
+  local chk = UI.Check(f, label,
+    function() local b = bd() return b and b.on == true end,
+    function(v) local b = bd() if b then b.on = v and true or false end changed() end)
+  chk:SetPoint("LEFT", f, "LEFT", 0, 0)
+  chk:SetWidth(110)
+  local step
+  if i ~= "beyond" then
+    step = UI.Stepper(f, "up to",
+      function() local b = bd() return b and b.max or 0 end,
+      function(v) local b = bd() if b then b.max = v end changed() end,
+      1, 100, 1, function(v) return v .. " yd" end)
+    step:SetPoint("LEFT", f, "LEFT", 116, 0)
+    step:SetWidth(170)
+  end
+  local sw = UI.Swatch(f,
+    function() local b = bd() return b and b.c end,
+    function(c) local b = bd() if b then b.c = c end end)
+  sw:SetPoint("LEFT", f, "LEFT", 296, 0)
+  f.Refresh = function()
+    chk:Refresh()
+    if step then step:Refresh() end
+    sw:Refresh()
+  end
+  f.check, f.stepper, f.swatch = chk, step, sw
+  return place(self, f, true, true)
+end
+
 local function choice(self, label, options, get, set, tip)
   return place(self, UI.Choice(self.body, label, options, get, set, tip),
     true, false)
@@ -219,7 +261,9 @@ function S:Create()
   local prev
   for _, t in ipairs(S.TABS) do
     local key = t[1]
-    local b = UI.Button(tabRow, t[2], (key == "plates") and 104 or 84, 20,
+    -- Six across the 560px window: the two long labels wider.
+    local w = (key == "plates") and 104 or ((key == "mobs") and 84 or 76)
+    local b = UI.Button(tabRow, t[2], w, 20,
       function() S:SetTab(key) end)
     if prev then b:SetPoint("LEFT", prev, "RIGHT", 4, 0)
     else b:SetPoint("LEFT", tabRow, "LEFT", 0, 0) end
@@ -1240,6 +1284,9 @@ function S:BuildThreat()
     function(v) return v .. "s" end)
 
   ------------------------------------------------------------------
+  -- A tab of its own: with the distance bands it no longer fit beside
+  -- the plates.
+  self.building = "mobs"
   heading(self, "Mob frames")
 
   get, set = opt("mobFrames")
@@ -1282,6 +1329,33 @@ function S:BuildThreat()
   self.mobSlots.right = spellSlot(self, "Right-click mob casts",
     function() return UI.mobs and UI.mobs:RightSpell() or "" end,
     function(v) if UI.mobs then UI.mobs:SetRightSpell(v or "") end end)
+
+  -- How far each mob is: this character's own bands (MF:RangeSettings).
+  local function rs() return UI.mobs and UI.mobs:RangeSettings() end
+  local function relayout() if UI.mobs and UI.mobs.ApplyWidth then UI.mobs:ApplyWidth() end end
+  check(self, "Show distance",
+    function() local r = rs() return r and r.on == true end,
+    function(v) local r = rs() if r then r.on = v and true or false end relayout() end,
+    { "How far each mob is, in yards, on its row,", "coloured by your bands below -- kept for this",
+      "character. Exact with UnitXP_SP3; ~ is SuperWoW's", "centre-to-centre estimate." })
+  check(self, "Show the yards",
+    function() local r = rs() return r and r.number ~= false end,
+    function(v) local r = rs() if r then r.number = v and true or false end relayout() end,
+    { "Off: no number, just the colour (with", "Colour the row)." })
+  check(self, "Colour the row",
+    function() local r = rs() return r and r.tint == true end,
+    function(v) local r = rs() if r then r.tint = v and true or false end end,
+    { "Tint the row's health bar with the band's", "colour, not just the yards." })
+  self.rangeBands = {}
+  for i = 1, 6 do self.rangeBands[i] = rangeBand(self, i) end
+  self.rangeBands.beyond = rangeBand(self, "beyond")
+  self.rangeReset = place(self, UI.Button(self.body, "Start from my class", 150, 20, function()
+    W.Guard("range preset", function()
+      if UI.mobs then UI.mobs:ResetRange() end
+      relayout()
+      S:Refresh()
+    end)
+  end), false, false)
 
   -- Also by dragging its corner while the frames are being placed.
   stepper(self, "Width",
@@ -1433,6 +1507,7 @@ S.TABS = {
   { "sharing", "Sharing" },
   { "threat", "Threat" },
   { "plates", "Frames & plates" },
+  { "mobs", "Mob frames" },
 }
 
 function S:SetTab(tab)

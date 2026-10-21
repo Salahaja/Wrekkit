@@ -42,6 +42,7 @@ local WIDTH = 220      -- default; the setting is mobFramesWidth
 local CAST_W = 100     -- an enemy cast bar beside its row; the setting is mobCastWidth
 local MIN_W, MAX_W = 160, 420
 local UPDATE = 0.2
+local RANGE_W = 30   -- the distance column, when it is shown
 
 -- guid -> { guid, name, order, hp, max, who, onMe, state, seen }
 MF.list = {}
@@ -294,6 +295,10 @@ local function makeRow(parent, i)
   b.pct = UI.Text(b, 10, W.color.textDim, "RIGHT", UI.fontNum)
   b.pct:SetPoint("RIGHT", b, "RIGHT", -4, 0)
   b.pct:SetWidth(34)
+  -- How far the mob is (MF:Distance), just left of the %.
+  b.range = UI.Text(b, 10, W.color.textDim, "RIGHT", UI.fontNum)
+  b.range:SetPoint("RIGHT", b.pct, "LEFT", -2, 0)
+  b.range:SetWidth(RANGE_W)
 
   -- What the mob is casting: over the row's right part, or beside it
   -- (MF.PlaceCast, MF.PaintCast). A plain frame, so clicks fall through
@@ -472,6 +477,132 @@ function MF:ModifierSpell()
   elseif IsControlKeyDown and IsControlKeyDown() then spell = s.mobClickCtrl end
   if spell and spell ~= "" then return spell end
   return nil
+end
+
+----------------------------------------------------------------------
+-- distance
+----------------------------------------------------------------------
+
+--[[ How far each mob is, in yards, on its row -- coloured by bands of your
+     own: up to six, each with a yard limit, a colour and an on/off, plus a
+     colour for beyond them all. A hunter's dead zone, a mage's 30, a
+     warlock's golden 21. Per character (a hunter's and a mage's ranges are
+     nothing alike), off until switched on.
+
+     The distance: UnitXP_SP3's "distanceBetween" (exact, and it takes a
+     mob's GUID -- checked 10/20), else SuperWoW's UnitPosition, centre to
+     centre, shown with a "~"; else none. ]]
+local GREEN, YELLOW, GOLD = { 0.25, 0.85, 0.3 }, { 1, 0.82, 0.2 }, { 1, 0.62, 0.1 }
+local WHITE, RED, BLUE = { 0.9, 0.9, 0.9 }, { 0.95, 0.25, 0.25 }, { 0.35, 0.6, 1 }
+local BANDS = 6
+
+local function band(on, max, c) return { on = on, max = max, c = { c[1], c[2], c[3] } } end
+
+--- A starting set for a class, to edit from.
+function MF:RangePreset(class)
+  local b
+  if class == "HUNTER" then
+    b = { band(true, 8, RED), band(true, 35, GREEN), band(true, 41, YELLOW),
+          band(false, 20, GOLD), band(false, 30, WHITE), band(false, 45, BLUE) }
+  elseif class == "MAGE" or class == "WARLOCK" or class == "PRIEST" then
+    b = { band(false, 21, GOLD), band(true, 30, GREEN), band(true, 36, YELLOW),
+          band(true, 40, WHITE), band(false, 10, BLUE), band(false, 45, BLUE) }
+  else
+    b = { band(true, 5, GREEN), band(true, 10, YELLOW), band(false, 25, GOLD),
+          band(true, 30, WHITE), band(false, 36, BLUE), band(false, 40, BLUE) }
+  end
+  return { on = false, number = true, tint = false, bands = b,
+           beyond = { on = true, c = { RED[1], RED[2], RED[3] } } }
+end
+
+--- This character's distance settings, made from their class's preset the
+--- first time they are asked for.
+function MF:RangeSettings()
+  local s = T:Settings()
+  if type(s.mobRangeBy) ~= "table" then s.mobRangeBy = {} end
+  local key = self:CharKey()
+  local r = s.mobRangeBy[key]
+  if type(r) ~= "table" or type(r.bands) ~= "table" then
+    local _, class = UnitClass("player")
+    r = self:RangePreset(class)
+    s.mobRangeBy[key] = r
+  end
+  for i = 1, BANDS do
+    if type(r.bands[i]) ~= "table" then r.bands[i] = band(false, 30, WHITE) end
+  end
+  if type(r.beyond) ~= "table" then r.beyond = { on = true, c = { RED[1], RED[2], RED[3] } } end
+  return r
+end
+
+--- Back to the class's starting set, keeping whether it is switched on.
+function MF:ResetRange()
+  local r = self:RangeSettings()
+  local _, class = UnitClass("player")
+  local fresh = self:RangePreset(class)
+  fresh.on, fresh.number, fresh.tint = r.on, r.number, r.tint
+  T:Settings().mobRangeBy[self:CharKey()] = fresh
+  return fresh
+end
+
+--- Is the distance column taking room on the rows?
+function MF:RangeColumn()
+  local r = self:RangeSettings()
+  return r.on == true and r.number ~= false
+end
+
+-- Not while the world is going away: UnitXP is known to crash then.
+MF.leaving = false
+
+--- Yards to a mob, and whether that is exact. nil when it cannot be told.
+function MF:Distance(m)
+  if self.leaving then return nil end
+  local unit = m and (m.guid or m.unit)
+  if not unit then return nil end
+  if UnitXP then
+    local ok, d = pcall(UnitXP, "distanceBetween", "player", unit)
+    if ok and type(d) == "number" then return d, true end
+  end
+  if UnitPosition then
+    local ok1, x1, y1, z1 = pcall(UnitPosition, "player")
+    local ok2, x2, y2, z2 = pcall(UnitPosition, unit)
+    if ok1 and ok2 and x1 and x2 and y1 and y2 then
+      local dz = (z1 and z2) and (z2 - z1) or 0
+      return math.sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1) + dz * dz), false
+    end
+  end
+  return nil
+end
+
+--- The colour for a distance: the first switched-on band (smallest limit
+--- first) it falls within, else the beyond colour, else none.
+function MF:RangeColour(d, r)
+  r = r or self:RangeSettings()
+  local best
+  for i = 1, BANDS do
+    local bd = r.bands[i]
+    if bd and bd.on and d <= (bd.max or 0) and (not best or bd.max < best.max) then best = bd end
+  end
+  if best then return best.c end
+  if r.beyond and r.beyond.on then return r.beyond.c end
+  return nil
+end
+
+function MF:PaintRange(b, m)
+  local r = self:RangeSettings()
+  local d, exact
+  if r.on then d, exact = self:Distance(m) end
+  local c = d and self:RangeColour(d, r)
+  if d and r.number ~= false then
+    b.range:SetText((exact and "" or "~") .. math.floor(d + 0.5) .. "y")
+    if c then b.range:SetTextColor(c[1], c[2], c[3], 1) else b.range:SetTextColor(0.6, 0.6, 0.6, 1) end
+  else
+    b.range:SetText("")
+  end
+  if d and c and r.tint then
+    b.hp:SetVertexColor(c[1], c[2], c[3], 0.55)
+  else
+    b.hp:SetVertexColor(0.55, 0.16, 0.16, 0.7)
+  end
 end
 
 --- Who "this character" is, for settings kept per character.
@@ -690,6 +821,11 @@ end
 
 --- Put one row's columns where `w` puts them.
 local function layoutRow(b, split, nameW, whoW)
+  -- Room for the distance column when it is on: taken off the name (split
+  -- layout) or the player tag (wide layout).
+  local rw = MF:RangeColumn() and (RANGE_W + 2) or 0
+  b.rangeW = rw
+  if MF:Layout() ~= "wide" then nameW = nameW - rw end
   b.split = split
   b.nameW = nameW
   b.layout = MF:Layout()
@@ -699,7 +835,7 @@ local function layoutRow(b, split, nameW, whoW)
   if b.layout == "wide" then
     -- The % at the far right, the player a tag just left of it.
     b.pct:SetPoint("RIGHT", b, "RIGHT", -4, 0)
-    b.who:SetPoint("RIGHT", b, "RIGHT", -4 - PCT_W - 4, 0)
+    b.who:SetPoint("RIGHT", b, "RIGHT", -4 - PCT_W - 4 - rw, 0)
     b.who:SetWidth(whoW)
     b.whoBtn:SetPoint("TOPLEFT", b, "TOPLEFT", split, 0)
     b.whoBtn:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", -4 - PCT_W, 0)
@@ -744,7 +880,11 @@ function MF:ApplyWidth()
   end
   local split, nameW, whoW = self:Columns(w)
   for _, b in ipairs(self.rows or {}) do
-    if b.split ~= split or b.nameW ~= nameW or b.layout ~= self:Layout() then layoutRow(b, split, nameW, whoW) end
+    local rw = self:RangeColumn() and (RANGE_W + 2) or 0
+    if b.split ~= split or b.layout ~= self:Layout() or b.rangeW ~= rw
+       or b.nameW ~= ((self:Layout() ~= "wide") and (nameW - rw) or nameW) then
+      layoutRow(b, split, nameW, whoW)
+    end
   end
 end
 
@@ -957,6 +1097,8 @@ local function paintMob(b, m, tank, s, blink, targetGuid)
     b.who:SetText("|cff9d9d9d-|r")
   end
 
+  MF:PaintRange(b, m)
+
   local text, c, fresh = threatText(m, tank)
   if text then
     b.pct:SetText(text)
@@ -974,6 +1116,8 @@ end
 local function paintSummary(b, fine, elsewhere, hidden, tank, total)
   b.mob, b.summary, b.trouble = nil, true, false
   MF.PaintCast(b, nil, nil)
+  b.range:SetText("")
+  b.hp:SetVertexColor(0.55, 0.16, 0.16, 0.7)
   b:SetSelected(false)
   b:SetMark(nil)
   b.hp:Hide()
@@ -1109,8 +1253,15 @@ if CreateFrame then
   -- And Auto Shot or a wand repeating: stock 1.12's auto-repeat events.
   swing:RegisterEvent("START_AUTOREPEAT_SPELL")
   swing:RegisterEvent("STOP_AUTOREPEAT_SPELL")
+  swing:RegisterEvent("PLAYER_LEAVING_WORLD")
+  swing:RegisterEvent("PLAYER_LOGOUT")
+  swing:RegisterEvent("PLAYER_ENTERING_WORLD")
   swing:SetScript("OnEvent", function()
-    if event == "START_AUTOREPEAT_SPELL" or event == "STOP_AUTOREPEAT_SPELL" then
+    if event == "PLAYER_LEAVING_WORLD" or event == "PLAYER_LOGOUT" then
+      MF.leaving = true
+    elseif event == "PLAYER_ENTERING_WORLD" then
+      MF.leaving = false
+    elseif event == "START_AUTOREPEAT_SPELL" or event == "STOP_AUTOREPEAT_SPELL" then
       MF.shooting = (event == "START_AUTOREPEAT_SPELL")
     else
       MF.swinging = (event == "PLAYER_ENTER_COMBAT")

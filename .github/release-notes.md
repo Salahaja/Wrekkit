@@ -1,22 +1,25 @@
-**A Raid Contrib tab in the report, announcements you can trim line by line, and two counting fixes: flasks drunk before the invite, and who gets credit for a group aura.**
+**Distance in yards on the mob frames, coloured by bands you set, plus two fixes: players who leave the group stay in your reports, and friendly fire no longer counts as damage done.**
 
 ## New
-- **Raid Contrib tab** (in the report, `/wrek report`): each effect Raid value counted, such as Sunder Armor, the curses, Windfury or Nightfall, with its total and how many players built it. Then come the mana and healing the judgements give back. Click an effect for who added how much of it; click again to go back. It needs Raid value recording (Settings → Recording).
-- **Announcing from it:** the confirmation has a **"Name who added each effect"** box. Leave it off for each effect's total and how many built it, or tick it for each player's share. Clicked into one effect, Announce posts that effect's builders, each with amount and share.
-- **Leave lines out of any announcement:** click a numbered line in the confirmation's preview to drop it, and click again to bring it back. What is sent is renumbered.
+- **Show distance** (Settings → **Mob frames**, off until turned on): each mob's distance on its row, coloured by your own bands.
+  - Up to six bands, each with a yard limit, a colour (the game's colour picker) and an on/off, plus a colour for beyond them all. A hunter's dead zone, a mage's 30, or a warlock's golden 21 yards are all possible.
+  - **Start from my class** fills them in to edit from: a hunter's dead zone and Auto Shot range, a caster's 30/36/40, melee's 5/10/30.
+  - Kept **per character**.
+  - Optional: **Show the yards** (off means colour only) and **Colour the row** (tints the health bar too).
+  - Exact with UnitXP_SP3, which takes a mob's GUID, so every row works, not just your target. Otherwise SuperWoW's centre-to-centre estimate, marked "~".
+- The mob frame settings have **a tab of their own** now.
 
 ## Fixed
-- **Flasks and other consumables drunk before someone was invited were lost.** On one 10/17 Molten Core run, 15 players had a flask up but only 8 were counted, and Flask of the Titans never was. Consumables used between pulls are now judged when the next pull starts, not when they're drunk. Someone still not in the group then has their flask counted once they join.
-- **A group aura or shout was credited to whoever held it.** A paladin standing in another paladin's Sanctity Aura was credited with it. It now goes to whoever was seen casting it. Otherwise, paladins known to run another aura are ruled out (yours is read from your stance bar), and if one is left it's theirs. Otherwise nobody is guessed. The same applies to Retribution Aura, Battle Shout, Trueshot Aura and Leader of the Pack. Pulls already recorded keep their old credit.
-- **Changing Top or a box in the announce confirmation emptied a Raid value post.** It's kept now.
-- **Report tabs ran past the window's edge at its smallest size.** They now narrow to fit.
+- **Players who left the group vanished from "group only".** Two healers who left after Molten Core disappeared from every pull they had healed. Each pull now keeps who was in your group while they took part, and the filter shows anyone in your group during those pulls or in it now. Pulls recorded before this update still use the group as it is now.
+- **Friendly fire counted as damage done.** Examples: Living Bomb going off on you, Molten Core's fires spreading between players, your own Bloodrage. That was 35k of one warrior's 513k in a Molten Core run, and most of why Wrekkit read above other meters. It's now only damage taken. Checked against the same night's Chronicle log, damage agrees within about 1% for most players.
 
 ## Install
 
-Download `Wrekkit-0.9.30.zip` and extract it into `<your client>\Interface\AddOns\`. You should end up with `Interface\AddOns\Wrekkit\Wrekkit.toc`. Do **not** use the "Source code" links. Coming from 0.9.18 or earlier, **fully restart the client**; from 0.9.19 or later a `/reload` is enough. `/wrek status` should then report **v0.9.30**.
+Download `Wrekkit-0.9.31.zip` and extract it into `<your client>\Interface\AddOns\`. You should end up with `Interface\AddOns\Wrekkit\Wrekkit.toc`. Do **not** use the "Source code" links. Coming from 0.9.18 or earlier, **fully restart the client**; from 0.9.19 or later a `/reload` is enough. `/wrek status` should then report **v0.9.31**.
 
 ## Requirements
 
 - **Nampower** is required for the damage meter, the report, the per-raid files, the cast bars and raid value. The threat meter itself works without it.
 - **SuperWoW** is recommended.
+- **UnitXP_SP3** makes the mob frame distances exact (optional).
 - **aux** for consumable prices (optional).
