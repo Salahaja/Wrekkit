@@ -740,6 +740,9 @@ local function noteAmount(row, amount, isCrit)
   if isCrit then row.critAmount = (row.critAmount or 0) + amount end
 end
 
+--- A player or a pet: our side, as far as damage done is concerned.
+local function onOurSide(a) return a and (a.isPlayer or a.class == "PET") end
+
 function E:Damage(sourceGuid, targetGuid, spellId, amount, info)
   if not self.live then self:CombatStart() end
   local enc = self.live
@@ -753,6 +756,14 @@ function E:Damage(sourceGuid, targetGuid, spellId, amount, info)
   local now = GetTime()
   local b = bucketFor(enc, now)
   local spellName = W.capture:Spell(spellId)
+
+  --[[ Friendly fire is not damage DONE: Living Bomb going off on a warrior,
+       Molten Core's fires spreading from one player to the next, Bloodrage
+       on yourself. The client names the player as the source, so it was
+       counted as theirs -- 35k of one warrior's 513k on 10/20, and most of
+       why Wrekkit read up to 10% above other meters. Still damage TAKEN by
+       whoever it hit. ]]
+  if onOurSide(src) and onOurSide(dst) then src = nil end
 
   if src then
     src.damage = src.damage + amount

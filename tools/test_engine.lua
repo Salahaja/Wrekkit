@@ -4678,6 +4678,25 @@ Wrekkit.capture.buffs = {}
 Wrekkit.ResetData("all")
 end)()
 
+;(function()
+  -- Friendly fire (Living Bomb going off on the rogue, hitting the priest)
+  -- is the priest's damage taken, not the rogue's damage done.
+  local E = Wrekkit.encounter
+  local realLive, realIn = E.live, E.inCombat
+  E.live, E.inCombat = nil, false
+  fire("SPELL_DAMAGE_EVENT_OTHER", "0xBoss", "0xP1", 11267, 700, "0,0,0", 0, 0)
+  fire("SPELL_DAMAGE_EVENT_OTHER", "0xP2", "0xP1", 20476, 1500, "0,0,0", 0, 2)
+  local fuffA, priestA
+  for _, a in pairs(E.live.actors) do
+    if a.name == "Fuff" then fuffA = a end
+    if a.name == "Elfpriest" then priestA = a end
+  end
+  check("friendly fire is not damage done", fuffA and fuffA.damage, 700)
+  check("nor in the raid's damage", E.live.totals.damage, 700)
+  check("but it is damage taken", priestA and priestA.taken, 1500)
+  E.live, E.inCombat = realLive, realIn
+end)()
+
 ----------------------------------------------------------------------
 print("\n-- saved settings --")
 ----------------------------------------------------------------------
