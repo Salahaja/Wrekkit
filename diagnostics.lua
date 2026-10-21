@@ -202,8 +202,9 @@ function W.Status()
   if n == 0 and C.seenTotal > 0 and recording then
     line("            Events are arriving but nothing was kept. Pulls shorter")
     line("            than " .. (W.db.minTrashDuration or 6) ..
-         "s are discarded, and an encounter is only")
-    line("            stored ~5s after you leave combat.")
+         "s are held 30s for the fight they open, and kept")
+    line("            only if they hurt a mob; others are stored ~5s after")
+    line("            you leave combat.")
   end
 
   if W.lastError then

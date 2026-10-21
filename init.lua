@@ -61,12 +61,14 @@ f:SetScript("OnEvent", function()
     -- Close the pull in progress so it lands in SavedVariables instead of
     -- being lost at the loading screen.
     if W.encounter.live then W.encounter:Finish() end
+    W.encounter:FlushHeld()
     -- And note how far the journal had got, for the next login's recovery.
     W.Guard("journal mark", function() W.store:MarkSaved() end)
 
   elseif event == "PLAYER_ENTERING_WORLD" then
     -- A zone change ends whatever was being recorded: combat cannot span it.
     if W.encounter.live then W.encounter:Finish() end
+    W.encounter:FlushHeld()
 
     --[[ Bring back what a crash lost, once a login -- see St:Recover. Here
          rather than at ADDON_LOADED: the journal is named after the player,
