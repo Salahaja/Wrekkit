@@ -42,7 +42,8 @@ local WIDTH = 220      -- default; the setting is mobFramesWidth
 local CAST_W = 100     -- an enemy cast bar beside its row; the setting is mobCastWidth
 local MIN_W, MAX_W = 160, 420
 local UPDATE = 0.2
-local RANGE_W = 30   -- the distance column, when it is shown
+local RANGE_W = 30   -- the distance column, when it is shown inside the row
+local RANGE_BOX_W = 34  -- the distance box beside the frame (the default)
 
 -- guid -> { guid, name, order, hp, max, who, onMe, state, seen }
 MF.list = {}
@@ -215,8 +216,10 @@ local function makeRow(parent, i)
   local pad = MF.pad or 0
   local b = CreateFrame("Button", nil, parent)
   b:SetHeight(ROW_H)
+  -- By its left edge, its width set outright (MF:ApplyWidth): the window
+  -- can then grow a distance column on the right without re-anchoring.
   b:SetPoint("TOPLEFT", parent, "TOPLEFT", 2 + pad, -(14 + pad + (i - 1) * (ROW_H + 1)))
-  b:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -2 - pad, -(14 + pad + (i - 1) * (ROW_H + 1)))
+  b:SetWidth(MF:Width() - 4 - 2 * pad)
   b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
 
   b.bg = UI.Fill(b, W.color.panelHi, 0.9)
@@ -295,10 +298,20 @@ local function makeRow(parent, i)
   b.pct = UI.Text(b, 10, W.color.textDim, "RIGHT", UI.fontNum)
   b.pct:SetPoint("RIGHT", b, "RIGHT", -4, 0)
   b.pct:SetWidth(34)
-  -- How far the mob is (MF:Distance), just left of the %.
+  -- How far the mob is (MF:Distance): in a column of its own at the
+  -- window's right (the default; the window widens for it), so the name
+  -- keeps its room -- or, if chosen, just left of the %.
   b.range = UI.Text(b, 10, W.color.textDim, "RIGHT", UI.fontNum)
   b.range:SetPoint("RIGHT", b.pct, "LEFT", -2, 0)
   b.range:SetWidth(RANGE_W)
+  b.rangeBox = CreateFrame("Frame", nil, b)
+  b.rangeBox:SetWidth(RANGE_BOX_W)
+  b.rangeBox:SetHeight(ROW_H)
+  b.rangeBox:SetPoint("LEFT", b, "RIGHT", 3, 0)
+  b.rangeBox.bg = UI.Fill(b.rangeBox, W.color.panelHi, 0.9)
+  b.rangeBox.text = UI.Text(b.rangeBox, 10, W.color.textDim, "CENTER", UI.fontNum)
+  b.rangeBox.text:SetPoint("CENTER", b.rangeBox, "CENTER", 0, 0)
+  b.rangeBox:Hide()
 
   -- What the mob is casting: over the row's right part, or beside it
   -- (MF.PlaceCast, MF.PaintCast). A plain frame, so clicks fall through
@@ -441,7 +454,7 @@ function MF:Create()
     f:StopMovingOrSizing()
     MF.sizing = nil
     W.Guard("mob frames width", function()
-      MF:SetWidth(f:GetWidth())
+      MF:SetWidth(f:GetWidth() - MF:RangeSection())
       MF:SavePosition()
     end)
   end)
@@ -511,7 +524,7 @@ function MF:RangePreset(class)
     b = { band(true, 5, GREEN), band(true, 10, YELLOW), band(false, 25, GOLD),
           band(true, 30, WHITE), band(false, 36, BLUE), band(false, 40, BLUE) }
   end
-  return { on = false, number = true, tint = false, bands = b,
+  return { on = false, number = true, tint = false, place = "beside", bands = b,
            beyond = { on = true, c = { RED[1], RED[2], RED[3] } } }
 end
 
@@ -531,6 +544,7 @@ function MF:RangeSettings()
     if type(r.bands[i]) ~= "table" then r.bands[i] = band(false, 30, WHITE) end
   end
   if type(r.beyond) ~= "table" then r.beyond = { on = true, c = { RED[1], RED[2], RED[3] } } end
+  if r.place ~= "inside" then r.place = "beside" end
   return r
 end
 
@@ -539,15 +553,26 @@ function MF:ResetRange()
   local r = self:RangeSettings()
   local _, class = UnitClass("player")
   local fresh = self:RangePreset(class)
-  fresh.on, fresh.number, fresh.tint = r.on, r.number, r.tint
+  fresh.on, fresh.number, fresh.tint, fresh.place = r.on, r.number, r.tint, r.place
   T:Settings().mobRangeBy[self:CharKey()] = fresh
   return fresh
 end
 
---- Is the distance column taking room on the rows?
+--- Is the distance column taking room on the rows (shown inside them)?
 function MF:RangeColumn()
   local r = self:RangeSettings()
-  return r.on == true and r.number ~= false
+  return r.on == true and r.number ~= false and r.place == "inside"
+end
+
+--- Is the distance in its own column at the window's right?
+function MF:RangeBeside()
+  local r = self:RangeSettings()
+  return r.on == true and r.number ~= false and r.place ~= "inside"
+end
+
+--- How much wider the window is for that column (0 without it).
+function MF:RangeSection()
+  return self:RangeBeside() and (RANGE_BOX_W + 3) or 0
 end
 
 -- Not while the world is going away: UnitXP is known to crash then.
@@ -592,11 +617,16 @@ function MF:PaintRange(b, m)
   local d, exact
   if r.on then d, exact = self:Distance(m) end
   local c = d and self:RangeColour(d, r)
+  local beside = self:RangeBeside()
+  local text = beside and b.rangeBox.text or b.range
+  if beside then b.rangeBox:Show() else b.rangeBox:Hide() end
+  b.range:SetText("")
+  b.rangeBox.text:SetText("")
   if d and r.number ~= false then
-    b.range:SetText((exact and "" or "~") .. math.floor(d + 0.5) .. "y")
-    if c then b.range:SetTextColor(c[1], c[2], c[3], 1) else b.range:SetTextColor(0.6, 0.6, 0.6, 1) end
-  else
-    b.range:SetText("")
+    text:SetText((exact and "" or "~") .. math.floor(d + 0.5) .. "y")
+    if c then text:SetTextColor(c[1], c[2], c[3], 1) else text:SetTextColor(0.6, 0.6, 0.6, 1) end
+  elseif beside then
+    text:SetText("|cff6f6f6f-|r")
   end
   if d and c and r.tint then
     b.hp:SetVertexColor(c[1], c[2], c[3], 0.55)
@@ -873,13 +903,16 @@ function MF:ApplyWidth()
        dragging looked broken. The rows follow the live width meanwhile, and
        letting go saves it. ]]
   local w = self:Width()
+  local col = self:RangeSection()
   if self.sizing then
-    w = math.floor((f:GetWidth() or w) + 0.5)
-  elseif math.abs((f:GetWidth() or 0) - w) >= 1 then
-    f:SetWidth(w)
+    w = math.floor((f:GetWidth() or (w + col)) + 0.5) - col
+  elseif math.abs((f:GetWidth() or 0) - (w + col)) >= 1 then
+    f:SetWidth(w + col)
   end
   local split, nameW, whoW = self:Columns(w)
+  local rowW = w - 4 - 2 * (self.pad or 0)
   for _, b in ipairs(self.rows or {}) do
+    if math.abs((b:GetWidth() or 0) - rowW) >= 1 then b:SetWidth(rowW) end
     local rw = self:RangeColumn() and (RANGE_W + 2) or 0
     if b.split ~= split or b.layout ~= self:Layout() or b.rangeW ~= rw
        or b.nameW ~= ((self:Layout() ~= "wide") and (nameW - rw) or nameW) then
@@ -1036,11 +1069,13 @@ function MF.PlaceCast(b)
       w = rowW - (b.split or math.floor(rowW * SPLIT))
     end
   end
-  if cb._style == style and cb._w == w then return end
-  cb._style, cb._w = style, w
+  -- Beside: past the window's edge, so past its distance column too.
+  local gap = MF:RangeSection() + 2 + (MF.pad or 0) + 3
+  if cb._style == style and cb._w == w and cb._gap == gap then return end
+  cb._style, cb._w, cb._gap = style, w, gap
   cb:ClearAllPoints()
   if style == "beside" then
-    cb:SetPoint("LEFT", b, "RIGHT", 3, 0)
+    cb:SetPoint("LEFT", b, "RIGHT", gap, 0)
   else
     cb:SetPoint("RIGHT", b, "RIGHT", 0, 0)
     cb:SetFrameLevel(b:GetFrameLevel() + 3)
@@ -1117,6 +1152,7 @@ local function paintSummary(b, fine, elsewhere, hidden, tank, total)
   b.mob, b.summary, b.trouble = nil, true, false
   MF.PaintCast(b, nil, nil)
   b.range:SetText("")
+  b.rangeBox:Hide()
   b.hp:SetVertexColor(0.55, 0.16, 0.16, 0.7)
   b:SetSelected(false)
   b:SetMark(nil)
