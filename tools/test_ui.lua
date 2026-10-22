@@ -1451,6 +1451,20 @@ step("mob frames: distance in yards, coloured by this character's bands", functi
     elseif (row.range:GetText() or "") ~= "" then
       fail = "beside the frame, the row itself still showed the distance"
     end
+    -- Its own column: the window widens for it, the rows keep their width.
+    if not fail then
+      MF:ApplyWidth()
+      local fw, rw = MF.frame:GetWidth(), row:GetWidth()
+      r.on = false
+      MF:ApplyWidth()
+      local fw0, rw0 = MF.frame:GetWidth(), row:GetWidth()
+      r.on = true
+      MF:ApplyWidth()
+      if fw ~= fw0 + MF:RangeSection() or rw ~= rw0 then
+        fail = string.format("the column did not widen the window alone (%s/%s vs %s/%s)", fw, rw, fw0, rw0)
+      end
+    end
+
     -- Inside the row, if chosen: next to the %, no box.
     if not fail then
       r.place = "inside"
