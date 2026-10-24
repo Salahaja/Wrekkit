@@ -1,12 +1,11 @@
-**The mob frame distance gets a column of its own, so mob names keep their room.**
+**Fixes client crashes (ERROR #132) with Raid value on.**
 
-## Changed
-- **Distance on the mob frames is now its own column of the window.** Inside the row it took room from the mob's name, which then showed as "Heroic Training D...". With distance on, the window widens at the right for a column of its own, and the rows and names keep their width. The window narrows back when distance is off. A cast bar set beside the row starts past the window's edge.
-- **"Distance shown"** (Settings → Mob frames) offers **its own column** (the default) or **inside the row**, as it was.
+## Fixed
+- **The client could crash mid-fight with Raid value on.** The crash report shows ERROR #132 at 0x004648AC, inside nampower.dll. Wrekkit reads a mob's live armor as it is hit, to make Sunder and the other armor debuffs exact. The combat log also reports mobs the client no longer has loaded: mobs too far away, just despawned, or dropped when the server goes down. Asked about one of those, Nampower read an object that wasn't there and took the client down. Wrekkit now checks that the client still has a mob before asking Nampower, UnitXP or SuperWoW anything about it. That covers the armor reading, the mob-frame distance and the right-click range check.
 
 ## Install
 
-Download `Wrekkit-0.9.33.zip` and extract it into `<your client>\Interface\AddOns\`. You should end up with `Interface\AddOns\Wrekkit\Wrekkit.toc`. Do **not** use the "Source code" links. Coming from 0.9.18 or earlier, **fully restart the client**; from 0.9.19 or later a `/reload` is enough. `/wrek status` should then report **v0.9.33**.
+Download `Wrekkit-0.9.34.zip` and extract it into `<your client>\Interface\AddOns\`. You should end up with `Interface\AddOns\Wrekkit\Wrekkit.toc`. Do **not** use the "Source code" links. Coming from 0.9.18 or earlier, **fully restart the client**; from 0.9.19 or later a `/reload` is enough. `/wrek status` should then report **v0.9.34**.
 
 ## Requirements
 
