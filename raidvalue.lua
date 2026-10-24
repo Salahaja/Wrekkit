@@ -679,6 +679,8 @@ function V:LiveArmor(guid)
   local now = GetTime()
   local c = self.liveArmor[guid]
   if c and now - c.at < LIVE_EVERY then return c.v end
+  -- Never for a mob the client no longer has: see W.Present.
+  if not W.Present(guid) then return c and c.v or nil end
   local ok, r = pcall(GetUnitField, guid, "resistances")
   local v = ok and type(r) == "table" and tonumber(r[1]) or nil
   if v and v <= 0 and not self.armorOf[guid] then v = nil end

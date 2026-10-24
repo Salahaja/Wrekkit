@@ -583,6 +583,8 @@ function MF:Distance(m)
   if self.leaving then return nil end
   local unit = m and (m.guid or m.unit)
   if not unit then return nil end
+  -- A mob the client no longer has is not handed to a DLL (W.Present).
+  if not W.Present(unit) then return nil end
   if UnitXP then
     local ok, d = pcall(UnitXP, "distanceBetween", "player", unit)
     if ok and type(d) == "number" then return d, true end
@@ -737,7 +739,7 @@ function MF:AttackKind()
   local id, name = self:RangedAttack()
   if not id then return "melee" end
   if how == "ranged" then return "ranged", name end
-  if IsSpellInRange then
+  if IsSpellInRange and W.Present("target") then
     local ok, r = pcall(IsSpellInRange, id, "target")
     if ok and r == 1 then return "ranged", name end
   end

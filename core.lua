@@ -88,6 +88,20 @@ W.classColor = {
 local SCHOOL = { [0] = "Physical", "Holy", "Fire", "Nature", "Frost",
                  "Shadow", "Arcane" }
 
+--[[ Does the client still have this unit (a GUID, with SuperWoW, or a
+     unit token)? Ask before handing one to a DLL's function. The combat log
+     reports hits on mobs past the range the client keeps loaded, and mobs
+     just gone; given one of those, nampower's GetUnitField read an object
+     that was not there and took the client down (ERROR #132 at 0x004648AC,
+     five times from 10/20 to 10/24, every one with a creature's GUID in
+     hand). pcall cannot catch that: the crash is inside the DLL. ]]
+function W.Present(unit)
+  if not unit then return false end
+  if not UnitExists then return true end   -- cannot tell; nothing to guard with
+  local ok, there = pcall(UnitExists, unit)
+  return (ok and there) and true or false
+end
+
 function W.SchoolName(school, spellId)
   if school == nil then
     if spellId == 0 then return "Physical" end

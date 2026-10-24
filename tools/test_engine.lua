@@ -4624,6 +4624,15 @@ advance(1)
 local exRog = eff("0xRog", 11198)
 fire("AUTO_ATTACK_OTHER", "0xRog", "0xV13", 1000, 2, 0, 1, 0, 0, 0)
 check("an armor reading that did not drop counts nothing exact", eff("0xRog", 11198), exRog, 0.01)
+-- A mob the client no longer has is never handed to nampower: that read
+-- crashed the client (ERROR #132, 10/20-10/24).
+local asked = 0
+GetUnitField = function(guid, f) asked = asked + 1 return { 2000, 0, 0, 0, 0, 0, 0 } end
+Wrekkit.value.liveArmor = {}
+check("a mob the client does not have is not asked about", Wrekkit.value:LiveArmor("0xGone"), nil)
+check("  nampower is never called for it", asked, 0)
+check("one it has still is", Wrekkit.value:LiveArmor("0xV11"), 2000)
+
 ARMOR_NOW = nil
 GetUnitField = function() return "" end
 Wrekkit.db.mobArmor = nil

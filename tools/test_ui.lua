@@ -1433,7 +1433,11 @@ step("mob frames: distance in yards, coloured by this character's bands", functi
   r.bands[4].on, r.bands[4].max, r.bands[4].c = true, 21, { 1, 0.6, 0.1 }
   if not fail and MF:RangeColour(20, r)[3] ~= 0.1 then fail = "a band of their own did not take a distance inside it" end
   -- Exact, from UnitXP by the mob's GUID.
-  UnitXP = function(what, a, b) if what == "distanceBetween" then return 20.6 end end
+  local xpAsked = 0
+  UnitXP = function(what, a, b) xpAsked = xpAsked + 1 if what == "distanceBetween" then return 20.6 end end
+  -- The client has 0xMob; a mob it no longer has is never handed to a DLL.
+  local realExists = UnitExists
+  UnitExists = function(u) if u == "0xMob" or u == "player" then return 1 end return realExists(u) end
   -- The sample rows the frames show while being placed.
   local tf = UI.threatFrames
   local wasMoving = tf and tf.moving
@@ -1443,6 +1447,8 @@ step("mob frames: distance in yards, coloured by this character's bands", functi
   if tf then tf.moving = wasMoving end
   local row = MF.rows and MF.rows[1]
   if not row then error("the mob frames have no rows to paint") end
+  MF:PaintRange(row, { guid = "0xGone", name = "Gone" })
+  if not fail and xpAsked ~= 0 then fail = "a mob the client no longer has was handed to UnitXP" end
   if not fail and row then
     MF:PaintRange(row, { guid = "0xMob", name = "Mob" })
     -- Beside the frame by default, in a box of its own; the row's own text empty.
@@ -1488,6 +1494,7 @@ step("mob frames: distance in yards, coloured by this character's bands", functi
   if not fail and (other == r or other.on) then fail = "another character shared the hunter's distance settings" end
   UnitName, UnitClass = realName, realClass
   UnitXP, UnitPosition = realXP, realPos
+  UnitExists = realExists
   -- The settings have the bands, a swatch each.
   UI.settings:Create()
   if not fail and not (UI.settings.rangeBands and UI.settings.rangeBands[6] and UI.settings.rangeBands.beyond
