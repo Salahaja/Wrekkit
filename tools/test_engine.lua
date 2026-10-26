@@ -4437,6 +4437,18 @@ fire("AUTO_ATTACK_OTHER", "0xWar", "0xV6", 400, 2, 0, 1, 0, 0, 0)
 fire("SPELL_ENERGIZE_BY_OTHER", "0xWar", "0xWar", 51750, 0, 59, 0)
 fire("SPELL_HEAL_BY_OTHER", "0xWar", "0xWar", 20343, 61, 0, 0)
 fire("SPELL_HEAL_ON_SELF", "0xWar", "0xWar", 20343, 61, 0, 0)
+-- A heal on the recording player arrives twice: BY_OTHER, then ON_SELF.
+-- Counted once, even with other heals landing in between (10/25).
+;(function()
+  local E = Wrekkit.encounter
+  local live = E.live
+  local function healOf(g) local a = live and live.actors[g] return a and ((a.healing or 0) + (a.overheal or 0)) or 0 end
+  local before = healOf("0xP2")
+  fire("SPELL_HEAL_BY_OTHER", "0xP1", "0xP2", 10960, 700, 0, 0)   -- Prayer of Healing on you
+  fire("SPELL_HEAL_BY_OTHER", "0xP3", "0xP2", 10960, 650, 0, 0)   -- and on someone else
+  fire("SPELL_HEAL_ON_SELF", "0xP1", "0xP2", 10960, 700, 0, 0)    -- its restatement
+  check("a heal on you is counted once", healOf("0xP2") - before, 1350)
+end)()
 check("Judgement of Wisdom: mana to its paladin", enc.actors["0xPal"].valueMana, 59)
 check("Judgement of Light: health, counted once", enc.actors["0xPal2"].valueHeal, 61)
 fire("SPELL_ENERGIZE_BY_OTHER", "0xWar", "0xWar", 51750, 1, 10, 0)

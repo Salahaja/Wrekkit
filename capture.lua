@@ -83,7 +83,9 @@ end
 C.events = {
   "AUTO_ATTACK_SELF", "AUTO_ATTACK_OTHER",
   "SPELL_DAMAGE_EVENT_SELF", "SPELL_DAMAGE_EVENT_OTHER",
-  "SPELL_HEAL_BY_SELF", "SPELL_HEAL_BY_OTHER", "SPELL_HEAL_ON_SELF",
+  -- Not SPELL_HEAL_ON_SELF: every heal on you also arrives as BY_SELF (you
+  -- cast it) or BY_OTHER (someone else did) -- see the dispatch below.
+  "SPELL_HEAL_BY_SELF", "SPELL_HEAL_BY_OTHER",
   -- BY_ only: ON_SELF repeats BY_SELF when you restore yourself.
   "SPELL_ENERGIZE_BY_SELF", "SPELL_ENERGIZE_BY_OTHER",
   "SPELL_MISS_SELF", "SPELL_MISS_OTHER",
@@ -1030,9 +1032,14 @@ dispatch.SPELL_HEAL_BY_SELF = function(a1, a2, a3, a4, a5, a6)
   C:SPELL_HEAL(a1, a2, a3, a4, a5, a6)
 end
 dispatch.SPELL_HEAL_BY_OTHER = dispatch.SPELL_HEAL_BY_SELF
--- HEAL_ON_SELF can duplicate HEAL_BY_SELF when you heal yourself; the
--- aggregator de-dupes on (caster, target, spell, amount) within a tick.
-dispatch.SPELL_HEAL_ON_SELF = dispatch.SPELL_HEAL_BY_SELF
+--[[ SPELL_HEAL_ON_SELF is not listened to: it restates a heal on you that
+     BY_SELF or BY_OTHER already carried. The aggregator's one-heal memory
+     could not catch it -- a Prayer of Healing lands on five people between
+     the two copies, and the first copy has already raised your health, so
+     the second splits into different effective/overheal -- and every heal
+     anyone put on the recording player counted twice (10/25 Molten Core:
+     Zylla's Flash Heals on Salahaja exactly doubled, 85k in all). Chronicle
+     ignores ON_SELF for the same reason. ]]
 -- SPELL_ENERGIZE_BY_*(target, caster, spellId, powerType, amount, periodic)
 dispatch.SPELL_ENERGIZE_BY_SELF = function(a1, a2, a3, a4, a5) C:SPELL_ENERGIZE(a1, a2, a3, a4, a5) end
 dispatch.SPELL_ENERGIZE_BY_OTHER = dispatch.SPELL_ENERGIZE_BY_SELF

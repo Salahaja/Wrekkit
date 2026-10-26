@@ -840,9 +840,9 @@ function E:Damage(sourceGuid, targetGuid, spellId, amount, info)
   end
 end
 
--- Guards against SPELL_HEAL_ON_SELF duplicating SPELL_HEAL_BY_SELF when you
--- heal yourself: the same caster/target/spell/amount inside one frame is a
--- restatement of one heal, never two.
+-- The same caster/target/spell/amount inside one frame is one heal stated
+-- twice, never two. (SPELL_HEAL_ON_SELF, the usual restatement, is no
+-- longer listened to at all; see capture.lua.)
 local lastHealKey, lastHealAt = nil, 0
 
 function E:Heal(casterGuid, targetGuid, spellId, effective, over, info)
