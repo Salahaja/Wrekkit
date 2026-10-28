@@ -447,6 +447,6 @@ end
 function W.ScheduleFinish(delay)
   W.After(delay, function()
     local E = W.encounter
-    if E.live and not E.inCombat then E:Finish() end
+    if E.live and not E.inCombat then E:Finish(nil, true) end
   end, "finish")
 end

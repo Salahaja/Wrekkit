@@ -35,6 +35,21 @@ local IDLE_END = 15
      ended and was dropped as too short -- and the opener with it (10/20
      Molten Core: a Holy Strike and a Judgement, every line-of-sight pull). ]]
 local OPENER_HOLD = 30
+--[[ A pull that ends with its mobs still alive is not over: the tank pulled
+     them back to the raid, or they were kited, and the fight resumes a few
+     seconds on. Split at MERGE_GAP, its first seconds became a pull of their
+     own (10/25 Molten Core: six pulls whose openers, 3-14k each, sat in a
+     separate "Flame Imp" or "Ancient Core Hound" pull 5.5-6.3 s before the
+     real one). Held this long, and resumed if the fight is on its mobs. ]]
+local ALIVE_HOLD = 12
+
+--- Did the pull end with any mob it hurt still alive?
+local function livingFoes(enc)
+  for _, a in pairs(enc.enemies or {}) do
+    if (a.taken or 0) > 0 and (a.deaths or 0) == 0 then return true end
+  end
+  return false
+end
 
 -- Read-only stand-in for an event that carried no details, so a missing
 -- table costs nothing rather than a new empty one per event.
@@ -746,11 +761,19 @@ local function noteAmount(row, amount, isCrit)
   if isCrit then row.critAmount = (row.critAmount or 0) + amount end
 end
 
+local startingWith = {}
+
 --- A player or a pet: our side, as far as damage done is concerned.
 local function onOurSide(a) return a and (a.isPlayer or a.class == "PET") end
 
 function E:Damage(sourceGuid, targetGuid, spellId, amount, info)
-  if not self.live then self:CombatStart() end
+  if not self.live then
+    -- Which mobs this fight is on, for a pull held for its living mobs.
+    startingWith[1], startingWith[2] = sourceGuid, targetGuid
+    self.startingWith = startingWith
+    self:CombatStart()
+    self.startingWith = nil
+  end
   local enc = self.live
   if not enc then return end
   info = info or NO_INFO
@@ -1379,8 +1402,23 @@ function E:CombatStart()
   -- in it rather than lose it. Only within the same session, and soon.
   local held = self.heldPull
   self.heldPull = nil
-  if held and now - (self.heldPullAt or 0) <= OPENER_HOLD and self.session
+  --[[ A pull held for its living mobs goes on only if this fight is on one
+       of them; a fight on other mobs is a pull of its own, and the held one
+       is stored. (Entering combat yourself says nothing about which mob:
+       that goes on in it.) ]]
+  local onItsMobs = true
+  if held and held.heldAlive and self.startingWith then
+    local foes = held.enemies or {}
+    onItsMobs = (foes[self.startingWith[1]] or foes[self.startingWith[2]]) and true or false
+  end
+  if held and not onItsMobs then
+    self.heldPull = held
+    self:ExpireHeld(held)
+    held = nil
+  end
+  if held and now - (self.heldPullAt or 0) <= (self.heldPullFor or OPENER_HOLD) and self.session
      and held.sessionId == self.session.id then
+    held.heldAlive = nil
     self.live = held
     self.lastGroupHit = now
     self.inCombat = true
@@ -1610,7 +1648,10 @@ function E:FlushHeld()
 end
 
 --- `held`: a pull held as too short (see ExpireHeld), stored as it is.
-function E:Finish(held)
+--- `auto`: combat went quiet (W.ScheduleFinish) -- only then is a pull with
+--- living mobs held for the rest of its fight; a zone change, a logout or
+--- any other end stores it there and then.
+function E:Finish(held, auto)
   local enc = held or self.live
   if not held then self.live = nil end
   if not enc then return end
@@ -1620,18 +1661,23 @@ function E:Finish(held)
     self.inCombat = false
   end
   enc.duration = enc.stopT - enc.startT
-  if not held and enc.duration < (W.db and W.db.minTrashDuration or 6) then
-    -- Not dropped yet: the fight it opened may be on its way (OPENER_HOLD).
+  local short = enc.duration < (W.db and W.db.minTrashDuration or 6)
+  if not held and (short or (auto and livingFoes(enc))) then
+    --[[ Not stored yet: the fight it opened (OPENER_HOLD), or the rest of
+         the fight its living mobs are still in (ALIVE_HOLD), may be coming. ]]
+    local hold = short and OPENER_HOLD or ALIVE_HOLD
     W.Debug("holding a " .. string.format("%.1f", enc.duration) .. "s combat")
     enc.duration = nil
+    enc.heldAlive = not short or nil
     self:FlushHeld()
-    self.heldPull, self.heldPullAt = enc, GetTime()
-    W.After(OPENER_HOLD + 0.5, function()
+    self.heldPull, self.heldPullAt, self.heldPullFor = enc, GetTime(), hold
+    W.After(hold + 0.5, function()
       W.Guard("held pull", function() E:ExpireHeld(enc) end)
     end, "heldPull")
     W.capture:TrimUnits()
     return
   end
+  enc.heldAlive = nil
 
   -- Anything still up when the pull ended was up until the pull ended.
   -- Without this, a flask that was never removed reads as zero uptime --

@@ -58,6 +58,12 @@ function R:Sessions()
   if live and live.totals and (live.totals.damage > 0 or live.totals.healing > 0) then
     place(live, true)
   end
+  -- Held a moment for the rest of its fight (E:Finish): not stored yet, but
+  -- it is part of the session.
+  local held = W.encounter.heldPull
+  if held and held ~= live and held.totals and (held.totals.damage > 0 or held.totals.healing > 0) then
+    place(held, true)
+  end
 
   table.sort(out, function(a, b) return a.startTime > b.startTime end)
   for _, s in ipairs(out) do
@@ -1199,10 +1205,11 @@ end
 -- The fingerprint's running sum, or nil if a pull is still live.
 local function fingerprint(encounters)
   local live = W.encounter and W.encounter.live
+  local held = W.encounter and W.encounter.heldPull
   local sum = 0
   for i = 1, table.getn(encounters) do
     local e = encounters[i]
-    if e == live then return nil end
+    if e == live or e == held then return nil end
     local t = e.totals
     sum = sum + (e.rev or 0)
     if t then sum = sum + (t.damage or 0) + (t.healing or 0) + (t.taken or 0) end

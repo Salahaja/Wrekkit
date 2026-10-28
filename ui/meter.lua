@@ -118,7 +118,8 @@ function M:Encounters()
   local seg = s.segment
 
   if seg == "current" then
-    local live = W.encounter.live
+    -- A pull held a moment for the rest of its fight is still the current one.
+    local live = W.encounter.live or W.encounter.heldPull
     if live then return { live }, "Current" end
     -- Nothing in progress: fall through to the last pull rather than an
     -- empty window, which reads as "the addon is broken".

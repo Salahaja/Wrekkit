@@ -1505,6 +1505,20 @@ step("mob frames: distance in yards, coloured by this character's bands", functi
   if fail then error(fail) end
 end)
 
+step("meter: a pull held for the rest of its fight is still the current one", function()
+  local E = Wrekkit.encounter
+  local realLive, realHeld = E.live, E.heldPull
+  local fake = { totals = { damage = 100, healing = 0, taken = 0 }, actors = {}, enemies = {}, startTime = 1, startT = 1, stopT = 2, combat = 1 }
+  E.live, E.heldPull = nil, fake
+  local s = UI.meter:Settings()
+  local was = s.segment
+  s.segment = "current"
+  local list = UI.meter:Encounters()
+  s.segment = was
+  E.live, E.heldPull = realLive, realHeld
+  if list[1] ~= fake then error("a held pull vanished from the meter's Current") end
+end)
+
 step("clicking real handlers (not just setting state)", function()
   -- Driving state directly skips the closures the buttons actually run, so
   -- a nil upvalue inside one would never surface. Fire them for real.

@@ -4771,6 +4771,45 @@ end)()
   E.live, E.inCombat, E.heldPull = realLive, realIn, nil
 end)()
 
+;(function()
+  -- A split pull (10/25): the tank pulls, the mob runs back, the fight goes
+  -- quiet for 6 s, then the raid engages. The mob is alive, so the pull is
+  -- held and the fight goes on in it.
+  local E = Wrekkit.encounter
+  local realLive, realIn = E.live, E.inCombat
+  E.live, E.inCombat, E.heldPull = nil, false, nil
+  fire("SPELL_DAMAGE_EVENT_OTHER", "0xBoss", "0xP3", 11267, 500, "0,0,0", 0, 0)
+  local first = E.live
+  advance(7)
+  fire("SPELL_DAMAGE_EVENT_OTHER", "0xBoss", "0xP3", 11267, 500, "0,0,0", 0, 0)
+  E:CombatEnd()
+  advance(6)
+  E:Finish(nil, true)
+  check("a pull whose mob lives is held, not stored", E.heldPull, first)
+  advance(6)
+  fire("SPELL_DAMAGE_EVENT_OTHER", "0xBoss", "0xP1", 11267, 800, "0,0,0", 0, 0)
+  check("the fight on its mob goes on in it", E.live, first)
+  -- Held, then a fight on another mob: its own pull, the held one stored.
+  E:CombatEnd()
+  advance(6)
+  E:Finish(nil, true)
+  local before = table.getn(Wrekkit.db.encounters)
+  advance(3)
+  fire("SPELL_DAMAGE_EVENT_OTHER", "0xAdd", "0xP1", 11267, 300, "0,0,0", 0, 0)
+  check("a fight on other mobs is a pull of its own", E.live ~= first, true)
+  check("  and the held one is stored", table.getn(Wrekkit.db.encounters), before + 1)
+  -- An explicit end (a zone change, a logout) stores it straight away.
+  E.live, E.inCombat, E.heldPull = nil, false, nil
+  fire("SPELL_DAMAGE_EVENT_OTHER", "0xBoss", "0xP3", 11267, 500, "0,0,0", 0, 0)
+  advance(8)
+  fire("SPELL_DAMAGE_EVENT_OTHER", "0xBoss", "0xP3", 11267, 500, "0,0,0", 0, 0)
+  E:CombatEnd()
+  local n0 = table.getn(Wrekkit.db.encounters)
+  E:Finish()
+  check("an explicit end stores it, mob alive or not", table.getn(Wrekkit.db.encounters), n0 + 1)
+  E.live, E.inCombat, E.heldPull = realLive, realIn, nil
+end)()
+
 ----------------------------------------------------------------------
 print("\n-- saved settings --")
 ----------------------------------------------------------------------
