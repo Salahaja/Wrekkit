@@ -3552,6 +3552,58 @@ step("threat: warnings fire once on the way up, not every reading", function()
   if count ~= 2 then error("expected 2 warnings (warn, danger), got " .. count) end
 end)
 
+step("threat: my row pinned to the top, and seconds to pulling aggro", function()
+  local T = Wrekkit.threat
+  local s = T:Settings()
+  local was = { s.pinMe, s.showETA, s.etaWho, s.showPullLine }
+  local me = UnitName("player")
+  -- Tank at 10000 gaining 500/s; me at range on 9000 gaining 900/s. The
+  -- line is 130% of the tank: 13000, climbing 650/s. 4000 to close at
+  -- 250/s: 16 seconds.
+  local tank = { name = "Tanky", tank = true, perc = 100, threat = 10000, tps = 500, span = 10, pull = 100 }
+  local mine = { name = me, isMe = true, melee = false, perc = 90, threat = 9000, tps = 900, span = 10 }
+  mine.pull = T.PullPercent(mine)
+  local rows = {}
+  table.insert(rows, tank)
+  for i = 1, 6 do
+    table.insert(rows, { name = "Dps" .. i, perc = 99 - i, threat = 9900 - i * 10, tps = 100, span = 10,
+                         melee = true, pull = (99 - i) / 1.1 })
+  end
+  table.insert(rows, mine)
+  local cur = { rows = rows, me = mine, tank = tank }
+
+  local eta = T.PullETA(mine, tank)
+  if not eta or math.abs(eta - 16) > 0.01 then error("expected 16s, got " .. tostring(eta)) end
+  if T.PullETA(rows[2], tank) then error("a player falling behind the line has no time to pull") end
+  if T.PullETA(tank, tank) then error("the tank has no time to pull") end
+  local young = { name = "New", perc = 90, threat = 9000, tps = 5000, span = 1 }
+  if T.PullETA(young, tank) then error("two seconds of history is not a rate") end
+
+  s.showPullLine = false
+  s.pinMe, s.showETA = false, false
+  local items = UI.threat.Rows(cur)
+  if items[1].row ~= tank then error("unpinned, the tank leads") end
+  for _, it in ipairs(items) do
+    if it.eta then error("no time shown with the option off") end
+  end
+
+  s.pinMe, s.showETA, s.etaWho = true, true, "me"
+  items = UI.threat.Rows(cur)
+  if items[1].row ~= mine then error("pinned, my row is first") end
+  if items[1]._rank ~= 8 then error("the pinned row keeps its rank, got " .. tostring(items[1]._rank)) end
+  if not items[1].eta then error("my time to pull is shown") end
+
+  -- Painted: the seconds are on the row.
+  local row = UI.threat.list and UI.threat.list.rows and UI.threat.list.rows[1]
+  if row then
+    UI.threat.Paint(row, items[1], 1)
+    local text = row.value and row.value:GetText() or ""
+    if not string.find(text, "16s", 1, true) then error("the row reads " .. text) end
+  end
+
+  s.pinMe, s.showETA, s.etaWho, s.showPullLine = was[1], was[2], was[3], was[4]
+end)
+
 step("settings controls are laid out in two columns", function()
   UI.settings.frame = nil
   UI.settings:Create()

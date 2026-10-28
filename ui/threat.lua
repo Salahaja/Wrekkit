@@ -77,6 +77,24 @@ function TW.Rows(cur)
         rank = rank + 1
         it._rank = rank
       end
+      if it.row and s.showETA and (s.etaWho == "all" or it.row.isMe) then
+        it.eta = T.PullETA(it.row, cur.tank)
+      end
+    end
+
+    --[[ Your own row first, if asked: low on the list it is pushed past the
+         rows shown, and it trades places with everyone near your threat on
+         every update. It keeps its rank, so the number says where you are. ]]
+    if s.pinMe then
+      for i, it in ipairs(items) do
+        if it.row and it.row.isMe then
+          if i > 1 then
+            table.remove(items, i)
+            table.insert(items, 1, it)
+          end
+          break
+        end
+      end
     end
   end
 
@@ -161,6 +179,14 @@ local function rowTooltip(frame, item)
     GameTooltip:AddDoubleLine("To pulling aggro", T.PctText(r.pull), LABEL[1], LABEL[2], LABEL[3], 1, 1, 1)
     GameTooltip:AddLine(r.melee and "In melee range: pulls at 110%." or
       "At range: pulls at 130%.", DIM[1], DIM[2], DIM[3])
+    local cur = T:Live()
+    local eta = T.PullETA(r, cur and cur.tank)
+    if eta then
+      GameTooltip:AddDoubleLine("Pulls aggro in", string.format("%.0fs", math.ceil(eta)),
+        LABEL[1], LABEL[2], LABEL[3], 1, 1, 1)
+      GameTooltip:AddLine("If they and the tank keep their threat", DIM[1], DIM[2], DIM[3])
+      GameTooltip:AddLine("per second of the last 10 seconds.", DIM[1], DIM[2], DIM[3])
+    end
   end
   if not r.isMe and not r.tank then
     GameTooltip:AddLine("Click: whisper them their threat", DIM[1], DIM[2], DIM[3])
@@ -263,6 +289,14 @@ function TW.Paint(row, item, index)
     value = "|cff9d9d9d" .. W.Short(r.tps or 0) .. "/s|r"
   else
     value = ""
+  end
+  -- Seconds to pulling aggro at the current rates: red under 5, orange
+  -- under 10.
+  if item.eta then
+    local secs = math.ceil(item.eta)
+    local hue = (secs <= 5 and "ff4d4d") or (secs <= 10 and "ffa033") or "c8c8c8"
+    local eta = "|cff" .. hue .. string.format("%.0fs", secs) .. "|r"
+    value = (value == "") and eta or (value .. "  " .. eta)
   end
 
   local color = W.ClassColor(r.class)
@@ -566,6 +600,8 @@ function TW:Menu(anchor)
     { text = "Threat", value = "col:showThreat", checked = s.showThreat == true },
     { text = "Threat per second", value = "col:showTPS", checked = s.showTPS == true },
     { text = "Pull-aggro line", value = "col:showPullLine", checked = s.showPullLine == true },
+    { text = "Time to pull aggro", value = "col:showETA", checked = s.showETA == true },
+    { text = "Keep my row at the top", value = "col:pinMe", checked = s.pinMe == true },
     { text = "Opacity", header = true },
     { text = "100%", value = "o:1", checked = TW:Opacity() >= 0.99 },
     { text = "80%", value = "o:0.8", checked = math.abs(TW:Opacity() - 0.8) < 0.03 },

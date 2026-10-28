@@ -89,6 +89,9 @@ T.defaults = {
   showThreat = true,
   showTPS = true,
   showPullLine = true,
+  pinMe = false,           -- your own row first, wherever your threat puts you
+  showETA = false,         -- seconds until a player pulls aggro, at the current rates
+  etaWho = "all",          -- ... "me": on your row only; "all": every player's
   locked = false,
   opacity = 1.0,
   window = { point = "CENTER", x = -320, y = -180, w = 240, h = 170 },
@@ -217,6 +220,7 @@ function T:Sanitize(s)
   if s.tankMode == true then s.tankMode = "on" elseif s.tankMode == false then s.tankMode = "auto" end
   s.tankMode = oneOf(s.tankMode, { "auto", "on", "off" }, d.tankMode)
   s.basis = oneOf(s.basis, { "pull", "tank" }, d.basis)
+  s.etaWho = oneOf(s.etaWho, { "me", "all" }, d.etaWho)
   s.display = oneOf(s.display, { "window", "docked", "meter", "off" }, d.display)
   s.show = oneOf(s.show, { "always", "group", "combat" }, d.show)
   s.frameStyle = oneOf(s.frameStyle, { "clean", "number", "badge" }, d.frameStyle)
@@ -603,6 +607,7 @@ local function tps(r, threat, now)
   end
   if not oldest then return 0 end
   local dt = now - ts[oldest]
+  r.span = dt
   if dt <= 0 then return 0 end
   local v = (threat - vs[oldest]) / dt
   if v < 0 then v = 0 end
@@ -615,6 +620,29 @@ function T.PullPercent(row)
   if row.tank then return 100 end
   local line = row.melee and T.PULL_MELEE or T.PULL_RANGED
   return (row.perc or 0) / line * 100
+end
+
+--[[ Seconds until a player pulls aggro off the tank, if both keep going as
+     they have for the last TPS_WINDOW seconds: the threat still between
+     them and the line (110% of the tank in melee, 130% at range), over how
+     fast they are closing on it. The line moves too -- it is a share of the
+     tank's threat, so it climbs at that share of the tank's rate.
+
+     nil when they are not closing in (or are past it already), when either
+     has too little history to have a rate (ETA_SPAN), and past ETA_MAX,
+     where a rate this short says nothing yet. ]]
+local ETA_SPAN = 3
+local ETA_MAX = 60
+function T.PullETA(row, tank)
+  if not row or not tank or row.tank or row == tank then return nil end
+  if (row.span or 0) < ETA_SPAN or (tank.span or 0) < ETA_SPAN then return nil end
+  local line = (row.melee and T.PULL_MELEE or T.PULL_RANGED) / 100
+  local gap = line * (tank.threat or 0) - (row.threat or 0)
+  local closing = (row.tps or 0) - line * (tank.tps or 0)
+  if gap <= 0 or closing <= 0 then return nil end
+  local secs = gap / closing
+  if secs > ETA_MAX then return nil end
+  return secs
 end
 
 --- The percentage a setting asked to see, for one row.

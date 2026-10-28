@@ -1068,6 +1068,26 @@ function S:BuildThreat()
   get, set = opt("showPullLine")
   check(self, "Pull-aggro line", get, set,
     { "A row at the threat where aggro moves to you." })
+  get, set = opt("pinMe")
+  check(self, "Keep my row at the top", get, set,
+    { "Your own row first, whatever your threat: it", "keeps its rank number, and no longer moves",
+      "or drops off the list as the threat shifts." })
+  -- One control for two settings: the window menu toggles showETA alone.
+  choice(self, "Time to pull aggro",
+    {
+      { value = "off", label = "off" },
+      { value = "me", label = "mine" },
+      { value = "all", label = "everyone's" },
+    },
+    function() local s = ts() return s.showETA and s.etaWho or "off" end,
+    function(v)
+      local s = ts()
+      s.showETA = (v ~= "off")
+      if v ~= "off" then s.etaWho = v end
+      redraw()
+    end,
+    { "Seconds until a player pulls aggro if they and", "the tank keep their threat per second of the",
+      "last 10 seconds. Shown only while they are", "closing in, within a minute. Red under 5s." })
 
   ------------------------------------------------------------------
   heading(self, "Warnings")
@@ -1159,10 +1179,6 @@ function S:BuildThreat()
       "hitting a group member, AGGRO (not tanking)", "on one hitting you. With SuperWoW, every mob",
       "with a plate; without, every mob your group", "has targeted." })
 
-  get, set = opt("mobSummary")
-  check(self, "Mob count under the %", get, set,
-    { "\"4 held  1 slipping  1 loose\" under the", "target-frame %, with more than one mob." })
-
   textField(self, "Co-tanks",
     function() return ts().coTanks end,
     function(v) ts().coTanks = v or "" end)
@@ -1208,6 +1224,9 @@ function S:BuildThreat()
 
   get, set = opt("frame")
   check(self, "Show on target frame", get, set)
+  get, set = opt("mobSummary")
+  check(self, "Mob count under the %", get, set,
+    { "\"4 held  1 slipping  1 loose\" under the", "target-frame %, with more than one mob." })
   get, set = pick("frameStyle")
   choice(self, "Style",
     {
