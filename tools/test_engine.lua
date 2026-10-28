@@ -588,6 +588,29 @@ check("a shared spell goes to the original item",
 check("named from the table when the client has not cached it",
   Wrekkit.capture:Item(13444, 17531), "Major Mana Potion")
 
+-- Drink and food: one spell for dozens of items, so another player's is
+-- Drink or Food -- not the item you last ate, at its price.
+;(function()
+  local realInfo = SpellInfo
+  SpellInfo = function(id)
+    if id == 1137 then return "Drink", nil, "x" end
+    if id == 24707 then return "Food", nil, "x" end
+    return realInfo(id)
+  end
+  local C = Wrekkit.capture
+  local was = Wrekkit.db.consumeSpells[24707]
+  check("another player's drink is a Drink, not one of its items", C:ConsumableItem(0, 1137, "0xP2"), -1)
+  check("  named Drink", C:Item(-1, 1137), "Drink")
+  check("  and unpriced", Wrekkit.prices:Value(-1), nil)
+  Wrekkit.db.consumeSpells[24707] = 83004     -- you once ate a Conjured Mana Orange
+  check("your own food does not name everyone's", C:ConsumableItem(0, 24707, "0xP2"), -2)
+  check("  your own still names its item", C:ConsumableItem(83004, 24707, "0xP1"), 83004)
+  check("a food spell the client cannot name, cast by many items", C:ConsumableItem(0, 433, "0xP2"), -3)
+  check("a potion and its look-alike still go to the potion", C:ConsumableItem(0, 17531, "0xP2"), 13444)
+  Wrekkit.db.consumeSpells[24707] = was
+  SpellInfo = realInfo
+end)()
+
 -- Between pulls: held, and credited to the next pull -- the pre-pull fire
 -- protection potion, the flask. Only your group's.
 ;(function()

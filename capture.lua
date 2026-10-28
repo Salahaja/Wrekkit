@@ -584,6 +584,7 @@ local itemCache = {}
      worse answer in place even after the client learns the item. ]]
 function C:Item(itemId, spellId)
   if not itemId or itemId == 0 then return nil end
+  if itemId < 0 then return C.GENERIC_CONSUME[itemId] or "Food or drink" end
 
   local hit = itemCache[itemId]
   if hit then return hit end
@@ -904,9 +905,40 @@ end
        no item                matched by spell: what you have learned, then
                               W.consumesDB (tools/make_consumes.lua, built from
                               the client's item cache). Players only.
-     A spell several items cast (Drink, Food, a server's joke potion reusing
-     Major Healing Potion's) is credited to the first, the lowest item id --
-     the original -- unless your own use taught which. ]]
+     A spell several items cast (a server's joke potion reusing Major
+     Healing Potion's) is credited to the first, the lowest item id -- the
+     original -- unless your own use taught which. Drink and food are the
+     exception (genericConsume). ]]
+
+--[[ Another player's drink or food: which item is not said. Every drink
+     casts one of a few "Drink" spells, every food a "Food" one, and each is
+     cast by dozens of items, from Morning Glory Dew to Conjured Mana
+     Orange. Credited to one of them, every drink a mage had read as the
+     Conjured Mana Orange you once ate (10/25 Molten Core: 51 of them), and
+     was priced as one. So they count as Drink or Food, under ids of their
+     own (never an item's), and unpriced. Your own stay exact: the client
+     names your item. A food or drink spell only one item is known to cast
+     keeps that item. ]]
+C.GENERIC_CONSUME = { [-1] = "Drink", [-2] = "Food", [-3] = "Food or drink" }
+local function genericConsume(spellId, known, learned)
+  local items = known and table.getn(known) / 2 or 0
+  if learned then
+    local listed = false
+    for i = 1, table.getn(known or {}), 2 do
+      if known[i] == learned then listed = true end
+    end
+    if not listed then items = items + 1 end
+  end
+  if items < 2 then return nil end
+  local name = string.lower(C:Spell(spellId) or "")
+  if string.find(name, "^drink") then return -1 end
+  if string.find(name, "^food") or string.find(name, "^refreshment") then return -2 end
+  -- Not named here (no SuperWoW or Nampower to ask): a spell this many
+  -- items cast is food or drink; a couple is a potion and a look-alike.
+  if string.find(name, "^spell %d") and items >= 3 then return -3 end
+  return nil
+end
+
 function C:ConsumableItem(itemId, spellId, casterGuid)
   local db = W.consumesDB or {}
   if itemId ~= 0 then
@@ -932,8 +964,10 @@ function C:ConsumableItem(itemId, spellId, casterGuid)
   local u = self.units[casterGuid] or self:Unit(casterGuid)
   if not u or not u.isPlayer then return nil end
   local learned = W.db and W.db.consumeSpells and W.db.consumeSpells[spellId]
-  if learned then return learned end
   local known = db[spellId]
+  local generic = genericConsume(spellId, known, learned)
+  if generic then return generic end
+  if learned then return learned end
   return known and known[1] or nil
 end
 
