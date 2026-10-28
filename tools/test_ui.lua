@@ -1414,6 +1414,157 @@ step("announce: lines can be left out, and contrib names who added each", functi
   if not string.find(joined, "2. Windfury Totem", 1, true) then error("the lines were not numbered again: " .. joined) end
 end)
 
+-- Two deaths with their last blows, the killing one last, for the views
+-- and announcements below.
+local function fakeDeaths()
+  return {
+    { name = "Fuff", class = "ROGUE", t = 75, encT = 75, encounter = "Ragnaros",
+      recap = { { ago = 3, src = "Ragnaros", spell = "Melee", a = 2000, hp = 3000 },
+                { ago = 1, src = "Ragnaros", spell = "Wrath of Ragnaros", a = 3500, hp = 1000 } } },
+    { name = "Elfpriest", class = "PRIEST", t = 130, encT = 130, encounter = "Ragnaros", recap = {} },
+  }
+end
+
+step("announce: the death log and one death's last blows, as shown", function()
+  local R = Wrekkit.report
+  local real = R.DeathList
+  local deaths = fakeDeaths()
+  R.DeathList = function() return deaths end
+  local A = Wrekkit.announce
+  local base = { metric = "deaths", metrics = { "deaths" }, encounters = {}, label = "MC", deaths = true }
+  local lines = A:Lines(base, 5)
+  local fail
+  if not string.find(lines[1], "Deaths - MC: 2", 1, true) then fail = "the heading reads " .. lines[1] end
+  if not fail and lines[2] ~= "1. Fuff  1:15  (Ragnaros)" then fail = "the first death reads " .. tostring(lines[2]) end
+  local drilled = {}
+  for k, v in pairs(base) do drilled[k] = v end
+  drilled.deathDrill = R.DeathKey(deaths[1])
+  local one = A:Lines(drilled, 1)
+  R.DeathList = real
+  if fail then error(fail) end
+  if not string.find(one[1], "Fuff died at 1:15", 1, true) then error("the recap heading reads " .. one[1]) end
+  if table.getn(one) ~= 2 then error("Top 1 of a recap is the heading and one blow, got " .. table.getn(one)) end
+  if not string.find(one[2], "Wrath of Ragnaros", 1, true) then error("the blow kept is not the killing one: " .. one[2]) end
+end)
+
+step("announce: packed, lines share messages up to 255 characters", function()
+  local A = Wrekkit.announce
+  local packed = A:Pack({ "Wrekkit  Damage Done - MC (1m)", "1. Fuff  10k", "2. Manner  9k", "  ...and 3 more",
+                          "Wrekkit  Healing - MC (1m)", "1. Elfpriest  5k" })
+  if table.getn(packed) ~= 2 then error("each heading starts a message: got " .. table.getn(packed)) end
+  if packed[1] ~= "Wrekkit  Damage Done - MC (1m) / 1. Fuff  10k / 2. Manner  9k / ...and 3 more" then
+    error("packed as " .. packed[1])
+  end
+  local many = { "Wrekkit  Damage Done - MC (1m)" }
+  for i = 1, 15 do table.insert(many, i .. ". " .. string.rep("n", 30) .. "  100k") end
+  packed = A:Pack(many)
+  if table.getn(packed) < 2 then error("sixteen long lines in one message") end
+  for _, m in ipairs(packed) do
+    if string.len(m) > 255 then error("a message of " .. string.len(m) .. " characters") end
+  end
+end)
+
+step("announce: Top N and leaving lines out work in a drilldown, per heading", function()
+  local sent
+  -- A player's abilities: a list, so Top N is offered.
+  local drilled = { metrics = { "damage" }, metric = "damage", encounters = {}, label = "A",
+                    filter = {}, petMode = "merge", drill = "Salahaja" }
+  UI.ConfirmAnnounce({ "line" }, "GUILD", nil, function() end, drilled)
+  local dlg = _G["WrekkitConfirm"]
+  if not dlg.countStepper:IsShown() then error("Top N is missing in a drilldown") end
+  UI.CloseConfirm()
+  -- One ability's spread: the lines it has.
+  drilled.drillAbility = 11267
+  UI.ConfirmAnnounce({ "line" }, "GUILD", nil, function() end, drilled)
+  if dlg.countStepper:IsShown() then error("Top N offered for one ability's spread") end
+  UI.CloseConfirm()
+
+  -- Two headings: leaving Fuff out of the damage leaves his healing line,
+  -- and each heading numbers from 1.
+  local lines = { "Wrekkit  Damage Done - A (1m)", "1. Fuff  10k", "2. Manner  9k",
+                  "Wrekkit  Healing - A (1m)", "1. Fuff  5k", "2. Elfpriest  4k", "  ...and 2 more" }
+  local real = Wrekkit.db.announcePack
+  Wrekkit.db.announcePack = false
+  UI.ConfirmAnnounce(lines, "SAY", nil, function(_, final) sent = final end,
+    { metrics = { "damage", "healing" }, encounters = {}, label = "A", filter = {}, petMode = "merge" })
+  arg1 = "LeftButton"
+  dlg.rowBtns[2]:GetScript("OnClick")()     -- 1. Fuff, under Damage Done
+  dlg.rowBtns[7]:GetScript("OnClick")()     -- ...and 2 more
+  dlg.sendBtn:GetScript("OnClick")()
+  local joined = table.concat(sent or {}, "~")
+  local fail
+  if joined ~= "Wrekkit  Damage Done - A (1m)~1. Manner  9k~Wrekkit  Healing - A (1m)~1. Fuff  5k~2. Elfpriest  4k" then
+    fail = "sent " .. joined
+  end
+  -- Packed: the same lines in two messages.
+  if not fail then
+    Wrekkit.db.announcePack = true
+    UI.ConfirmAnnounce(lines, "SAY", nil, function(_, final) sent = final end,
+      { metrics = { "damage", "healing" }, encounters = {}, label = "A", filter = {}, petMode = "merge" })
+    if not dlg.packCheck:IsShown() then fail = "no Fewer messages box" end
+    dlg.sendBtn:GetScript("OnClick")()
+    if not fail and table.getn(sent or {}) ~= 2 then fail = "packed into " .. table.getn(sent or {}) .. " messages" end
+  end
+  Wrekkit.db.announcePack = real
+  if fail then error(fail) end
+end)
+
+step("meter: Raid Contrib by effect and the death log, opened and announced as shown", function()
+  local R = Wrekkit.report
+  local realE, realD = R.Effects, R.DeathList
+  local deaths = fakeDeaths()
+  R.Effects = function(self, view, key)
+    if key == "support" then return {} end
+    return {
+      { name = "Sunder Armor", total = 60000, kind = "value",
+        players = { { name = "Wiredbro", class = "WARRIOR", amount = 40000 },
+                    { name = "Manner", class = "WARRIOR", amount = 20000 } } },
+    }
+  end
+  R.DeathList = function() return deaths end
+  local M = UI.meter
+  local was = M:Settings().metric
+  M:Show()
+  local fail
+  local function check(cond, why) if not fail and not cond then fail = why end end
+
+  -- Offered in the metric menu.
+  local items
+  local realMenu = UI.Menu
+  UI.Menu = function(_, _, its) items = its end
+  M:MetricMenu(M.frame.bar)
+  UI.Menu = realMenu
+  local offered = {}
+  for _, it in ipairs(items or {}) do if it.value then offered[it.value] = true end end
+  check(offered.contribFx and offered.deathLog, "the menu does not offer both views")
+
+  M:SetMetric("contribFx")
+  check(M.list.data[1] and M.list.data[1].name == "Sunder Armor", "the effects are not listed")
+  arg1 = "LeftButton"
+  if not fail then M.list.rows[1]:GetScript("OnClick")() end
+  check(M.drill == "Sunder Armor", "clicking an effect did not open it")
+  check(M.list.data[1] and M.list.data[1].name == "Wiredbro", "opened, it does not list who built it")
+  local ctx = M:AnnounceContext()
+  check(ctx.contrib and ctx.contribEffect == "Sunder Armor" and not ctx.drill,
+    "the announcement is not that effect's")
+  if not fail then M.list.rows[1]:GetScript("OnClick")() end
+  check(M.drill == nil, "clicking again did not go back")
+
+  M:SetMetric("deathLog")
+  check(M.list.data[1] and M.list.data[1].name == "Fuff", "the deaths are not listed in order")
+  if not fail then M.list.rows[1]:GetScript("OnClick")() end
+  check(M.drill == R.DeathKey(deaths[1]), "clicking a death did not open its recap")
+  check(table.getn(M.list.data) == 2, "the recap does not show both blows")
+  ctx = M:AnnounceContext()
+  check(ctx.deaths and ctx.deathDrill == M.drill and not ctx.drill, "the announcement is not that death's")
+  local lines = Wrekkit.announce:Lines(ctx, 5)
+  check(string.find(lines[1] or "", "Fuff died", 1, true), "announced as " .. tostring(lines[1]))
+
+  R.Effects, R.DeathList = realE, realD
+  M:SetMetric(was or "damage")
+  if fail then error(fail) end
+end)
+
 step("mob frames: distance in yards, coloured by this character's bands", function()
   local MF = UI.mobs
   local s = Wrekkit.threat:Settings()

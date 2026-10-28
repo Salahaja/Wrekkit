@@ -172,10 +172,7 @@ end
 --- Every effect, damage then support, as the report's Raid Contrib tab
 --- lists them.
 local function allEffects(view, filter)
-  local out = {}
-  for _, e in ipairs(W.report:Effects(view, "value", filter)) do table.insert(out, e) end
-  for _, e in ipairs(W.report:Effects(view, "support", filter)) do table.insert(out, e) end
-  return out
+  return W.report:ContribEffects(view, filter)
 end
 
 --[[ How raid value is told: ctx.valueMode when the announcement picked one
@@ -285,6 +282,53 @@ function A:ValueLines(ctx, view, count, key)
   return out
 end
 
+--[[ The death log, as the report's Deaths tab and the meter's Death log
+     show it: who died, when, in which pull. Opened on one death
+     (ctx.deathDrill), the blows before it, the killing one last -- the
+     last `count` of them. ]]
+function A:DeathLines(ctx, view, count)
+  local deaths = W.report:DeathList(view)
+  if ctx.deathDrill then
+    local target
+    for _, d in ipairs(deaths) do
+      if W.report.DeathKey(d) == ctx.deathDrill then target = d end
+    end
+    if target then
+      local out = {
+        string.format("Wrekkit  %s died at %s - %s", target.name or "?", W.Clock(target.t or 0),
+          target.encounter or ctx.label or "?"),
+      }
+      local recap = W.report:DeathRecap(target)
+      local first = table.getn(recap) - count + 1
+      if first < 1 then first = 1 end
+      for i = first, table.getn(recap) do
+        local st = recap[i]
+        local note = (st.note and st.note ~= "") and ("  (" .. st.note .. ")") or ""
+        local value = (st.value and st.value ~= "") and ("  " .. st.value) or ""
+        table.insert(out, "  " .. st.label .. value .. note)
+      end
+      return out
+    end
+  end
+
+  local n = table.getn(deaths)
+  local out = {
+    string.format("Wrekkit  Deaths - %s: %d", ctx.label or "?", n),
+  }
+  if n == 0 then
+    table.insert(out, "  nobody died")
+    return out
+  end
+  for i = 1, count do
+    local d = deaths[i]
+    if not d then break end
+    table.insert(out, string.format("%d. %s  %s  (%s)", i, d.name or "?", W.Clock(d.t or 0),
+      d.encounter or "?"))
+  end
+  if n > count then table.insert(out, string.format("  ...and %d more", n - count)) end
+  return out
+end
+
 function A:Lines(ctx, count)
   count = count or (W.db and W.db.announceCount) or 5
   if count > MAX_LINES then count = MAX_LINES end
@@ -305,6 +349,11 @@ function A:Lines(ctx, count)
   if ctx.drill then
     local drilled = self:DrillLines(ctx, view, count)
     if drilled then return drilled end
+  end
+
+  -- The Deaths tab and the meter's Death log: the list, or one death.
+  if ctx.deaths then
+    return self:DeathLines(ctx, view, count)
   end
 
   -- The Raid Contrib tab drilled into one effect: who built it.
@@ -344,6 +393,29 @@ function A:Lines(ctx, count)
     end
   end
 
+  return out
+end
+
+--[[ 1.12 chat has no line break: each line is a message of its own, and
+     each one waits its turn through the chat throttle. Packed (the
+     announcement's "Fewer messages", W.db.announcePack), a post's lines
+     are joined with " / " as many to a message as fit its 255 characters,
+     each heading starting a new one -- a top 5 in one message, not six. ]]
+A.MAX_MSG = 255
+local PACK_SEP = " / "
+
+function A:Pack(lines)
+  local out, cur = {}, nil
+  for _, l in ipairs(lines or {}) do
+    local text = string.gsub(l, "^%s+", "")
+    local heading = string.find(text, "^Wrekkit  ")
+    if cur and (heading or string.len(cur) + string.len(PACK_SEP) + string.len(text) > A.MAX_MSG) then
+      table.insert(out, cur)
+      cur = nil
+    end
+    cur = cur and (cur .. PACK_SEP .. text) or text
+  end
+  if cur then table.insert(out, cur) end
   return out
 end
 
@@ -430,7 +502,7 @@ function A:Request(ctx, channel, target, count)
   ctx.count = count
   W.ui.ConfirmAnnounce(lines, channel, target, function(finalTarget, finalLines)
     local n = A:Send(finalLines or lines, channel, finalTarget)
-    W.Print("sent " .. n .. " line" .. (n == 1 and "" or "s") .. " to " ..
+    W.Print("sent " .. n .. " message" .. (n == 1 and "" or "s") .. " to " ..
       A:Destination(channel, finalTarget) .. ".")
   end, ctx)
 end

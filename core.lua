@@ -312,7 +312,9 @@ function W.SanitizeDB(db)
       "current")
     -- A metric that no longer exists would fall back to damage while the
     -- menu ticked nothing; name it outright instead.
-    if m.metric ~= "threat" and not (W.metrics and W.metrics.byKey and W.metrics.byKey[m.metric]) then
+    -- The meter's own views (ui/meter.lua M.VIEWS) are not metrics either.
+    local views = { threat = true, contribFx = true, deathLog = true }
+    if not views[m.metric] and not (W.metrics and W.metrics.byKey and W.metrics.byKey[m.metric]) then
       m.metric = "damage"
     end
     if type(m.search) ~= "string" then m.search = "" end

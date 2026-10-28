@@ -286,6 +286,7 @@ function R:AnnounceContext()
   if tab == "summary" then
     metrics = { "damage", "healing" }
   elseif tab == "deaths" then
+    -- Announced as the list it is (A:DeathLines), not a count per player.
     metrics = { "deaths" }
   else
     for _, t in ipairs(self.tabs) do
@@ -307,6 +308,9 @@ function R:AnnounceContext()
     -- The Raid Contrib tab: by effect, both ways on offer, or one effect.
     contrib = (tab == "contrib") or nil,
     contribEffect = (tab == "contrib") and self.state.contribDrill or nil,
+    -- The Deaths tab: who died when, or the one death that is open.
+    deaths = (tab == "deaths") or nil,
+    deathDrill = (tab == "deaths") and self.state.deathDrill or nil,
   }
 end
 
@@ -1078,16 +1082,9 @@ end
      judgements give back. Click one for who added how much of it; click
      again to go back. Empty until Raid value is recording. ]]
 function R:FillContrib(view)
-  local filter = self:Filter()
-  local effects = {}
-  for _, e in ipairs(W.report:Effects(view, "value", filter)) do table.insert(effects, e) end
-  for _, e in ipairs(W.report:Effects(view, "support", filter)) do table.insert(effects, e) end
+  local effects = W.report:ContribEffects(view, self:Filter())
   local pane, list = self.mainPane, self.mainList
-
-  local function unit(e)
-    if e.kind ~= "support" then return "" end
-    return e.name == "Judgement of Wisdom" and " mana" or " heal"
-  end
+  local unit = W.report.EffectUnit
 
   if self.state.contribDrill then
     local target
@@ -1140,9 +1137,7 @@ function R:FillContrib(view)
 end
 
 function R:FillDeaths(view)
-  local deaths = {}
-  for _, d in ipairs(view.deaths) do table.insert(deaths, d) end
-  table.sort(deaths, function(a, b) return (a.t or 0) < (b.t or 0) end)
+  local deaths = W.report:DeathList(view)
 
   self.mainPane.titleText:SetText("Deaths")
   self.mainPane.totalText:SetText(table.getn(deaths) .. " total")
@@ -1154,9 +1149,7 @@ function R:FillDeaths(view)
   if self.state.deathDrill then
     local target
     for _, d in ipairs(deaths) do
-      if (tostring(d.name) .. ":" .. tostring(d.t)) == self.state.deathDrill then
-        target = d
-      end
+      if W.report.DeathKey(d) == self.state.deathDrill then target = d end
     end
 
     if target then
@@ -1182,7 +1175,7 @@ function R:FillDeaths(view)
       0, W.ClassColor(d.class), 110)
     row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
     row:SetScript("OnClick", function()
-      R.state.deathDrill = tostring(d.name) .. ":" .. tostring(d.t)
+      R.state.deathDrill = W.report.DeathKey(d)
       R:Refresh()
     end)
   end)

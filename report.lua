@@ -693,6 +693,36 @@ function R:Effects(view, key, filter)
   return order
 end
 
+--[[ The Raid Contrib list -- the report's tab, the meter's view and their
+     announcements: the damage effects (Raid value), then what the
+     judgements give back (Raid support). ]]
+function R:ContribEffects(view, filter)
+  local out = {}
+  for _, e in ipairs(self:Effects(view, "value", filter)) do table.insert(out, e) end
+  for _, e in ipairs(self:Effects(view, "support", filter)) do table.insert(out, e) end
+  return out
+end
+
+--- What a support effect's number counts: mana for Wisdom, else healing.
+function R.EffectUnit(e)
+  if not e or e.kind ~= "support" then return "" end
+  return e.name == "Judgement of Wisdom" and " mana" or " heal"
+end
+
+--- The view's deaths in the order they happened: the report's Deaths tab,
+--- the meter's Death log and their announcements.
+function R:DeathList(view)
+  local out = {}
+  for _, d in ipairs(view.deaths or {}) do table.insert(out, d) end
+  table.sort(out, function(a, b) return (a.t or 0) < (b.t or 0) end)
+  return out
+end
+
+--- One death, by a key that survives the view being rebuilt.
+function R.DeathKey(d)
+  return tostring(d.name) .. ":" .. tostring(d.t)
+end
+
 function R:Rank(view, metricKey, filter)
   local metric = W.metrics.Get(metricKey)
   local ctx = { duration = view.rateBase, view = view }

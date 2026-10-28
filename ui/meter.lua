@@ -153,7 +153,7 @@ end
 function M:AnnounceContext()
   local s = self:Settings()
   local encounters, segLabel = self:Encounters()
-  return {
+  local ctx = {
     metric = s.metric,
     encounters = encounters,
     label = segLabel,
@@ -163,6 +163,16 @@ function M:AnnounceContext()
     drill = self.drill,
     drillAbility = self.drillAbility,
   }
+  -- The two list views announce as the report's tabs do; their drill is an
+  -- effect or a death, not a player.
+  if s.metric == "contribFx" then
+    ctx.metric, ctx.metrics, ctx.drill, ctx.drillAbility = "value", { "value" }, nil, nil
+    ctx.contrib, ctx.contribEffect = true, self.drill
+  elseif s.metric == "deathLog" then
+    ctx.metric, ctx.metrics, ctx.drill, ctx.drillAbility = "deaths", { "deaths" }, nil, nil
+    ctx.deaths, ctx.deathDrill = true, self.drill
+  end
+  return ctx
 end
 
 ----------------------------------------------------------------------
@@ -811,13 +821,23 @@ end
      at. A metric not named here still appears, under "Other", so adding
      one to W.metrics can never make it unreachable. ]]
 local METRIC_GROUPS = {
-  { "Damage", { "damage", "dps", "crit", "value" } },
+  { "Damage", { "damage", "dps", "crit", "value", "contribFx" } },
   { "Healing", { "healing", "hps", "healingTotal", "overheal", "healCrit", "support" } },
-  { "Survival", { "taken", "absorbed", "deaths" } },
+  { "Survival", { "taken", "absorbed", "deaths", "deathLog" } },
   { "Utility", { "dispels", "interrupts", "consumes", "consumeCost", "uptime" } },
   { "Enemies", { "enemy", "enemyTaken" } },
 }
 M.METRIC_GROUPS = METRIC_GROUPS
+
+--[[ Two of the report's tabs as meter views. They list effects and deaths
+     rather than rank players, so they are not in W.metrics: picked from the
+     same menu, opened the same way -- click a row for its detail, click
+     again or right-click to go back -- and announced as shown (M:RenderView,
+     M:AnnounceContext). ]]
+M.VIEWS = {
+  contribFx = { label = "Raid Contrib by effect", title = "Raid Contrib" },
+  deathLog = { label = "Death log", title = "Deaths" },
+}
 
 --- `which` 2 picks the second metric of a split meter; otherwise the first.
 function M:MetricMenu(anchor, which)
@@ -833,12 +853,17 @@ function M:MetricMenu(anchor, which)
     local first = true
     for _, key in ipairs(g[2]) do
       local m = W.metrics.byKey[key]
-      if m then
+      local v = M.VIEWS[key]
+      if m or v then
         if first then
           table.insert(items, { text = g[1], header = true })
           first = false
         end
-        add(m)
+        if m then
+          add(m)
+        else
+          table.insert(items, { text = v.label, value = key, checked = (key == current) })
+        end
       end
     end
   end
@@ -1295,10 +1320,140 @@ end
 --[[ Draw one pane from an already-built view, and say what its labels
      should read: { title, seg, footL, footR }. The first pane's go on the
      title bar and footer; the second's on its own header. ]]
+--[[ A list view (M.VIEWS) in one pane. The pane's drill field holds the
+     effect's name or the death's key while one is open. ]]
+function M:RenderView(pane, view, segLabel, key)
+  local list = self[pane.listField]
+  local drill = self[pane.drillField]
+  local out = { title = M.VIEWS[key].title, seg = segLabel }
+  local function back()
+    M[pane.drillField] = nil
+    UI.meter:Refresh()
+  end
+  local function clicks(row, onClick)
+    row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    row:SetScript("OnClick", onClick)
+  end
+  local function note(text)
+    list:SetData({ { label = text, value = "" } }, pane.paintStat)
+  end
+
+  if key == "contribFx" then
+    local effects = W.report:ContribEffects(view, self:Filter())
+    if drill then
+      local target
+      for _, e in ipairs(effects) do
+        if e.name == drill then target = e end
+      end
+      if target then
+        local unit = W.report.EffectUnit(target)
+        out.seg = target.name
+        list:SetData(target.players, function(row, p, i)
+          local share = target.total > 0 and p.amount / target.total or 0
+          row:SetClass(p.class, UI.SpecIconFor(p.name, p.class))
+          row:SetData(i, p.name, W.Short(p.amount) .. unit, string.format("%.1f%%", share * 100),
+            share, W.ClassColor(p.class), 42)
+          row.tip = nil
+          clicks(row, back)
+        end)
+        out.footL = W.Short(target.total) .. unit
+        out.footR = "click to go back"
+        return out
+      end
+      self[pane.drillField] = nil
+    end
+    if table.getn(effects) == 0 then
+      note((W.value and W.value:Enabled()) and "nothing recorded"
+        or "turn on Raid value (Settings > Recording)")
+      out.footL, out.footR = "", ""
+      return out
+    end
+    local top, added = 0, 0
+    for _, e in ipairs(effects) do
+      if e.kind == "value" then
+        added = added + e.total
+        if e.total > top then top = e.total end
+      end
+    end
+    list:SetData(effects, function(row, e, i)
+      local n = table.getn(e.players)
+      local frac = (e.kind == "value" and top > 0) and e.total / top or 0
+      row:SetData(i, e.name, W.Short(e.total) .. W.report.EffectUnit(e),
+        n .. (n == 1 and " player" or " players"), frac, W.color.accent, 58)
+      row.tip = nil
+      row.effectName = e.name
+      clicks(row, function()
+        if arg1 == "RightButton" then return end
+        M[pane.drillField] = (this or row).effectName
+        UI.meter:Refresh()
+      end)
+    end)
+    out.footL = table.getn(effects) .. " effects"
+    out.footR = W.Short(added) .. " added  (click one for who)"
+    return out
+  end
+
+  -- deathLog
+  local deaths = W.report:DeathList(view)
+  if drill then
+    local target
+    for _, d in ipairs(deaths) do
+      if W.report.DeathKey(d) == drill then target = d end
+    end
+    if target then
+      local color = W.ClassColor(target.class)
+      out.seg = (target.name or "?") .. " - " .. W.Clock(target.t or 0)
+      list:SetData(W.report:DeathRecap(target), function(row, st, i)
+        row:SetData(nil, st.label, st.value, st.note or "", 0, color, 52)
+        row.tip = nil
+        clicks(row, back)
+      end)
+      out.footL = (target.name or "?") .. " died"
+      out.footR = "click to go back"
+      return out
+    end
+    self[pane.drillField] = nil
+  end
+  if table.getn(deaths) == 0 then
+    note("nobody died")
+    out.footL, out.footR = "", ""
+    return out
+  end
+  list:SetData(deaths, function(row, d, i)
+    row:SetClass(d.class, UI.SpecIconFor(d.name, d.class))
+    row:SetData(i, d.name or "?", W.Clock(d.t or 0), d.encounter or "", 0, W.ClassColor(d.class), 58)
+    row.tip = function(self)
+      if not GameTooltip then return end
+      GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+      local c = W.ClassColor(d.class)
+      GameTooltip:AddLine(d.name or "?", c[1], c[2], c[3])
+      GameTooltip:AddDoubleLine("Died", W.Clock(d.t or 0) .. "  " .. (d.encounter or ""),
+        0.78, 0.80, 0.85, 1, 1, 1)
+      local last = d.recap and d.recap[table.getn(d.recap)]
+      if last then
+        GameTooltip:AddDoubleLine("Last hit", (last.src or "?") .. "  " .. W.Comma(last.a or 0),
+          0.78, 0.80, 0.85, 1, 1, 1)
+      end
+      GameTooltip:AddLine("Click: the seconds before it", 0.62, 0.65, 0.72)
+      GameTooltip:Show()
+    end
+    row.deathKey = W.report.DeathKey(d)
+    clicks(row, function()
+      if arg1 == "RightButton" then return end
+      M[pane.drillField] = (this or row).deathKey
+      UI.meter:Refresh()
+    end)
+  end)
+  out.footL = table.getn(deaths) .. (table.getn(deaths) == 1 and " death" or " deaths")
+  out.footR = "click one for its recap"
+  return out
+end
+
 function M:RenderPane(pane, view, segLabel)
   local s = self:Settings()
   local list = self[pane.listField]
   local metricKey = s[pane.metricKey]
+  if M.VIEWS[metricKey] then return self:RenderView(pane, view, segLabel, metricKey) end
   local metric = W.metrics.Get(metricKey)
   local rows, _, total = W.report:Rank(view, metricKey, self:Filter())
   local out = { title = W.metrics.Label(metric), seg = segLabel }

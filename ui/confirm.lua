@@ -235,6 +235,19 @@ local function build()
   f.contribCheck:SetWidth(260)
   f.contribCheck:Hide()
 
+  --[[ Chat has no line break, so this is the nearest thing: the lines
+       joined into as few messages as fit (A:Pack). Kept between posts --
+       it is how you like your posts, not part of what one says. ]]
+  f.packCheck = UI.Check(f, "Fewer messages: join the lines",
+    function() return W.db and W.db.announcePack == true end,
+    function(v)
+      if W.db then W.db.announcePack = v and true or false end
+      if f.Repaint then f:Repaint() end
+    end,
+    { "Each line is otherwise a message of its own.", "Joined with \" / \", up to 255 characters a",
+      "message; each heading starts a new one." })
+  f.packCheck:SetWidth(260)
+
   -- buttons
   local send = UI.Button(f, "Send", 90, 22)
   send:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -10, 10)
@@ -294,6 +307,8 @@ function UI.ConfirmAnnounce(lines, channel, target, onAccept, ctx)
   local skip = {}
   f.skip = skip
   local contrib = ctx and ctx.contrib and not ctx.contribEffect
+  -- A list of its own (by effect, the deaths): no metrics to pick.
+  local listMode = contrib or (ctx and ctx.deaths and not ctx.deathDrill)
   f.valueIndividual = ((ctx and ctx.valueMode) or (W.db and W.db.valueAnnounce)) == "individual"
   topCount = (ctx and ctx.count) or (W.db and W.db.announceCount) or 5
 
@@ -317,92 +332,92 @@ function UI.ConfirmAnnounce(lines, channel, target, onAccept, ctx)
        per keystroke would leak one modal per click. ]]
   local anchorTop = needsTarget and f.targetBox or f.headFill
 
+  --[[ From the top: the metrics to post (a plain view), or the contrib
+       choice; then Top N wherever the post is a list of something -- every
+       view, a player's abilities, an effect's builders, a death's last
+       blows -- but not one ability's spread, which is the lines it has. ]]
   local function layoutControls()
-    local drilled = ctx and (ctx.drill or ctx.contribEffect)
-    local controlH = 0
-
+    for _, chk in ipairs(f.metricChecks) do chk:Hide() end
     f.contribCheck:Hide()
+    f.countStepper:Hide()
+    f.viewNote:Hide()
+    local x = needsTarget and -12 or 12
+    if not ctx then
+      f.previewLabel:ClearAllPoints()
+      f.previewLabel:SetPoint("TOPLEFT", anchorTop, "BOTTOMLEFT", x, -8)
+      return 0
+    end
+    local drilled = ctx.drill or ctx.contribEffect or ctx.deathDrill
+    local countable = not (ctx.drill and ctx.drillAbility)
+    local y = -8
+
     if contrib then
-      local top = anchorTop
-      for _, chk in ipairs(f.metricChecks) do chk:Hide() end
       f.contribCheck:ClearAllPoints()
-      f.contribCheck:SetPoint("TOPLEFT", top, "BOTTOMLEFT", (needsTarget and -12 or 12), -8)
+      f.contribCheck:SetPoint("TOPLEFT", anchorTop, "BOTTOMLEFT", x, y)
       f.contribCheck:Show()
       f.contribCheck:Refresh()
-      f.countStepper:ClearAllPoints()
-      f.countStepper:SetPoint("TOPLEFT", top, "BOTTOMLEFT", (needsTarget and -12 or 12), -32)
-      f.countStepper:Show()
-      f.countStepper:Refresh()
-      f.viewNote:ClearAllPoints()
-      f.viewNote:SetPoint("LEFT", f.countStepper, "RIGHT", 12, 0)
-      f.viewNote:SetText("click a line to leave it out")
-      f.viewNote:Show()
-      f.previewLabel:ClearAllPoints()
-      f.previewLabel:SetPoint("TOPLEFT", f.countStepper, "BOTTOMLEFT", 0, -10)
-      return 52
-    end
-    if ctx and not drilled then
-      local top = anchorTop
+      y = y - 24
+    elseif not drilled and not listMode then
       for _, chk in ipairs(f.metricChecks) do
         chk:ClearAllPoints()
-        chk:SetPoint("TOPLEFT", top, needsTarget and "BOTTOMLEFT" or "BOTTOMLEFT",
-          (needsTarget and -12 or 12) + chk._col * 128, -8 - chk._row * 20)
+        chk:SetPoint("TOPLEFT", anchorTop, "BOTTOMLEFT", x + chk._col * 128, y - chk._row * 20)
         chk:Show()
         -- Drawn and synced in one place: a control that is placed but still
         -- showing the last request's tick is a confirmation step telling a lie.
         chk:Refresh()
       end
-      local rows = math.ceil(table.getn(f.metricChecks) / 3)
-      controlH = rows * 20 + 8
+      y = y - math.ceil(table.getn(f.metricChecks) / 3) * 20 - 4
+    end
 
+    f.viewNote:SetText(drilled and "the detail you have open; click a line to leave it out"
+      or "click a line to leave it out")
+    f.viewNote:ClearAllPoints()
+    f.previewLabel:ClearAllPoints()
+    if countable then
       f.countStepper:ClearAllPoints()
-      f.countStepper:SetPoint("TOPLEFT", top, "BOTTOMLEFT",
-        (needsTarget and -12 or 12), -8 - rows * 20 - 4)
+      f.countStepper:SetPoint("TOPLEFT", anchorTop, "BOTTOMLEFT", x, y)
       f.countStepper:Show()
       f.countStepper:Refresh()
-      controlH = controlH + 24
-
-      f.viewNote:ClearAllPoints()
       f.viewNote:SetPoint("LEFT", f.countStepper, "RIGHT", 12, 0)
-      f.viewNote:SetText("defaults from what is on screen")
       f.viewNote:Show()
-
-      f.previewLabel:ClearAllPoints()
       f.previewLabel:SetPoint("TOPLEFT", f.countStepper, "BOTTOMLEFT", 0, -10)
-    else
-      for _, chk in ipairs(f.metricChecks) do chk:Hide() end
-      f.countStepper:Hide()
-      if drilled then
-        f.viewNote:ClearAllPoints()
-        f.viewNote:SetPoint("TOPLEFT", anchorTop, "BOTTOMLEFT",
-          (needsTarget and -12 or 12), -8)
-        f.viewNote:SetText("announcing the detail you have open")
-        f.viewNote:Show()
-        controlH = 18
-        f.previewLabel:ClearAllPoints()
-        f.previewLabel:SetPoint("TOPLEFT", f.viewNote, "BOTTOMLEFT", 0, -8)
+      return -y + 20
+    end
+    f.viewNote:SetPoint("TOPLEFT", anchorTop, "BOTTOMLEFT", x, y)
+    f.viewNote:Show()
+    f.previewLabel:SetPoint("TOPLEFT", f.viewNote, "BOTTOMLEFT", 0, -8)
+    return -y + 10
+  end
+
+  --[[ Which line is which, so one left out stays out when the preview is
+       rebuilt (the Top stepper, a tick): a numbered line by what it names
+       -- the text after the number, up to the two-space gap -- any other by
+       its text, and each under its heading, so leaving a player out of the
+       damage post leaves their healing line in. ]]
+  local function lineKeys(all)
+    local keys, section = {}, ""
+    for i, l in ipairs(all) do
+      if string.find(l, "^Wrekkit  ") then
+        local _, _, head = string.find(l, "^(.-) %- ")
+        section = head or l
+        keys[i] = "h:" .. section
       else
-        f.viewNote:Hide()
-        f.previewLabel:ClearAllPoints()
-        f.previewLabel:SetPoint("TOPLEFT", anchorTop, "BOTTOMLEFT",
-          (needsTarget and -12 or 12), -8)
+        local _, _, name = string.find(l, "^%d+%. (.-)  ")
+        keys[i] = section .. (name and ("|n:" .. name) or ("|t:" .. l))
       end
     end
-    return controlH
+    return keys
   end
 
-  local function skipKey(line)
-    local _, _, name = string.find(line or "", "^%d+%. (.-)  ")
-    return name
-  end
-
-  -- What is sent: the lines not left out, numbered again 1, 2, 3...
+  -- What is sent: the lines not left out, numbered again 1, 2, 3... under
+  -- each heading.
   local function kept(all)
+    local keys = lineKeys(all)
     local out, n = {}, 0
-    for _, l in ipairs(all) do
-      local k = skipKey(l)
-      if not (k and skip[k]) then
-        if k then
+    for i, l in ipairs(all) do
+      if string.find(l, "^Wrekkit  ") then n = 0 end
+      if not skip[keys[i]] then
+        if string.find(l, "^%d+%. ") then
           n = n + 1
           l = string.gsub(l, "^%d+%. ", n .. ". ", 1)
         end
@@ -413,34 +428,36 @@ function UI.ConfirmAnnounce(lines, channel, target, onAccept, ctx)
   end
 
   local allLines = lines
+  local sending = lines   -- what Send posts: the kept lines, packed if asked
   local function paint(newLines)
     allLines = newLines
     lines = kept(allLines)
+    local packed = W.db and W.db.announcePack == true
+    sending = packed and A:Pack(lines) or lines
+    f.previewLabel:SetText(packed and "This will be posted, lines joined into fewer messages:"
+      or "This will be posted, one line at a time:")
     local n = table.getn(lines)
     local vis = table.getn(allLines)
     local cut = false
     if vis > MAX_ROWS then vis = MAX_ROWS cut = true end
 
+    local keys = lineKeys(allLines)
     for i = 1, MAX_ROWS do
       local t = f.rows[i]
       local b = f.rowBtns[i]
       if i <= vis then
-        local k = skipKey(allLines[i])
-        if k and skip[k] then
+        local k = keys[i]
+        if skip[k] then
           t:SetText("|cff6f6f6f" .. allLines[i] .. "  (left out)|r")
         else
           t:SetText(allLines[i])
         end
         t:Show()
-        if k then
-          b:Show()
-          b:SetScript("OnClick", function()
-            skip[k] = not skip[k] or nil
-            paint(allLines)
-          end)
-        else
-          b:Hide()
-        end
+        b:Show()
+        b:SetScript("OnClick", function()
+          skip[k] = not skip[k] or nil
+          paint(allLines)
+        end)
       else
         t:Hide()
         b:Hide()
@@ -452,18 +469,25 @@ function UI.ConfirmAnnounce(lines, channel, target, onAccept, ctx)
     f.box:SetHeight(vis * ROW_H + 8)
     f.box:SetPoint("TOPLEFT", f.previewLabel, "BOTTOMLEFT", 0, -4)
     f.box:SetPoint("RIGHT", f, "RIGHT", -12, 0)
+    f.packCheck:ClearAllPoints()
+    f.packCheck:SetPoint("TOPLEFT", f.box, "BOTTOMLEFT", 0, -6)
+    f.packCheck:Show()
+    f.packCheck:Refresh()
 
     if n == 0 then
       f.note:SetText("|cffd44f53nothing selected to post|r")
     else
+      local m = table.getn(sending)
       f.note:SetText(n .. " line" .. (n == 1 and "" or "s") ..
+        (packed and ("  in " .. m .. " message" .. (m == 1 and "" or "s")) or "") ..
         (cut and ("  (" .. (table.getn(allLines) - MAX_ROWS) .. " more not previewed)") or ""))
     end
     f.sendBtn:SetActive(n > 0)
 
     f:SetHeight(46 + (needsTarget and 30 or 0) + controlH + 18
-                + (vis * ROW_H + 8) + 48)
+                + (vis * ROW_H + 8) + 26 + 48)
   end
+  f.Repaint = function() paint(allLines) end
 
   --[[ Rebuild from the controls. The checkbox order is the dialog's, not the
        context's, so two people reading the same post see the same order. ]]
@@ -502,8 +526,8 @@ function UI.ConfirmAnnounce(lines, channel, target, onAccept, ctx)
       end
     end
     UI.CloseConfirm()
-    -- `lines` is reassigned by paint(), so this sends what is on screen.
-    W.Guard("announce confirm", function() onAccept(finalTarget, lines) end)
+    -- `sending` is reassigned by paint(), so this sends what is on screen.
+    W.Guard("announce confirm", function() onAccept(finalTarget, sending) end)
   end)
 
   f.shade:Show()
