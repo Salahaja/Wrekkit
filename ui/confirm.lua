@@ -478,8 +478,10 @@ function UI.ConfirmAnnounce(lines, channel, target, onAccept, ctx)
       f.note:SetText("|cffd44f53nothing selected to post|r")
     else
       local m = table.getn(sending)
+      -- Past the server's flood guard, the rest go after a pause (A.BURST).
+      local pause = (m > A.BURST) and ("  (" .. A.BURST .. " now, the rest " .. A.BURST_PAUSE .. "s later)") or ""
       f.note:SetText(n .. " line" .. (n == 1 and "" or "s") ..
-        (packed and ("  in " .. m .. " message" .. (m == 1 and "" or "s")) or "") ..
+        (packed and ("  in " .. m .. " message" .. (m == 1 and "" or "s")) or "") .. pause ..
         (cut and ("  (" .. (table.getn(allLines) - MAX_ROWS) .. " more not previewed)") or ""))
     end
     f.sendBtn:SetActive(n > 0)

@@ -25,6 +25,16 @@ W.announce = {}
 local A = W.announce
 
 local SEND_INTERVAL = 0.4   -- seconds between chat lines
+
+--[[ The server's flood guard: about ten messages, each sent soon after the
+     one before, and it flags you as spamming (10/28: a top 10 -- twelve
+     messages, SEND_INTERVAL apart -- set it off; ShaguDPS's report, nine
+     messages at once, never has). So a post goes out BURST messages at a
+     time, and the rest wait for BURST_PAUSE of quiet, by which time the
+     guard has let go. Joined into fewer messages (A:Pack), a post rarely
+     needs the pause. ]]
+A.BURST = 8
+A.BURST_PAUSE = 6
 local MAX_LINES = 15        -- hard ceiling regardless of what is asked for
 
 ----------------------------------------------------------------------
@@ -169,6 +179,14 @@ local function supportUnit(name)
   return " healing"
 end
 
+--[[ What an effect's number is, in words: "22.8k" on its own in chat left
+     people asking. Raid value is the damage an effect added to everyone's
+     hits; support is the mana or healing a judgement gave back. ]]
+local function effectUnit(e)
+  if e.kind == "support" then return supportUnit(e.name) end
+  return " damage"
+end
+
 --- Every effect, damage then support, as the report's Raid Contrib tab
 --- lists them.
 local function allEffects(view, filter)
@@ -191,17 +209,17 @@ function A:EffectLines(ctx, view, count, name)
     if e.name == name then target = e end
   end
   if not target then return nil end
-  local unit = (target.kind == "support") and supportUnit(target.name) or ""
+  local unit = effectUnit(target)
   local n = table.getn(target.players)
   local out = {
-    string.format("Wrekkit  %s - %s (%s): %s%s from %d player%s%s", target.name, ctx.label or "?",
+    string.format("Wrekkit  %s - %s (%s): added %s%s, from %d player%s%s", target.name, ctx.label or "?",
       W.Duration(view.rateBase), W.Short(target.total), unit, n, n == 1 and "" or "s", filterNote(ctx)),
   }
   for i = 1, count do
     local p = target.players[i]
     if not p then break end
     local pct = target.total > 0 and p.amount / target.total * 100 or 0
-    table.insert(out, string.format("%d. %s  %s%s (%.1f%%)", i, p.name, W.Short(p.amount), unit, pct))
+    table.insert(out, string.format("%d. %s  +%s%s (%.1f%%)", i, p.name, W.Short(p.amount), unit, pct))
   end
   if n > count then table.insert(out, string.format("  ...and %d more", n - count)) end
   if string.find(target.name, "(est.)", 1, true) then table.insert(out, "  (est.) = estimated") end
@@ -242,9 +260,12 @@ function A:ValueLines(ctx, view, count, key)
   end
 
   local individual = individualMode(ctx)
+  local what = (ctx.contrib and "what each buff, debuff and judgement added")
+    or (key == "support" and "the mana and healing judgements gave back")
+    or "the extra damage each buff and debuff added"
   local out = {
-    string.format("Wrekkit  %s by effect - %s (%s)%s", ctx.contrib and "Raid contribution" or W.metrics.Label(metric),
-      ctx.label or "?", W.Duration(view.rateBase), filterNote(ctx)),
+    string.format("Wrekkit  %s - %s (%s): %s%s", ctx.contrib and "Raid contribution" or W.metrics.Label(metric),
+      ctx.label or "?", W.Duration(view.rateBase), what, filterNote(ctx)),
   }
   if table.getn(order) == 0 then
     table.insert(out, "  nothing recorded")
@@ -256,7 +277,7 @@ function A:ValueLines(ctx, view, count, key)
     local e = order[i]
     if not e then break end
     if string.find(e.name, "(est.)", 1, true) then estimated = true end
-    local unit = (e.kind == "support") and supportUnit(e.name) or ""
+    local unit = effectUnit(e)
     local n = table.getn(e.players)
     if individual then
       local who = {}
@@ -266,10 +287,10 @@ function A:ValueLines(ctx, view, count, key)
         table.insert(who, pl.name .. " " .. W.Short(pl.amount))
       end
       if n > NAMES_PER_LINE then table.insert(who, "+" .. (n - NAMES_PER_LINE) .. " more") end
-      table.insert(out, string.format("%d. %s  %s%s: %s", i, e.name, W.Short(e.total), unit,
+      table.insert(out, string.format("%d. %s  +%s%s: %s", i, e.name, W.Short(e.total), unit,
         table.concat(who, ", ")))
     else
-      table.insert(out, string.format("%d. %s  %s%s  (%d player%s)", i, e.name, W.Short(e.total),
+      table.insert(out, string.format("%d. %s  +%s%s  (%d player%s)", i, e.name, W.Short(e.total),
         unit, n, n == 1 and "" or "s"))
     end
   end
@@ -434,16 +455,29 @@ end
 
 A.queue = {}
 
+--- Seconds until the next chat line may go out: 0 for now, or the rest of
+--- the pause once BURST have gone out together.
+function A:SendWait(now)
+  if now - (self.lastSentAt or -1000) >= A.BURST_PAUSE then self.burst = 0 end
+  if (self.burst or 0) < A.BURST then return 0 end
+  return self.lastSentAt + A.BURST_PAUSE - now
+end
+
 function A:Pump()
   if self.pumping then return end
   self.pumping = true
 
   local function step()
-    local job = table.remove(self.queue, 1)
-    if not job then
+    if not self.queue[1] then
       self.pumping = false
       return
     end
+    local wait = self:SendWait(GetTime())
+    if wait > 0 then
+      W.After(wait + 0.05, step, "announcePump")
+      return
+    end
+    local job = table.remove(self.queue, 1)
     if SendChatMessage then
       -- Guarded: a bad channel (left the raid mid-send) must not take the
       -- rest of the queue down with it.
@@ -451,6 +485,8 @@ function A:Pump()
         SendChatMessage(job.msg, job.channel, nil, job.target)
       end)
     end
+    self.burst = (self.burst or 0) + 1
+    self.lastSentAt = GetTime()
     W.After(SEND_INTERVAL, step, "announcePump")
   end
 

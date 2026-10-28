@@ -889,6 +889,24 @@ check("all of them arrive eventually",
 check("a whisper with no name is refused",
   Wrekkit.announce:Send(aLines, "WHISPER", nil), 0)
 
+-- The server flags about ten messages in a row as spam: eight go, then a
+-- pause, then the rest.
+;(function()
+  local A = Wrekkit.announce
+  A.burst, A.lastSentAt = 0, nil
+  local t = NOW
+  for i = 1, A.BURST do
+    check("  burst line " .. i .. " goes now", A:SendWait(t), 0)
+    A.burst, A.lastSentAt = (A.burst or 0) + 1, t
+    t = t + 0.4
+  end
+  local wait = A:SendWait(t)
+  check("the ninth waits out the pause", wait > 0 and math.abs(wait - (A.BURST_PAUSE - 0.4)) < 0.01, true)
+  check("after the pause the count starts over", A:SendWait(t + wait), 0)
+  check("  and the guard has let go", A.burst, 0)
+  A.burst, A.lastSentAt = 0, nil
+end)()
+
 ----------------------------------------------------------------------
 -- peer browsing
 ----------------------------------------------------------------------
