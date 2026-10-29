@@ -3832,6 +3832,30 @@ step("threat: every warning, alert, flash and popup is off by default", function
   end
 end)
 
+step("threat: tanking, the % is your hold -- 100 safe, falling as someone closes", function()
+  local T = Wrekkit.threat
+  if T.Hold(0) ~= 100 or T.Hold(76) ~= 24 or T.Hold(130) ~= 0 then error("the hold is not 100 minus the runner-up") end
+  local realTank = T.IsTank
+  T.IsTank = function() return true end
+  local me = UnitName("player")
+  local mine = { name = me, isMe = true, tank = true, perc = 100, threat = 10000, pull = 100 }
+  local runner = { name = "Stabbs", perc = 84, threat = 8400, melee = true }
+  runner.pull = T.PullPercent(runner)          -- 84/110: 76% of the way
+  local cur = { rows = { mine, runner }, me = mine, tank = mine }
+  local pct, color, _, text = T:Display(cur)
+  local alone = { rows = { mine }, me = mine, tank = mine }
+  local _, _, _, safe = T:Display(alone)
+  T.IsTank = realTank
+  if math.abs(pct - (100 - runner.pull)) > 0.01 then error("the tank's number is " .. tostring(pct)) end
+  if text ~= T.PctText(100 - runner.pull) then error("the tank's text reads " .. tostring(text)) end
+  if safe ~= "100%" then error("nobody near should read 100%, got " .. tostring(safe)) end
+  -- A damage dealer still sees their own %, rising.
+  local dps = { name = me, isMe = true, perc = 84, threat = 8400, melee = true }
+  dps.pull = T.PullPercent(dps)
+  local _, _, _, own = T:Display({ rows = { dps }, me = dps })
+  if own ~= T.PctText(dps.pull) then error("a damage dealer's % changed: " .. tostring(own)) end
+end)
+
 step("threat: warnings fire once on the way up, not every reading", function()
   local T = Wrekkit.threat
   local TF = UI.threatFrames

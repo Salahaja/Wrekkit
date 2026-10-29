@@ -1005,13 +1005,15 @@ end
 local function threatText(m, tank)
   if m.sample then
     if m.state == "loose" then return "!", T.RED, true end
+    if tank then return T.PctText(T.Hold(m.pull or 0)), T:TankColor(m.pull or 0), true end
     return T.PctText(m.share or m.pull or 0), T:TankColor(m.pull or 0), true
   end
-  -- Tanking, a held mob reads as the runner-up's share of YOUR threat --
-  -- the number the "show a mob from" line is set in -- coloured by how
-  -- close that is to pulling.
+  -- Tanking, a held mob reads as your hold on it (T.Hold): 100% with
+  -- nobody near, falling as the runner-up closes in, coloured by how close
+  -- they are to pulling.
   if tank and m.share and m.state ~= "loose" then
-    return T.PctText(m.share), T:TankColor(m.pull or m.share / 1.1), true
+    local pull = m.pull or m.share / 1.1
+    return T.PctText(T.Hold(pull)), T:TankColor(pull), true
   end
   -- Without a guid the target is the only mob with a reading, by name.
   local key = m.guid or (m.isTarget and m.name and ("name:" .. m.name))

@@ -1339,6 +1339,16 @@ function T:Runner(cur)
   return nil
 end
 
+--[[ A tank's hold on a mob: 100% while nobody is near, falling as the
+     closest player catches up, 0% when they pull it -- read like a health
+     bar. It was the runner-up's own % to pulling, so a mob held safely
+     read 0% and looked like the one you had no threat on. ]]
+function T.Hold(runnerPull)
+  local h = 100 - (runnerPull or 0)
+  if h < 0 then h = 0 elseif h > 100 then h = 100 end
+  return h
+end
+
 --- Colour for a mob a tank holds, by how close the runner-up is.
 function T:TankColor(runnerPull)
   local s = self:Settings()
@@ -1349,10 +1359,11 @@ end
 
 --[[ What a frame should say about a table, as pct, colour, fresh, text.
 
-     Damage dealers and healers see their own percentage. Whoever holds
-     aggro sees something else: a tank sees how close the runner-up is,
-     in the tank's blue until it gets close; anyone else holding it sees
-     AGGRO in red, because a mob on a non-tank is never good news. ]]
+     Damage dealers and healers see their own percentage, rising as they
+     near pulling. Whoever holds aggro sees something else: a tank sees
+     their hold (T.Hold), falling as the runner-up closes in, in the tank's
+     blue until it gets close; anyone else holding it sees AGGRO in red,
+     because a mob on a non-tank is never good news. ]]
 function T:Display(cur)
   local me = cur and cur.me
   if not me then return nil end
@@ -1360,7 +1371,8 @@ function T:Display(cur)
     if self:IsTank() then
       local runner = self:Runner(cur)
       local pull = runner and runner.pull or 0
-      return pull, self:TankColor(pull), true, T.PctText(pull)
+      local hold = T.Hold(pull)
+      return hold, self:TankColor(pull), true, T.PctText(hold)
     end
     return 100, RED, true, "AGGRO"
   end
@@ -1667,7 +1679,8 @@ function T:ForMob(key, guid)
 
   local tm = low and self.tankMobs[low]
   if tm and now - tm.at <= STALE then
-    return tm.pull, self:TankColor(tm.pull), true, T.PctText(tm.pull)
+    local hold = T.Hold(tm.pull)
+    return hold, self:TankColor(tm.pull), true, T.PctText(hold)
   end
 
   -- A tank's relay says you are the one closest to pulling it.
