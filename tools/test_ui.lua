@@ -3926,10 +3926,32 @@ step("threat: my row pinned to the top, and seconds to pulling aggro", function(
   if row then
     UI.threat.Paint(row, items[1], 1)
     local text = row.value and row.value:GetText() or ""
-    if not string.find(text, "16s", 1, true) then error("the row reads " .. text) end
+    -- 16s, shown in fives past 10.
+    if not string.find(text, "20s", 1, true) then error("the row reads " .. text) end
   end
 
   s.pinMe, s.showETA, s.etaWho, s.showPullLine = was[1], was[2], was[3], was[4]
+
+  -- From real readings: a crit moves a 20s average half as much as 10s.
+  local function ring(rate, crit, critAgo)
+    local r = { ts = {}, vs = {}, hn = 0, hi = 0 }
+    local v = 0
+    for i = 1, 61 do
+      local t = (i - 1) * 0.5
+      v = v + (i > 1 and rate * 0.5 or 0)
+      if crit and math.abs((30 - t) - critAgo) < 0.01 then v = v + crit end
+      r.ts[i], r.vs[i] = t, v
+    end
+    r.hn, r.hi = 61, 61
+    return r
+  end
+  local clean = T.SteadyRate(ring(900), 20)
+  if math.abs(clean - 900) > 0.5 then error("a steady 900/s reads " .. clean) end
+  local r = ring(900, 3000, 2)
+  local over10, over20 = T.SteadyRate(r, 10) - 900, T.SteadyRate(r, 20) - 900
+  if math.abs(over10 - 300) > 1 or math.abs(over20 - 150) > 1 then
+    error(string.format("a 3000 crit moved the rate %.0f over 10s and %.0f over 20s", over10, over20))
+  end
 end)
 
 step("settings controls are laid out in two columns", function()

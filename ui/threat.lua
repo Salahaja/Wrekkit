@@ -184,8 +184,9 @@ local function rowTooltip(frame, item)
     if eta then
       GameTooltip:AddDoubleLine("Pulls aggro in", string.format("%.0fs", math.ceil(eta)),
         LABEL[1], LABEL[2], LABEL[3], 1, 1, 1)
-      GameTooltip:AddLine("If they and the tank keep their threat", DIM[1], DIM[2], DIM[3])
-      GameTooltip:AddLine("per second of the last 10 seconds.", DIM[1], DIM[2], DIM[3])
+      GameTooltip:AddLine("If they and the tank keep the threat per second", DIM[1], DIM[2], DIM[3])
+      GameTooltip:AddLine("they averaged over the last " .. (T:Settings().etaWindow or 20) .. " seconds.",
+        DIM[1], DIM[2], DIM[3])
     end
   end
   if not r.isMe and not r.tank then
@@ -291,9 +292,11 @@ function TW.Paint(row, item, index)
     value = ""
   end
   -- Seconds to pulling aggro at the current rates: red under 5, orange
-  -- under 10.
+  -- under 10. Past 10, in fives: "35s" and "37s" say the same thing, and
+  -- a number that ticks between them only looks unsteady.
   if item.eta then
     local secs = math.ceil(item.eta)
+    if secs > 10 then secs = math.ceil(secs / 5) * 5 end
     local hue = (secs <= 5 and "ff4d4d") or (secs <= 10 and "ffa033") or "c8c8c8"
     local eta = "|cff" .. hue .. string.format("%.0fs", secs) .. "|r"
     value = (value == "") and eta or (value .. "  " .. eta)

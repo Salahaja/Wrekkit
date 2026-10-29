@@ -1094,8 +1094,13 @@ function S:BuildThreat()
       if v ~= "off" then s.etaWho = v end
       redraw()
     end,
-    { "Seconds until a player pulls aggro if they and", "the tank keep their threat per second of the",
-      "last 10 seconds. Shown only while they are", "closing in, within a minute. Red under 5s." })
+    { "Seconds until a player pulls aggro if they and", "the tank keep the threat per second they",
+      "averaged lately (below). Shown while they are", "closing in, within a minute. Red under 5s." })
+  stepper(self, "Pull time averages",
+    function() return ts().etaWindow or 20 end,
+    function(v) ts().etaWindow = v; redraw() end,
+    10, 60, 5,
+    function(v) return "last " .. v .. "s" end)
 
   ------------------------------------------------------------------
   heading(self, "Warnings")

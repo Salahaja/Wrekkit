@@ -63,7 +63,8 @@ T.PULL_MELEE = 110
 T.PULL_RANGED = 130
 
 local TPS_WINDOW = 10     -- seconds threat-per-second looks back
-local TPS_SLOTS = 24      -- readings kept per player for it
+local TPS_SLOTS = 128     -- readings kept per player: a minute at the 0.5s
+                          -- default, for the time to pull aggro (steadyRate)
 local STALE = 3           -- a reading older than this is not current
 local LOST_SHOW = 4       -- seconds a lost mob's plate says so
 local REARM = 5           -- points below a line before it can warn again
@@ -93,6 +94,7 @@ T.defaults = {
   hideTitle = false,       -- no title bar: the mob and its tank go in the footer
   pinMe = false,           -- your own row first, wherever your threat puts you
   showETA = false,         -- seconds until a player pulls aggro, at the current rates
+  etaWindow = 20,          -- ... the rates averaged over this many seconds
   etaWho = "all",          -- ... "me": on your row only; "all": every player's
   locked = false,
   opacity = 1.0,
@@ -237,6 +239,7 @@ function T:Sanitize(s)
   s.interval = clamp(s.interval, 0.25, 2, d.interval)
   s.rows = math.floor(clamp(s.rows, 3, 20, d.rows))
   s.textScale = clamp(s.textScale, 70, 180, d.textScale)
+  s.etaWindow = clamp(s.etaWindow, 10, 60, d.etaWindow)
   s.warnAt = clamp(s.warnAt, 10, 150, d.warnAt)
   s.dangerAt = clamp(s.dangerAt, 10, 150, d.dangerAt)
   -- A danger line below the warning line would skip the warning entirely.
@@ -625,23 +628,67 @@ function T.PullPercent(row)
   return (row.perc or 0) / line * 100
 end
 
+--[[ A steadier rate, for the time to pull aggro: the threat gained over
+     the last `window` seconds, over how long that was -- and the seconds
+     it covers.
+
+     Threat comes in lumps -- a crit, an Execute, a Searing Pain -- and one
+     moves a rate by its size over the window. The per-second figure (tps)
+     looks back ten seconds, and the time to pull divides by the small
+     difference of two such rates, so one crit could halve it. Over 20
+     seconds the same crit moves it half as much, over 30 a third.
+
+     First reading to last on purpose, not a line fitted through them all:
+     threat is a running total, so its gains are what is random, and their
+     plain sum is the steadiest rate there is. A fitted line weighs the
+     newest readings least, so it is both noisier and slower to see a
+     cooldown go up. ]]
+local function steadyRate(r, window)
+  local n, ts, vs = r.hn or 0, r.ts, r.vs
+  if not ts or n < 2 then return 0, 0 end
+  local now = ts[r.hi]
+  local oldest
+  for k = 1, n do
+    local t = ts[k]
+    if now - t <= window and (not oldest or t < ts[oldest]) then oldest = k end
+  end
+  if not oldest then return 0, 0 end
+  local span = now - ts[oldest]
+  if span <= 0 then return 0, 0 end
+  local v = (vs[r.hi] - vs[oldest]) / span
+  if v < 0 then v = 0 end
+  return v, span
+end
+T.SteadyRate = steadyRate
+
+-- A row's rate for the time to pull: fitted when it has readings; a row
+-- built without them (the preview) says its own.
+local function etaRate(r, window)
+  if r.ts and (r.hn or 0) >= 2 then return steadyRate(r, window) end
+  return r.tps or 0, r.span or 0
+end
+
 --[[ Seconds until a player pulls aggro off the tank, if both keep going as
-     they have for the last TPS_WINDOW seconds: the threat still between
-     them and the line (110% of the tank in melee, 130% at range), over how
-     fast they are closing on it. The line moves too -- it is a share of the
-     tank's threat, so it climbs at that share of the tank's rate.
+     they have over the last etaWindow seconds (steadyRate): the threat
+     still between them and the line (110% of the tank in melee, 130% at
+     range), over how fast they are closing on it. The line moves too -- it
+     is a share of the tank's threat, so it climbs at that share of the
+     tank's rate.
 
      nil when they are not closing in (or are past it already), when either
      has too little history to have a rate (ETA_SPAN), and past ETA_MAX,
-     where a rate this short says nothing yet. ]]
-local ETA_SPAN = 3
+     where a rate says nothing yet. ]]
+local ETA_SPAN = 6
 local ETA_MAX = 60
 function T.PullETA(row, tank)
   if not row or not tank or row.tank or row == tank then return nil end
-  if (row.span or 0) < ETA_SPAN or (tank.span or 0) < ETA_SPAN then return nil end
+  local window = T:Settings().etaWindow or 20
+  local rowRate, rowSpan = etaRate(row, window)
+  local tankRate, tankSpan = etaRate(tank, window)
+  if rowSpan < ETA_SPAN or tankSpan < ETA_SPAN then return nil end
   local line = (row.melee and T.PULL_MELEE or T.PULL_RANGED) / 100
   local gap = line * (tank.threat or 0) - (row.threat or 0)
-  local closing = (row.tps or 0) - line * (tank.tps or 0)
+  local closing = rowRate - line * tankRate
   if gap <= 0 or closing <= 0 then return nil end
   local secs = gap / closing
   if secs > ETA_MAX then return nil end
