@@ -89,6 +89,7 @@ T.defaults = {
   showThreat = true,
   showTPS = true,
   showPullLine = true,
+  textScale = 100,         -- the threat window's text, % of Wrekkit's text size
   pinMe = false,           -- your own row first, wherever your threat puts you
   showETA = false,         -- seconds until a player pulls aggro, at the current rates
   etaWho = "all",          -- ... "me": on your row only; "all": every player's
@@ -234,6 +235,7 @@ function T:Sanitize(s)
   s.plateStyle = oneOf(s.plateStyle, { "auto", "shagu", "stock" }, d.plateStyle)
   s.interval = clamp(s.interval, 0.25, 2, d.interval)
   s.rows = math.floor(clamp(s.rows, 3, 20, d.rows))
+  s.textScale = clamp(s.textScale, 70, 180, d.textScale)
   s.warnAt = clamp(s.warnAt, 10, 150, d.warnAt)
   s.dangerAt = clamp(s.dangerAt, 10, 150, d.dangerAt)
   -- A danger line below the warning line would skip the warning entirely.

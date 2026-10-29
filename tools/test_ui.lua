@@ -3795,6 +3795,39 @@ step("threat: warnings fire once on the way up, not every reading", function()
   if count ~= 2 then error("expected 2 warnings (warn, danger), got " .. count) end
 end)
 
+step("threat: the window's own text size, on top of Wrekkit's", function()
+  local T = Wrekkit.threat
+  local s = T:Settings()
+  local TW = UI.threat
+  local was, wasScale = s.textScale, Wrekkit.db.fontScale
+  if not TW.frame then TW:Create() end
+  Wrekkit.db.fontScale = 1
+  UI.ApplyFontScale()
+  s.textScale = 150
+  TW:ApplyLayout()
+  local row = TW.list.rows[1]
+  local fail
+  if not row then fail = "the threat window has no rows" end
+  -- Not `row and row.name:GetFont()`: that keeps only the face.
+  local function sizeOf(r) if not r then return nil end local _, px = r.name:GetFont() return px end
+  local size = sizeOf(row)
+  if not fail and math.abs((size or 0) - 11 * 1.5) > 0.01 then fail = "row text is " .. tostring(size) .. ", not 16.5" end
+  if not fail and TW.list.rowHeight ~= 24 then fail = "rows are " .. tostring(TW.list.rowHeight) .. "px, not 24" end
+  -- Wrekkit's own text size on top: both apply.
+  Wrekkit.db.fontScale = 1.2
+  UI.ApplyFontScale()
+  size = sizeOf(row)
+  if not fail and math.abs((size or 0) - 11 * 1.5 * 1.2) > 0.01 then fail = "after a rescale the text is " .. tostring(size) end
+  -- The meter's rows are not touched.
+  local mrow = UI.meter.list.rows[1]
+  local msize = sizeOf(mrow)
+  if not fail and mrow and math.abs((msize or 0) - 11 * 1.2) > 0.01 then fail = "the meter's text moved too: " .. tostring(msize) end
+  s.textScale, Wrekkit.db.fontScale = was, wasScale
+  UI.ApplyFontScale()
+  TW:ApplyLayout()
+  if fail then error(fail) end
+end)
+
 step("threat: my row pinned to the top, and seconds to pulling aggro", function()
   local T = Wrekkit.threat
   local s = T:Settings()

@@ -1057,11 +1057,15 @@ function S:BuildThreat()
     250, 2000, 250,
     function(v) return string.format("%.2fs", v / 1000) end)
 
-  slider(self, "Threat window opacity  (docked: follows the meter)",
+  -- Side by side: the tab is as tall as a 768px screen allows.
+  stepper(self, "Text size",
+    function() return ts().textScale or 100 end,
+    function(v) ts().textScale = v; redraw() end,
+    70, 180, 5, pct)
+  stepper(self, "Own window opacity",
     function() return math.floor(ts().opacity * 100 + 0.5) end,
     function(v) ts().opacity = v / 100; redraw() end,
-    20, 100, 5,
-    function(v) return v .. "%" end)
+    20, 100, 5, pct)
 
   get, set = opt("showTPS")
   check(self, "Threat per second", get, set)

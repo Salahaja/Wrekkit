@@ -430,13 +430,19 @@ end
 
 --- Track any object with SetFont so it follows the scale. Returns it.
 --- `default`: set in the default face (UI.font), so a font choice moves it.
+UI.fontEntryOf = {}
 function UI.RegisterFont(obj, size, face, default)
-  table.insert(UI.fontObjects, { obj = obj, size = size, face = face, default = default })
+  local entry = { obj = obj, size = size, face = face, default = default }
+  table.insert(UI.fontObjects, entry)
+  UI.fontEntryOf[obj] = entry
   return obj
 end
 
+--[[ entry.extra, when set (UI.ScaleFontBy), is a window's own text size on
+     top of the global one -- the threat window's -- read each time the
+     text is sized, so a change to either keeps the other. ]]
 local function applyFont(entry, scale)
-  local px = entry.size * scale
+  local px = entry.size * scale * (entry.extra and entry.extra() or 1)
   -- The client refuses absurd sizes outright and leaves the string blank.
   if px < 6 then px = 6 elseif px > 32 then px = 32 end
   entry.obj:SetFont(entry.face, px)
@@ -448,6 +454,15 @@ function UI.ApplyFontScale()
   for _, entry in ipairs(UI.fontObjects) do
     applyFont(entry, scale)
   end
+end
+
+--- Size one piece of text by fn() on top of the global text size: a
+--- window's own text size. Applied now, and again by every rescale.
+function UI.ScaleFontBy(obj, fn)
+  local entry = obj and UI.fontEntryOf[obj]
+  if not entry then return end
+  entry.extra = fn
+  applyFont(entry, UI.FontScale())
 end
 
 function UI.Text(parent, size, color, justify, face)
@@ -1231,6 +1246,7 @@ function UI.Row(parent, height)
          digits instead of clipping them, and lowering it hands the space
          back to the name. ]]
     local scale = (W.db and W.db.fontScale) or 1
+    if self._list and self._list._textScale then scale = scale * self._list._textScale() end
     local subW = math.ceil((subWidth or 64) * scale)
     self.sub:SetWidth(subW)
 
@@ -1346,6 +1362,21 @@ function UI.ScrollList(parent, rowHeight, makeRow)
     return m
   end
 
+  -- A row's text, sized by the list's own text size (SetTextScale).
+  local function scaleRow(row, fn)
+    UI.ScaleFontBy(row.rank, fn)
+    UI.ScaleFontBy(row.name, fn)
+    UI.ScaleFontBy(row.value, fn)
+    UI.ScaleFontBy(row.sub, fn)
+  end
+
+  --- Give this list's rows a text size of their own: fn() times the global
+  --- one (the threat window's). Rows made later get it too.
+  function list:SetTextScale(fn)
+    self._textScale = fn
+    for _, row in ipairs(self.rows) do scaleRow(row, fn) end
+  end
+
   function list:EnsureRows(n)
     local scrollW = (self:MaxOffset() > 0) and 8 or 0
     local have = table.getn(self.rows)
@@ -1353,6 +1384,7 @@ function UI.ScrollList(parent, rowHeight, makeRow)
       self.rows[i] = self.makeRow(self, self.rowHeight)
       -- Placed by this list, so it spans it (see the row's SetData).
       self.rows[i]._list = self
+      if self._textScale then scaleRow(self.rows[i], self._textScale) end
     end
     -- Re-anchor when the layout changed: the scrollbar appearing or
     -- vanishing moves the right inset, and the row height is a live

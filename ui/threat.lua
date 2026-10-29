@@ -429,6 +429,14 @@ function TW:Create()
       "frames, plates and warnings stay on.")
   end)
 
+  -- Its own text size, on top of Wrekkit's (Settings > Threat).
+  local function size() return (T:Settings().textScale or 100) / 100 end
+  TW.TextScale = size
+  list:SetTextScale(size)
+  UI.ScaleFontBy(foot, size)
+  UI.ScaleFontBy(footR, size)
+  UI.ScaleFontBy(f.title, size)
+
   f.OnResize = function() TW:Refresh() end
   self:ApplyLayout()
   return f
@@ -470,9 +478,17 @@ function TW:ApplyLayout()
   local f = self.frame
   if not f then return end
   local s = T:Settings()
-  local scale = UI.FontScale()
+  -- Rows as tall as their text: Wrekkit's text size times this window's.
+  local own = TW.TextScale and TW.TextScale() or 1
+  local scale = UI.FontScale() * own
   local rowH = math.floor(16 * scale + 0.5)
   self.list:SetRowHeight(rowH)
+  if TW.TextScale then
+    self.list:SetTextScale(TW.TextScale)
+    UI.ScaleFontBy(self.footL, TW.TextScale)
+    UI.ScaleFontBy(self.footR, TW.TextScale)
+    UI.ScaleFontBy(f.title, TW.TextScale)
+  end
 
   if s.display == "docked" then
     local m = UI.meter:Create()
