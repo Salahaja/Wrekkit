@@ -1626,6 +1626,7 @@ function UI.Window(name, width, height, title, opts)
   mark:SetTexture(UI.media.emblem)
   mark:SetWidth(14) mark:SetHeight(14)
   mark:SetPoint("LEFT", bar, "LEFT", 7, 0)
+  f.mark = mark
 
   f.title = UI.Text(bar, 12, W.color.text)
   f.title:SetPoint("LEFT", mark, "RIGHT", 6, 0)

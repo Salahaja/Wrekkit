@@ -567,6 +567,18 @@ function M:ApplyLayout()
 
   -- title bar
   f.bar:SetHeight(px(compact and 18 or 22))
+  -- Compact, no emblem: the title takes its place, 21px back for the name.
+  if f.mark and f._compactMark ~= compact then
+    f._compactMark = compact
+    f.title:ClearAllPoints()
+    if compact then
+      f.mark:Hide()
+      f.title:SetPoint("LEFT", f.bar, "LEFT", 6, 0)
+    else
+      f.mark:Show()
+      f.title:SetPoint("LEFT", f.mark, "RIGHT", 6, 0)
+    end
+  end
   if self.cogBtn then
     local size = px(compact and 13 or 16)
     self.cogBtn:SetWidth(size)
@@ -627,6 +639,7 @@ function M:ApplyLayout()
     if mode == "stacked" then
       chrome = chrome + rowH * 2 + px(16)
     elseif mode == "side" then
+      -- (compact: 200, two 100px columns -- M.SideMinWidth)
       chrome = chrome + px(16)
       minW = M.SideMinWidth()
     end
@@ -663,6 +676,7 @@ M.SPLIT_LABEL = SPLIT_LABEL
      columns: a short name and its number, once a narrow row has dropped its
      per-second column (see UI.Row). 400 was roomier than people wanted. ]]
 local SIDE_MIN_W = 300
+local SIDE_MIN_COMPACT = 200
 M.SIDE_MIN_W = SIDE_MIN_W
 
 --[[ How narrow side by side may go. Larger text needs more, but smaller
@@ -670,8 +684,10 @@ M.SIDE_MIN_W = SIDE_MIN_W
      shrink with it, and at 70% a minimum scaled down to 280 left two
      140-pixel columns with no room for a name. ]]
 function M.SideMinWidth()
-  local scaled = math.floor(SIDE_MIN_W * UI.FontScale() + 0.5)
-  if scaled < SIDE_MIN_W then return SIDE_MIN_W end
+  -- Compact: two 100px columns, a name and its number each in tight rows.
+  local base = (M:Settings().compact == true) and SIDE_MIN_COMPACT or SIDE_MIN_W
+  local scaled = math.floor(base * UI.FontScale() + 0.5)
+  if scaled < base then return base end
   return scaled
 end
 
@@ -830,7 +846,16 @@ function M:SetSegmentLabel(text)
     for _, btn in ipairs({ f.closeButton, self.cogBtn, self.splitBtn }) do
       if btn and btn:IsShown() then right = right + (btn:GetWidth() or 0) + 2 end
     end
-    local room = UI.FrameWidth(f.bar) - 27 - UI.FullTextWidth(f.title, f.title:GetText()) - 6 - right - 8
+    -- From the emblem's edge, or the bar's when compact has none.
+    local left = (f.mark and f.mark:IsShown()) and 27 or 6
+    -- The title first: cut too if even it does not fit ("DM" under "1+2").
+    local titleRoom = UI.FrameWidth(f.bar) - left - right - 4
+    local titleW = UI.FullTextWidth(f.title, f.title:GetText())
+    if titleW > titleRoom and titleRoom > 0 then
+      UI.FitName(f.title, f.title:GetText(), titleRoom)
+      titleW = titleRoom
+    end
+    local room = UI.FrameWidth(f.bar) - left - titleW - 6 - right - 8
     if w > room then
       if room > 8 then UI.FitName(b.label, text, room) else b.label:SetText("") end
       w = math.max(0, room)
@@ -1582,9 +1607,7 @@ function M:RefreshInner()
   -- on its header, with its total where the footer would put it.
   if split then
     local o = self:RenderPane(PANES[2], view, segLabel)
-    local where = (o.seg ~= segLabel) and ("  |cff9d9d9d" .. o.seg .. "|r") or ""
-    self.head2.label:SetText(o.title .. where)
-    self.head2.right:SetText(o.footR or "")
+    self:FillHead(self.head2, o, segLabel)
   end
 
   local side = split and self:SplitMode() == "side"
@@ -1604,11 +1627,22 @@ function M:RefreshInner()
   self.footR:SetText(o.footR or "")
   -- Side by side, the first column's header says the same, so the two
   -- columns read alike; the footer keeps the combat time.
-  if side then
-    local where = (o.seg ~= segLabel) and ("  |cff9d9d9d" .. o.seg .. "|r") or ""
-    self.head1.label:SetText(o.title .. where)
-    self.head1.right:SetText(o.footR or "")
-  end
+  if side then self:FillHead(self.head1, o, segLabel) end
+end
+
+--[[ A half's header: its metric, whose detail when drilled, and its total
+     on the right. Narrow, the metric's short name and no more; and the
+     left side cut to its letters before the total, rather than running
+     under it. ]]
+function M:FillHead(head, o, segLabel)
+  local narrow = UI.FrameWidth(head) < 200 * UI.FontScale()
+  local where = (o.seg ~= segLabel) and ("  |cff9d9d9d" .. o.seg .. "|r") or ""
+  local label = narrow and ((o.short or o.title) .. ((o.seg ~= segLabel) and (" " .. o.seg) or ""))
+    or (o.title .. where)
+  head.right:SetText(o.footR or "")
+  head.label:SetText(label)
+  local room = UI.FrameWidth(head) - 12 - UI.FullTextWidth(head.right, o.footR or "") - 6
+  if room > 0 then UI.FitName(head.label, label, room) end
 end
 
 --[[ The meter as a threat meter: the same rows the threat window draws,

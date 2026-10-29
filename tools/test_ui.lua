@@ -491,6 +491,8 @@ step("meter builds", function()
   UI.meter.list:SetWidth(252)
   if UI.meter.list2 then UI.meter.list2:SetWidth(252) end
   UI.meter.frame.bar:SetWidth(258)
+  UI.meter.head1:SetWidth(252)
+  UI.meter.head2:SetWidth(252)
 end)
 step("meter shows", function() UI.meter:Show() end)
 step("meter refreshes", function() UI.meter:Refresh() end)
@@ -3976,6 +3978,58 @@ step("meter: compact, it goes down to 120 with a short title and tight rows", fu
   local kept = Wrekkit.db.meter.window.w
   Wrekkit.db.meter.window.w = 260
   if not fail and kept ~= 120 then fail = "a saved 120px meter was widened to " .. tostring(kept) end
+  if fail then error(fail) end
+end)
+
+step("meter: compact drops the emblem, and its split goes narrow too", function()
+  local M = UI.meter
+  local s = M:Settings()
+  local f = M.frame
+  local was = { s.compact, s.splitMode, s.metric, s.metric2, f:GetWidth(), f.bar:GetWidth(),
+                M.head1:GetWidth(), M.head2:GetWidth() }
+  local fail
+  s.compact = false
+  M:ApplyLayout()
+  if not f.mark:IsShown() then fail = "a full meter lost its emblem" end
+  s.compact = true
+  M:ApplyLayout()
+  if not fail and f.mark:IsShown() then fail = "a compact meter kept its emblem" end
+  local p = f.title._points and f.title._points[1]
+  if not fail and not (p and p[2] == f.bar) then fail = "the compact title did not move into the emblem's place" end
+
+  -- Side by side, compact: down to two 100px columns.
+  if not fail and M.SideMinWidth() ~= 200 then fail = "compact side by side stops at " .. M.SideMinWidth() end
+  s.compact = false
+  if not fail and M.SideMinWidth() ~= 300 then fail = "full side by side changed to " .. M.SideMinWidth() end
+  s.compact = true
+  M:SetMetric("damage")
+  M:SetSplit("side")
+  if not fail and (f._minW or 999) > 200 then fail = "a compact side-by-side meter stops at " .. tostring(f._minW) end
+  -- Each half narrow: its metric's short name, inside its header.
+  M.head1:SetWidth(96)
+  M.head2:SetWidth(96)
+  s.metric2 = "healing"
+  M:Refresh()
+  local h2 = M.head2.label:GetText() or ""
+  if not fail and string.find(h2, "Healing", 1, true) then fail = "a narrow half kept its long name: " .. h2 end
+  if not fail and UI.FullTextWidth(M.head2.label, h2) + UI.FullTextWidth(M.head2.right, M.head2.right:GetText()) > 96 then
+    fail = "a narrow header runs into its total"
+  end
+  M:SetSplit("off")
+  -- Over and under, compact, the floor is 120.
+  M:SetSplit("stacked")
+  if not fail and (f._minW or 999) > 120 then fail = "compact over-and-under stops at " .. tostring(f._minW) end
+  M:SetSplit("off")
+  -- The title never runs under the buttons.
+  f.bar:SetWidth(70)
+  M:Refresh()
+  local tw = UI.FullTextWidth(f.title, f.title:GetText())
+  if not fail and tw > 70 then fail = "the title runs past a 70px bar" end
+
+  s.compact, s.metric, s.metric2 = was[1], was[3], was[4]
+  f:SetWidth(was[5]); f.bar:SetWidth(was[6]); M.head1:SetWidth(was[7]); M.head2:SetWidth(was[8])
+  M:SetSplit(was[2] or "off")
+  M:ApplyLayout()
   if fail then error(fail) end
 end)
 
