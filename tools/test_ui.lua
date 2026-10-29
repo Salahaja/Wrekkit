@@ -3809,9 +3809,21 @@ step("threat: meter mode switches the meter for the fight and back", function()
   UI.meter:SetMetric("damage")
 end)
 
+step("threat: every warning, alert, flash and popup is off by default", function()
+  local d = Wrekkit.threat.defaults
+  for _, k in ipairs({ "warnText", "warnSound", "raidWarning", "warnPulled", "warnFlash", "tankAlerts",
+                       "warnLostAggro", "flash", "flashFrame", "flashScreen", "tauntPopup" }) do
+    if d[k] ~= false then error(k .. " is on by default") end
+  end
+end)
+
 step("threat: warnings fire once on the way up, not every reading", function()
   local T = Wrekkit.threat
   local TF = UI.threatFrames
+  -- Asked for: they are off by default.
+  local s = T:Settings()
+  local wasText = s.warnText
+  s.warnText = true
   local count = 0
   local real = TF.Message
   TF.Message = function(self, text, level) count = count + 1 end
@@ -3832,6 +3844,7 @@ step("threat: warnings fire once on the way up, not every reading", function()
   reading(125)     -- 96%: danger
   reading(126)
   TF.Message = real
+  s.warnText = wasText
   T.current = nil
   if count ~= 2 then error("expected 2 warnings (warn, danger), got " .. count) end
 end)

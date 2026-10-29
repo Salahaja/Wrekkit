@@ -101,24 +101,28 @@ T.defaults = {
   window = { point = "CENTER", x = -320, y = -180, w = 240, h = 170 },
 
   -- warnings, damage dealers and healers
-  warnText = true,
+  --[[ Every warning, alert, flash and popup is off until asked for: the
+       meter and the % say how close you are, and a screen that talks,
+       beeps and flashes by itself is one people turn the addon off over.
+       Each is one tick in Settings > Threat. ]]
+  warnText = false,
   warnFlash = false,       -- flash the screen edges with each warning (opt-in)
-  warnSound = true,
-  raidWarning = true,      -- danger warnings also as a raid warning, on this screen only
-  warnPulled = true,       -- you took aggro off the tank
+  warnSound = false,
+  raidWarning = false,     -- danger warnings also as a raid warning, on this screen only
+  warnPulled = false,      -- you took aggro off the tank
   textSize = 26,
 
   -- warnings, tanks
-  tankAlerts = true,       -- someone is closing in on a mob you hold
+  tankAlerts = false,      -- someone is closing in on a mob you hold
   tankWarnAt = 85,         -- ... at this % of the way to pulling it
-  warnLostAggro = true,    -- a mob you held turned to someone else
+  warnLostAggro = false,   -- a mob you held turned to someone else
 
   -- flashing: keeps going for as long as the danger lasts, unlike the
   -- warnings above, which say it once
-  flash = true,
+  flash = false,
   flashAt = 85,            -- you, at this % to pull (or a mob on you)
   tankFlashAt = 90,        -- tanking: the runner-up on any mob you hold
-  flashFrame = true,       -- blink the target-frame %
+  flashFrame = false,      -- blink the target-frame %
   flashScreen = false,     -- pulse the screen edges as well
   flashSpeed = 3,          -- blinks a second
   edgeWidth = 30,          -- how far the screen-edge flash reaches in, px
@@ -134,7 +138,7 @@ T.defaults = {
                            -- otherwise: be warned by a tank's relay
 
   -- taunting
-  tauntPopup = true,       -- a button to click when a mob gets away
+  tauntPopup = false,      -- a button to click when a mob gets away (opt-in)
   tauntSpell = "",         -- empty: the class's own (T.TAUNT_DEFAULTS);
                            -- else names, comma-separated, best first
   tauntAoE = false,        -- also fall back to Challenging Shout / Roar

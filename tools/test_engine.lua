@@ -3950,7 +3950,7 @@ print("\n-- mob watch: no AGGRO shouts when solo --")
   T.IsTank = function() return false end
   UnitAffectingCombat = function() return true end
   UnitCanAttack = function() return true end
-  UnitExists = function(u) return u == "0xMob1target" or u == "0xMob2target" end
+  UnitExists = function(u) return u == "0xMob1target" or u == "0xMob2target" or u == "0xMob3target" end
   UnitIsUnit = function(a, b) return b == "player" end
   GetNumRaidMembers = function() return 0 end
   GetNumPartyMembers = function() return 0 end
@@ -3963,12 +3963,22 @@ print("\n-- mob watch: no AGGRO shouts when solo --")
   check("solo, a mob on you is still marked", state, "onme")
   check("  but raises no AGGRO warning", table.getn(alerts), 0)
 
-  -- In a party the same thing is worth a shout.
+  -- In a party the same thing is worth a shout -- once it is asked for:
+  -- every warning is off until someone ticks it.
+  local s = T:Settings()
+  local wasPulled = s.warnPulled
+  check("aggro warnings are off until asked for", wasPulled, false)
   GetNumPartyMembers = function() return 4 end
+  T:WatchMob("0xMob3", "Defias Smuggler")
+  advance(1.5)
+  T:WatchMob("0xMob3", "Defias Smuggler")
+  check("  so a group's mob on you is quiet", table.getn(alerts), 0)
+  s.warnPulled = true
   T:WatchMob("0xMob2", "Defias Pillager")
   advance(1.5)
   T:WatchMob("0xMob2", "Defias Pillager")
   check("in a group, a mob turning on you warns", alerts[1], "AGGRO! Defias Pillager is on you")
+  s.warnPulled = wasPulled
 
   T.Alert, T.IsTank = real.Alert, real.IsTank
   UnitAffectingCombat, UnitCanAttack, UnitExists, UnitIsUnit = real.UAC, real.UCA, real.UE, real.UIU
