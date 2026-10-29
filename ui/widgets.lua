@@ -1120,14 +1120,33 @@ function UI.SpecIconFor(name, class)
   return W.talents and W.talents:Icon(name, class) or nil
 end
 
+--[[ Text measured at its full width. A font string the row has given a
+     width reports no more than that width -- the client's text is already
+     cut to "..." -- so measuring the row's own name always said it fit,
+     and nothing was ever cut. This one has no width and no second anchor,
+     sits off screen, and is never seen. ]]
+local measurer
+local function fullWidth(fs, text)
+  if not measurer then
+    measurer = UIParent:CreateFontString(nil, "OVERLAY")
+    measurer:SetPoint("TOPLEFT", UIParent, "BOTTOMRIGHT", 200, -200)
+  end
+  local face, size, flags = fs:GetFont()
+  if face then measurer:SetFont(face, size or 12, flags) end
+  measurer:SetText(text or "")
+  return measurer:GetStringWidth() or 0
+end
+UI.FullTextWidth = fullWidth
+
 --[[ A name cut to the letters that fit -- "Shieldb" -- rather than the
      client's "...", which on a narrow row was all there was room for.
      Colour codes go from a cut name; a cut never splits a UTF-8 letter.
      The longest prefix that fits is found by halving, a few measurements
      a row. ]]
 local function fitName(fs, text, width)
-  if (fs:GetStringWidth() or 0) <= width then return end
-  local plain = string.gsub(text or "", "|c%x%x%x%x%x%x%x%x", "")
+  text = text or ""
+  if fullWidth(fs, text) <= width then return end
+  local plain = string.gsub(text, "|c%x%x%x%x%x%x%x%x", "")
   plain = string.gsub(plain, "|r", "")
   local n = string.len(plain)
   if n == 0 then return end
@@ -1140,8 +1159,7 @@ local function fitName(fs, text, width)
   local lo, hi, best = 1, table.getn(ends), 1
   while lo <= hi do
     local mid = math.floor((lo + hi) / 2)
-    fs:SetText(string.sub(plain, 1, ends[mid]))
-    if (fs:GetStringWidth() or 0) <= width then
+    if fullWidth(fs, string.sub(plain, 1, ends[mid])) <= width then
       best, lo = mid, mid + 1
     else
       hi = mid - 1

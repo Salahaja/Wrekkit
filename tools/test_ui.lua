@@ -136,7 +136,12 @@ local function region(kind)
          width for "Gah" and "Shieldbarbie" cannot tell a working layout
          from a broken one. Roughly 6px a character at the default size. ]]
     GetStringWidth = function(self)
-      return string.len(self._text or "") * 6
+      -- Bounded, as the client's is: a font string given a width reports
+      -- no more than it (the text is cut to "..." by then). Measuring a
+      -- row's own name therefore always said it fit, and nothing was cut.
+      local full = string.len(self._text or "") * 6
+      if self._kind == "FontString" and (self._w or 0) > 0 and full > self._w then return self._w end
+      return full
     end,
   }
 
@@ -4000,6 +4005,7 @@ step("threat: the title stays inside its bar, and the bar can go", function()
   -- The footer says what the title did.
   T:Demo(5)
   f:Show()                -- "in a group" by default, and the harness is solo
+  f.body:SetWidth(400)    -- room for the whole footer: a narrow one is cut
   TW:RefreshInner()
   local foot = TW.footL:GetText() or ""
   T:StopDemo()

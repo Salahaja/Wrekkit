@@ -218,7 +218,9 @@ function TW.Paint(row, item, index)
 
   if item.pullLine then
     local value = s.showThreat and W.Short(item.threat) or ""
-    row:SetData(nil, "|cffd44f53-- pull aggro --|r", value,
+    -- Narrow, the words alone: the dashes were where its letters went.
+    local label = UI.RowTight(row) and "pull aggro" or "-- pull aggro --"
+    row:SetData(nil, "|cffd44f53" .. label .. "|r", value,
       T.PctText(item.shown), item._frac, PULL_COLOR, 40)
     return
   end
@@ -788,6 +790,17 @@ function TW:UpdateVisibility()
   end
 end
 
+--[[ The footer's left text, cut to the letters that fit beside the right
+     one ("Heroic Trai") rather than to "...". Measured from the body's
+     width, not the text's own: anchored at both ends, its own reads what
+     the client already cut it to. ]]
+function TW:FitFooter()
+  local f, footL, footR = self.frame, self.footL, self.footR
+  if not (f and footL and footR) then return end
+  local room = UI.FrameWidth(f.body) - 6 - 16 - (footR:GetStringWidth() or 0) - 4
+  if room > 0 then UI.FitName(footL, footL:GetText(), room) end
+end
+
 function TW:Refresh()
   W.Guard("threat window", function()
     TW:RefreshInner()
@@ -826,6 +839,7 @@ function TW:RefreshInner()
     self.list:SetData({ { label = TW.EmptyNote() } }, paintNote)
     self.footL:SetText((T:Settings().hideTitle and tank) and "|cff5a9bfftank|r" or "")
     self.footR:SetText("")
+    self:FitFooter()
     return
   end
 
@@ -840,4 +854,5 @@ function TW:RefreshInner()
   end
   self.footL:SetText(aggro)
   self.footR:SetText(T.demoUntil and "preview" or "")
+  self:FitFooter()
 end
