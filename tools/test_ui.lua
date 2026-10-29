@@ -1489,6 +1489,47 @@ step("announce: packed, lines share messages up to 255 characters", function()
   end
 end)
 
+step("announce: Top 3, 5 or 10 in one click, and the next post starts there", function()
+  local was = Wrekkit.db.announceCount
+  Wrekkit.db.announceCount = nil
+  local ctx = { metrics = { "damage" }, metric = "damage", encounters = {}, label = "A", filter = {}, petMode = "merge" }
+  UI.ConfirmAnnounce({ "line" }, "GUILD", nil, function() end, ctx)
+  local dlg = _G["WrekkitConfirm"]
+  local fail
+  if (dlg.countStepper:GetWidth() or 0) < 100 then fail = "the Top stepper has no width to draw its buttons in" end
+  local three, ten
+  for _, b in ipairs(dlg.quickTop or {}) do
+    if b._top == 3 then three = b end
+    if b._top == 10 then ten = b end
+    if not fail and not b:IsShown() then fail = "the Top " .. b._top .. " button is hidden" end
+  end
+  if not fail and not (three and ten) then fail = "no Top 3 / Top 10 buttons" end
+  if not fail then
+    ten:GetScript("OnClick")()
+    if Wrekkit.db.announceCount ~= 10 then fail = "Top 10 was not remembered" end
+    if not fail and not ten._active then fail = "the button in use is not lit" end
+  end
+  UI.CloseConfirm()
+  if not fail then
+    UI.ConfirmAnnounce({ "line" }, "GUILD", nil, function() end, ctx)
+    if dlg.countStepper:IsShown() and not ten._active then fail = "the next post did not start at 10" end
+    three:GetScript("OnClick")()
+    if Wrekkit.db.announceCount ~= 3 then fail = "Top 3 was not remembered" end
+    UI.CloseConfirm()
+  end
+  -- One ability's spread has no Top: neither do its buttons.
+  if not fail then
+    local spread = {}
+    for k, v in pairs(ctx) do spread[k] = v end
+    spread.drill, spread.drillAbility = "Salahaja", 11267
+    UI.ConfirmAnnounce({ "line" }, "GUILD", nil, function() end, spread)
+    if three:IsShown() then fail = "Top buttons offered for one ability's spread" end
+    UI.CloseConfirm()
+  end
+  Wrekkit.db.announceCount = was
+  if fail then error(fail) end
+end)
+
 step("announce: Top N and leaving lines out work in a drilldown, per heading", function()
   local sent
   -- A player's abilities: a list, so Top N is offered.

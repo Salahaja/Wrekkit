@@ -188,14 +188,52 @@ local function build()
     f.metricChecks[i] = chk
   end
 
+  --[[ How many lines. Whatever it is left at is the next post's too
+     (W.db.announceCount): a raid that wants its top 5 wants it every time.
+     The stepper had no width, and a frame without one is zero wide in the
+     client -- its number and buttons, pinned to its right edge, were drawn
+     left of its label, outside the dialog. ]]
+  local function setTop(v)
+    topCount = v
+    if W.db then W.db.announceCount = v end
+    if f.Rebuild then f:Rebuild() end
+    if f.PaintQuick then f:PaintQuick() end
+  end
   f.countStepper = UI.Stepper(f, "Top",
     function() return topCount end,
-    function(v)
-      topCount = v
-      if f.Rebuild then f:Rebuild() end
-    end,
+    setTop,
     1, MAX_LINES_PICK, 1,
     function(v) return tostring(v) end)
+  f.countStepper:SetWidth(120)
+
+  -- One click to the usual sizes, lit on the one in use.
+  f.quickTop = {}
+  local QUICK = { 3, 5, 10 }
+  for i, n in ipairs(QUICK) do
+    local b = UI.Button(f, tostring(n), 26, 16, nil)
+    b._top = n
+    b:SetScript("OnClick", function()
+      local btn = this or b
+      W.Guard("announce top", function()
+        setTop(btn._top)
+        f.countStepper:Refresh()
+      end)
+    end)
+    if i == 1 then
+      b:SetPoint("LEFT", f.countStepper, "RIGHT", 8, 0)
+    else
+      b:SetPoint("LEFT", f.quickTop[i - 1], "RIGHT", 3, 0)
+    end
+    f.quickTop[i] = b
+  end
+  f.PaintQuick = function()
+    for _, b in ipairs(f.quickTop) do
+      b:SetActive(b._top == topCount)
+      if b:IsShown() ~= f.countStepper:IsShown() then
+        if f.countStepper:IsShown() then b:Show() else b:Hide() end
+      end
+    end
+  end
 
   -- Says what the checkboxes do not: which view this came from.
   f.viewNote = UI.Text(f, 10, W.color.textFaint)
@@ -341,6 +379,7 @@ function UI.ConfirmAnnounce(lines, channel, target, onAccept, ctx)
     f.contribCheck:Hide()
     f.countStepper:Hide()
     f.viewNote:Hide()
+    f:PaintQuick()
     local x = needsTarget and -12 or 12
     if not ctx then
       f.previewLabel:ClearAllPoints()
@@ -378,11 +417,14 @@ function UI.ConfirmAnnounce(lines, channel, target, onAccept, ctx)
       f.countStepper:SetPoint("TOPLEFT", anchorTop, "BOTTOMLEFT", x, y)
       f.countStepper:Show()
       f.countStepper:Refresh()
-      f.viewNote:SetPoint("LEFT", f.countStepper, "RIGHT", 12, 0)
+      f:PaintQuick()
+      -- Under the Top row, where a long note has the dialog's width.
+      f.viewNote:SetPoint("TOPLEFT", f.countStepper, "BOTTOMLEFT", 0, -4)
       f.viewNote:Show()
-      f.previewLabel:SetPoint("TOPLEFT", f.countStepper, "BOTTOMLEFT", 0, -10)
-      return -y + 20
+      f.previewLabel:SetPoint("TOPLEFT", f.viewNote, "BOTTOMLEFT", 0, -8)
+      return -y + 20 + 16
     end
+    f:PaintQuick()
     f.viewNote:SetPoint("TOPLEFT", anchorTop, "BOTTOMLEFT", x, y)
     f.viewNote:Show()
     f.previewLabel:SetPoint("TOPLEFT", f.viewNote, "BOTTOMLEFT", 0, -8)
