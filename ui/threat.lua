@@ -398,6 +398,12 @@ function TW:Create()
   self.roleBtn = roleBtn
   self:PaintRole()
 
+  --[[ The title stops short of the buttons. Anchored on its left only, a
+       long mob's name ran under them and out past the window's edge. One
+       line tall, so it is cut short with "..." rather than wrapped. ]]
+  f.title:SetPoint("RIGHT", roleBtn, "LEFT", -4, 0)
+  f.title:SetJustifyH("LEFT")
+
   local titleHit = CreateFrame("Button", nil, f.bar)
   titleHit:SetPoint("TOPLEFT", f.bar, "TOPLEFT", 0, 0)
   titleHit:SetPoint("BOTTOMRIGHT", roleBtn, "BOTTOMLEFT", -2, 0)
@@ -418,10 +424,23 @@ function TW:Create()
 
   local foot = UI.Text(f.body, 10, W.color.textFaint)
   foot:SetPoint("BOTTOMLEFT", f.body, "BOTTOMLEFT", 6, 2)
+  -- Cut short before the right-hand note, never run past the edge.
+  foot:SetPoint("RIGHT", f.body, "RIGHT", -56, 0)
   self.footL = foot
   local footR = UI.Text(f.body, 10, W.color.textFaint, "RIGHT")
   footR:SetPoint("BOTTOMRIGHT", f.body, "BOTTOMRIGHT", -16, 2)
   self.footR = footR
+
+  --[[ The window itself is a handle too: drag it by its footer (or any
+       space the rows leave), right-click there for the menu. Without a
+       title bar that is the only way to move it and reach the menu, which
+       holds everything the bar's buttons do. ]]
+  f:RegisterForDrag("LeftButton")
+  f:SetScript("OnDragStart", function() TW:StartDrag() end)
+  f:SetScript("OnDragStop", function() TW:StopDrag() end)
+  f:SetScript("OnMouseUp", function()
+    if arg1 == "RightButton" then W.Guard("threat menu", function() TW:Menu(f) end) end
+  end)
 
   f.closeButton:SetScript("OnClick", function()
     TW:SetDisplay("off")
@@ -483,6 +502,29 @@ function TW:ApplyLayout()
   local scale = UI.FontScale() * own
   local rowH = math.floor(16 * scale + 0.5)
   self.list:SetRowHeight(rowH)
+
+  --[[ The title bar: as tall as its text, or gone (hideTitle), the body
+       then starting at the window's top. Re-anchored only when that
+       changes -- never on a window being dragged. ]]
+  local headless = s.hideTitle == true
+  local barH = math.floor(20 * own + 0.5)
+  if barH < 20 then barH = 20 end
+  f.bar:SetHeight(barH)
+  f.title:SetHeight(barH)
+  if f._headless ~= headless and not f._moving then
+    f._headless = headless
+    f.body:ClearAllPoints()
+    if headless then
+      f.bar:Hide()
+      f.body:SetPoint("TOPLEFT", f, "TOPLEFT", f.inset or 1, -(f.inset or 1))
+    else
+      f.bar:Show()
+      f.body:SetPoint("TOPLEFT", f.bar, "BOTTOMLEFT", 0, -1)
+    end
+    f.body:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -(f.inset or 1), f.inset or 1)
+    if f.SetMinResize then f:SetMinResize(180, headless and 40 or 80) end
+  end
+  local chromeH = (headless and 0 or barH) + 18
   if TW.TextScale then
     self.list:SetTextScale(TW.TextScale)
     UI.ScaleFontBy(self.footL, TW.TextScale)
@@ -495,7 +537,7 @@ function TW:ApplyLayout()
     f:ClearAllPoints()
     f:SetPoint("TOPLEFT", m, "BOTTOMLEFT", 0, -2)
     f:SetPoint("TOPRIGHT", m, "BOTTOMRIGHT", 0, -2)
-    f:SetHeight(20 + 18 + rowH * math.max(2, math.min(s.rows, 12)))
+    f:SetHeight(chromeH + rowH * math.max(2, math.min(s.rows, 12)))
     f.grip:Hide()
     -- Matches the meter it hangs from.
     if f.SetOpacity then f:SetOpacity(UI.meter:Settings().opacity) end
@@ -625,6 +667,7 @@ function TW:Menu(anchor)
     { text = "40%", value = "o:0.4", checked = math.abs(TW:Opacity() - 0.4) < 0.03 },
     { text = "Window", header = true },
     { text = "Lock position", value = "lock", checked = s.locked == true },
+    { text = "Title bar", value = "titlebar", checked = s.hideTitle ~= true },
     { text = "Preview with test data", value = "demo" },
     { text = "Settings...", value = "settings" },
     { text = "Hide window", value = "d:off" },
@@ -651,6 +694,12 @@ function TW:Menu(anchor)
       TW:Refresh()
     elseif value == "lock" then
       s.locked = not s.locked
+    elseif value == "titlebar" then
+      s.hideTitle = not s.hideTitle
+      TW:ApplyLayout()
+      if s.hideTitle then
+        W.Print("threat window: no title bar. Drag it by its footer; right-click there for this menu.")
+      end
     elseif value == "demo" then
       T:Demo(15)
     elseif value == "settings" then
@@ -741,7 +790,7 @@ function TW:RefreshInner()
   if table.getn(rows) == 0 then
     f.title:SetText(tank and "Threat  |cff5a9bfftank|r" or "Threat")
     self.list:SetData({ { label = TW.EmptyNote() } }, paintNote)
-    self.footL:SetText("")
+    self.footL:SetText((T:Settings().hideTitle and tank) and "|cff5a9bfftank|r" or "")
     self.footR:SetText("")
     return
   end
@@ -750,6 +799,11 @@ function TW:RefreshInner()
   if tank then title = title .. "  |cff5a9bfftank|r" end
   f.title:SetText(title)
   self.list:SetData(rows, TW.Paint)
-  self.footL:SetText(cur and ("aggro: " .. (cur.tank and cur.tank.name or "?")) or "")
+  local aggro = cur and ("aggro: " .. (cur.tank and cur.tank.name or "?")) or ""
+  -- No title bar: the footer names the mob, and says when you are the tank.
+  if T:Settings().hideTitle and cur then
+    aggro = (tank and "|cff5a9bfftank|r  " or "") .. (cur.name or "?") .. "  " .. aggro
+  end
+  self.footL:SetText(aggro)
   self.footR:SetText(T.demoUntil and "preview" or "")
 end

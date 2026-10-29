@@ -3828,6 +3828,58 @@ step("threat: the window's own text size, on top of Wrekkit's", function()
   if fail then error(fail) end
 end)
 
+step("threat: the title stays inside its bar, and the bar can go", function()
+  local T = Wrekkit.threat
+  local s = T:Settings()
+  local TW = UI.threat
+  if not TW.frame then TW:Create() end
+  local f = TW.frame
+  local was, wasDisplay = s.hideTitle, s.display
+  -- Anchored on both sides, so a long name is cut short, not run out.
+  local right = false
+  for _, p in ipairs(f.title._points or {}) do if p[1] == "RIGHT" then right = true end end
+  if not right then error("the title has no right edge to stop at") end
+
+  TW:SetDisplay("docked")
+  s.hideTitle = false
+  TW:ApplyLayout()
+  local withBar = f:GetHeight()
+  s.hideTitle = true
+  TW:ApplyLayout()
+  local fail
+  if f.bar:IsShown() then fail = "the title bar is still shown" end
+  local top = f.body._points and f.body._points[1]
+  if not fail and not (top and top[2] == f) then fail = "the body does not start at the window's top" end
+  if not fail and not (f:GetHeight() < withBar) then fail = "docked, the window is no smaller without its bar" end
+  -- The footer says what the title did.
+  T:Demo(5)
+  f:Show()                -- "in a group" by default, and the harness is solo
+  TW:RefreshInner()
+  local foot = TW.footL:GetText() or ""
+  T:StopDemo()
+  if not fail and not string.find(foot, "aggro:", 1, true) then fail = "the footer reads " .. foot end
+  -- And the menu brings the bar back.
+  local items, pick
+  local realMenu = UI.Menu
+  UI.Menu = function(_, _, its, onPick) items, pick = its, onPick end
+  f:GetScript("OnMouseUp")()
+  UI.Menu = realMenu
+  if not fail and not pick then
+    arg1 = "RightButton"
+    UI.Menu = function(_, _, its, onPick) items, pick = its, onPick end
+    f:GetScript("OnMouseUp")()
+    UI.Menu = realMenu
+  end
+  if not fail and not pick then fail = "right-clicking the window opened no menu" end
+  if not fail then pick("titlebar") end
+  if not fail and (s.hideTitle or not f.bar:IsShown()) then fail = "the menu did not bring the title bar back" end
+  arg1 = "LeftButton"
+  s.hideTitle = was
+  TW:ApplyLayout()
+  TW:SetDisplay(wasDisplay)
+  if fail then error(fail) end
+end)
+
 step("threat: my row pinned to the top, and seconds to pulling aggro", function()
   local T = Wrekkit.threat
   local s = T:Settings()

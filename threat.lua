@@ -90,6 +90,7 @@ T.defaults = {
   showTPS = true,
   showPullLine = true,
   textScale = 100,         -- the threat window's text, % of Wrekkit's text size
+  hideTitle = false,       -- no title bar: the mob and its tank go in the footer
   pinMe = false,           -- your own row first, wherever your threat puts you
   showETA = false,         -- seconds until a player pulls aggro, at the current rates
   etaWho = "all",          -- ... "me": on your row only; "all": every player's
