@@ -493,6 +493,7 @@ step("meter builds", function()
   UI.meter.frame.bar:SetWidth(258)
   UI.meter.head1:SetWidth(252)
   UI.meter.head2:SetWidth(252)
+  UI.meter.toolbar:SetWidth(256)
 end)
 step("meter shows", function() UI.meter:Show() end)
 step("meter refreshes", function() UI.meter:Refresh() end)
@@ -4030,6 +4031,45 @@ step("meter: compact drops the emblem, and its split goes narrow too", function(
   f:SetWidth(was[5]); f.bar:SetWidth(was[6]); M.head1:SetWidth(was[7]); M.head2:SetWidth(was[8])
   M:SetSplit(was[2] or "off")
   M:ApplyLayout()
+  if fail then error(fail) end
+end)
+
+step("meter toolbar: Pets beside the filter, the toggles folding where there is no room", function()
+  local M = UI.meter
+  local tb = M.toolbar
+  local was = tb:GetWidth()
+  local s = M:Settings()
+  local fail
+  -- Pets hangs off the filter now, so the filter can never cover it.
+  local p = M.petBtn._points and M.petBtn._points[1]
+  if not (p and p[2] == M.search) then fail = "Pets is not beside the filter" end
+  -- At the meter's narrowest, all of it fits: no fold.
+  M._toolsFolded = nil
+  M:LayoutToolbar()
+  if not fail and M._toolsFolded then fail = "the toggles folded at 256px" end
+  if not fail and not M.groupBtn:IsShown() then fail = "the group toggle is hidden at 256px" end
+  -- Squeezed (a bigger text, a skin's wider buttons): one "..." menu.
+  tb:SetWidth(150)
+  M:LayoutToolbar()
+  if not fail and (M.groupBtn:IsShown() or not M.moreBtn:IsShown()) then fail = "squeezed, the toggles did not fold" end
+  local items, pick
+  local realMenu = UI.Menu
+  UI.Menu = function(_, _, its, onPick) items, pick = its, onPick end
+  if not fail then M.moreBtn:GetScript("OnClick")() end
+  UI.Menu = realMenu
+  local offered = {}
+  for _, it in ipairs(items or {}) do if it.value then offered[it.value] = true end end
+  for _, v in ipairs({ "group", "picked", "pickmenu", "world", "new", "wipe" }) do
+    if not fail and not offered[v] then fail = "the folded menu has no " .. v end
+  end
+  local before = s.groupOnly
+  if not fail then pick("group") end
+  if not fail and s.groupOnly == before then fail = "Group only from the menu did nothing" end
+  s.groupOnly = before
+  tb:SetWidth(was)
+  M:LayoutToolbar()
+  M:UpdateToggles()
+  if not fail and not M.groupBtn:IsShown() then fail = "widened again, the toggles did not come back" end
   if fail then error(fail) end
 end)
 

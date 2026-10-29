@@ -179,6 +179,10 @@ end
 -- construction
 ----------------------------------------------------------------------
 
+-- The toolbar's four toggles: smaller than they were (18), so the toolbar
+-- fits at the meter's narrowest with the filter open.
+local TOGGLE_W, TOGGLE_GAP = 14, 2
+
 function M:Create()
   if self.frame then return self.frame end
   local s = self:Settings()
@@ -319,13 +323,14 @@ function M:Create()
     if UI.report then UI.report:Toggle() end
   end)
   reportBtn:SetPoint("RIGHT", tb, "RIGHT", -4, 0)
+  self.reportBtn = reportBtn
 
   ------------------------------------------------------------------
   -- toggles
   ------------------------------------------------------------------
 
   -- Ignore anyone outside the party/raid.
-  local groupBtn = UI.IconButton(tb, UI.media.group, 18, function()
+  local groupBtn = UI.IconButton(tb, UI.media.group, TOGGLE_W, function()
     local st = M:Settings()
     st.groupOnly = not st.groupOnly
     M:UpdateToggles()
@@ -342,7 +347,7 @@ function M:Create()
 
   -- Show only the players picked. Next to group-only: both decide who is
   -- counted. Picking itself is shift-click on a row.
-  local pickBtn = UI.IconButton(tb, UI.media.pick, 18, function()
+  local pickBtn = UI.IconButton(tb, UI.media.pick, TOGGLE_W, function()
     if arg1 == "RightButton" then
       UI.PickMenu(M.frame, M.pickBtn)
       return
@@ -357,11 +362,11 @@ function M:Create()
     M:UpdateToggles()
     M:Refresh()
   end, UI.PICK_TIP)
-  pickBtn:SetPoint("RIGHT", groupBtn, "LEFT", -2, 0)
+  pickBtn:SetPoint("RIGHT", groupBtn, "LEFT", -TOGGLE_GAP, 0)
   self.pickBtn = pickBtn
 
   -- Record combat outside instances.
-  local worldBtn = UI.IconButton(tb, UI.media.globe, 18, function()
+  local worldBtn = UI.IconButton(tb, UI.media.globe, TOGGLE_W, function()
     W.db.trackOpenWorld = not W.db.trackOpenWorld
     M:UpdateToggles()
     W.Print("open-world combat " ..
@@ -373,13 +378,13 @@ function M:Create()
       "Dim: only inside dungeons and raids.",
     },
   })
-  worldBtn:SetPoint("RIGHT", pickBtn, "LEFT", -2, 0)
+  worldBtn:SetPoint("RIGHT", pickBtn, "LEFT", -TOGGLE_GAP, 0)
   self.worldBtn = worldBtn
 
   -- Reset. Left-click closes the current log and starts a fresh one, keeping
   -- what came before; deleting the history outright is behind a right-click
   -- and a confirmation, because it cannot be undone.
-  local resetBtn = UI.IconButton(tb, UI.media.reset, 18, function()
+  local resetBtn = UI.IconButton(tb, UI.media.reset, TOGGLE_W, function()
     if arg1 == "RightButton" then
       if StaticPopup_Show then
         StaticPopup_Show("WREKKIT_RESET_ALL")
@@ -397,18 +402,28 @@ function M:Create()
       "Right-click: delete the history entirely.",
     },
   })
-  resetBtn:SetPoint("RIGHT", worldBtn, "LEFT", -2, 0)
+  resetBtn:SetPoint("RIGHT", worldBtn, "LEFT", -TOGGLE_GAP, 0)
   self.resetBtn = resetBtn
 
+  -- The four toggles folded into one, where the toolbar has no room for
+  -- them (M:LayoutToolbar): the same choices, ticked, in a menu.
+  local moreBtn = UI.Button(tb, "...", 22, 18, function()
+    W.Guard("meter toggles", function() M:TogglesMenu(M.moreBtn) end)
+  end)
+  moreBtn:SetPoint("RIGHT", reportBtn, "LEFT", -4, 0)
+  moreBtn:Hide()
+  self.moreBtn = moreBtn
+
   --[[ The filter keeps its own size: a 40px "Filter" button folded, 80px
-       open -- never stretched by the window. (It used to be pinned between
-       the edge and the Pets button to fill the gap, which made it grow with
-       every resize and undid the folding; at 110px fixed it had met the
-       icons at the meter's narrowest, at 80 it does not.) ]]
-  petBtn:ClearAllPoints()
-  petBtn:SetPoint("RIGHT", resetBtn, "LEFT", -4, 0)
+       open -- never stretched by the window. Pets sits beside it, moving
+       with it as it opens, and the toggles hold the right; where the two
+       would meet, the toggles fold (M:LayoutToolbar). Pets used to hang
+       off the toggles, and at the meter's narrowest the filter -- drawn
+       wider by a skin than it was set -- covered it. ]]
   search:ClearAllPoints()
   search:SetPoint("LEFT", tb, "LEFT", 4, 0)
+  petBtn:ClearAllPoints()
+  petBtn:SetPoint("LEFT", search, "RIGHT", 4, 0)
 
   ------------------------------------------------------------------
   -- list
@@ -543,6 +558,71 @@ function M:UpdateToggles()
   end
   if self.worldBtn then self.worldBtn:SetLit(W.db.trackOpenWorld == true) end
   if self.resetBtn then self.resetBtn:SetLit(false) end
+  -- Folded, "..." is lit while either filter is on, as their icons would be.
+  if self.moreBtn and self.moreBtn.SetActive then
+    local s = self:Settings()
+    self.moreBtn:SetActive(s.groupOnly == true or (s.pickedOnly == true and W.report:AnyPicked()))
+  end
+end
+
+--[[ The toolbar's two ends: the filter and Pets from the left, Report and
+     the four toggles from the right. Where they would meet, the toggles
+     fold into "..." -- measured from where things really are, since a
+     skin may draw a button wider than it was made. ]]
+function M:LayoutToolbar()
+  local tb = self.toolbar
+  if not tb or not tb:IsShown() or not self.moreBtn then return end
+  local width = UI.FrameWidth(tb)
+  if width <= 0 then return end
+  local left = 4 + UI.FrameWidth(self.search) + 4 + UI.FrameWidth(self.petBtn)
+  local right = 4 + UI.FrameWidth(self.reportBtn) + 4
+  local toggles = 4 * TOGGLE_W + 3 * TOGGLE_GAP
+  local fold = left + 6 + toggles + right > width
+  if fold == self._toolsFolded then return end
+  self._toolsFolded = fold
+  for _, b in ipairs({ self.groupBtn, self.pickBtn, self.worldBtn, self.resetBtn }) do
+    if fold then b:Hide() else b:Show() end
+  end
+  if fold then self.moreBtn:Show() else self.moreBtn:Hide() end
+end
+
+--- The folded toggles, as a menu: each as its icon would do it.
+function M:TogglesMenu(anchor)
+  local s = self:Settings()
+  local items = {
+    { text = "Who is counted", header = true },
+    { text = "Group only", value = "group", checked = s.groupOnly == true },
+    { text = "Only picked players", value = "picked", checked = s.pickedOnly == true },
+    { text = "Pick players...", value = "pickmenu" },
+    { text = "Recording", header = true },
+    { text = "Open world too", value = "world", checked = W.db.trackOpenWorld == true },
+    { text = "Start a new log", value = "new" },
+    { text = "Delete all history...", value = "wipe" },
+  }
+  UI.Menu(self.frame, anchor, items, function(value)
+    if value == "group" then
+      s.groupOnly = not s.groupOnly
+    elseif value == "picked" then
+      if not s.pickedOnly and not W.report:AnyPicked() then
+        W.Print("nobody is picked yet: shift-click a player to pick them.")
+        return
+      end
+      s.pickedOnly = not s.pickedOnly
+    elseif value == "pickmenu" then
+      UI.PickMenu(M.frame, anchor)
+      return
+    elseif value == "world" then
+      W.db.trackOpenWorld = not W.db.trackOpenWorld
+      W.Print("open-world combat " ..
+        (W.db.trackOpenWorld and "is now recorded." or "is ignored (instances only)."))
+    elseif value == "new" then
+      W.ResetData("new")
+    elseif value == "wipe" then
+      if StaticPopup_Show then StaticPopup_Show("WREKKIT_RESET_ALL") else W.ResetData("all") end
+    end
+    M:UpdateToggles()
+    M:Refresh()
+  end, 180)
 end
 
 --[[ Lay the meter out for the current density settings.
@@ -1591,6 +1671,7 @@ end
 function M:RefreshInner()
   local f = self.frame
   if not f or not f:IsShown() then return end
+  self:LayoutToolbar()
 
   local s = self:Settings()
   local split = self:Split()
