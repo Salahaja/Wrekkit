@@ -595,23 +595,36 @@ function E:ActiveSeconds(enc, rec)
   return active
 end
 
---- How many hits before a death the recap keeps.
-local RECAP_HITS = 8
+--[[ What happened to each player lately, for the death recap: every hit
+     they took ("d"), every heal that reached them ("h", with its overheal)
+     and every hit they avoided ("m", with how). Eight hits, as it was, told
+     what landed last but not why nobody healed it -- or that the tank had
+     dodged the four before.
 
---- Remember the last few hits this actor took, oldest overwritten first.
---- A fixed ring rather than a growing list: this runs on every hit taken by
---- every player in the raid, and only the tail is ever read. The hp given
---- is health AFTER the hit: capture applies damage before we see it.
-local function noteRecent(a, enc, now, srcName, spell, amount, hp)
-  if not a.recent then a.recent = {} a.recentAt = 0 end
-  a.recentAt = math.mod(a.recentAt or 0, RECAP_HITS) + 1
-  a.recent[a.recentAt] = {
-    t = now - enc.startT,
-    src = srcName,
-    spell = spell,
-    a = amount,
-    hp = hp,
-  }
+     A ring of RECAP_RING entries per player, written in place: this runs
+     on every hit and every heal on everyone in the raid, so after its first
+     lap it makes no tables at all. A death copies out the RECAP_WINDOW
+     seconds before it, the newest RECAP_KEEP of them. The hp is health
+     AFTER the event: capture applies damage and healing before we see it. ]]
+local RECAP_RING = 64
+local RECAP_WINDOW = 10
+local RECAP_KEEP = 32      -- saved with the pull: a week of raids adds up
+
+local function noteRecent(a, enc, now, kind, srcName, spell, amount, hp, extra, crit)
+  local ring = a.recent
+  if not ring then
+    ring = {}
+    a.recent, a.recentAt = ring, 0
+  end
+  local at = math.mod(a.recentAt or 0, RECAP_RING) + 1
+  a.recentAt = at
+  local e = ring[at]
+  if not e then
+    e = {}
+    ring[at] = e
+  end
+  e.t, e.k, e.src, e.spell, e.a, e.hp = now - enc.startT, kind, srcName, spell, amount, hp
+  e.x, e.crit = extra, crit
 end
 
 --- The ring read out oldest-first, by position rather than by time: hits in
@@ -622,12 +635,19 @@ local function recentInOrder(a)
   local ring = a.recent
   if not ring then return out end
   local at = a.recentAt or 0
-  for i = 1, RECAP_HITS do
-    local e = ring[math.mod(at + i - 1, RECAP_HITS) + 1]
+  for i = 1, RECAP_RING do
+    local e = ring[math.mod(at + i - 1, RECAP_RING) + 1]
     if e then table.insert(out, e) end
   end
   return out
 end
+
+-- How a hit was avoided, by the client's miss code (E:Miss).
+local AVOIDED = {
+  [1] = "missed", [2] = "resisted", [3] = "dodged", [4] = "parried", [5] = "blocked",
+  [6] = "evaded", [7] = "immune", [8] = "immune", [9] = "deflected", [10] = "absorbed",
+  [11] = "reflected",
+}
 
 --- Environmental damage arrives as a number: the client EnvironmentalDamageType.
 local ENVIRONMENT = {
@@ -848,8 +868,8 @@ function E:Damage(sourceGuid, targetGuid, spellId, amount, info)
       -- Remember the hit itself, so a death can be explained afterwards.
       local su = W.capture.units[sourceGuid]
       local tu = W.capture.units[targetGuid]
-      noteRecent(dst, enc, now, (su and su.name) or "?", spellName, amount,
-        tu and tu.health)
+      noteRecent(dst, enc, now, "d", (su and su.name) or "?", spellName, amount,
+        tu and tu.health, nil, info.crit)
     end
 
     -- Track the biggest thing we fought so the encounter can be named.
@@ -911,6 +931,14 @@ function E:Heal(casterGuid, targetGuid, spellId, effective, over, info)
     b.eh = b.eh + effective
     contribute(b, "h", casterGuid, targetGuid, spellId, effective)
   end
+
+  -- For the death recap: what healing reached them, and when. Only players
+  -- already in the pull; a heal is no reason to start tracking someone.
+  local dst = enc.actors[targetGuid]
+  if dst and dst.isPlayer then
+    local tu = W.capture.units[targetGuid]
+    noteRecent(dst, enc, now, "h", src.name, spellName, effective, tu and tu.health, over, info.crit)
+  end
 end
 
 --[[ missInfo is the client's numeric reason, not a string:
@@ -938,6 +966,13 @@ function E:Miss(casterGuid, targetGuid, spellId, missInfo)
   local code = tonumber(missInfo) or 0
   if not row.missBy then row.missBy = {} end
   row.missBy[code] = (row.missBy[code] or 0) + 1
+
+  -- A hit a player avoided belongs in their death recap too.
+  local dst = enc.actors[targetGuid]
+  if dst and dst.isPlayer and AVOIDED[code] then
+    local tu = W.capture.units[targetGuid]
+    noteRecent(dst, enc, GetTime(), "m", src.name, row.name, 0, tu and tu.health, AVOIDED[code])
+  end
 end
 
 --- Someone removed an effect. Counted per spell as well as in total, so
@@ -976,7 +1011,7 @@ function E:Environmental(guid, damageType, damage, absorb, resist)
     -- Lava and falling kill people too. A recap that left them out would
     -- blame whatever hit them last before the lava did.
     local tu = W.capture.units[guid]
-    noteRecent(dst, enc, now, "Environment", kind, damage, tu and tu.health)
+    noteRecent(dst, enc, now, "d", "Environment", kind, damage, tu and tu.health)
   end
 end
 
@@ -1227,9 +1262,13 @@ function E:Death(guid)
        its distance from the death, which is what the recap prints and the
        one number that means the same thing in every view. ]]
   for _, e in ipairs(recentInOrder(a)) do
-    table.insert(recap, { t = e.t, ago = deathT - (e.t or deathT),
-                          src = e.src, spell = e.spell, a = e.a, hp = e.hp })
+    if (e.t or 0) >= deathT - RECAP_WINDOW then
+      table.insert(recap, { t = e.t, ago = deathT - (e.t or deathT), k = e.k,
+                            src = e.src, spell = e.spell, a = e.a, hp = e.hp, x = e.x, crit = e.crit })
+    end
   end
+  while table.getn(recap) > RECAP_KEEP do table.remove(recap, 1) end
+  local du = W.capture.units[guid]
   -- The next life starts with an empty ring; otherwise a second death soon
   -- after a rez is explained by hits from before the first.
   a.recent = nil
@@ -1242,6 +1281,8 @@ function E:Death(guid)
       name = a.name,
       class = a.class,
       recap = recap,
+      -- Their health bar's size, so the recap can say how full it was.
+      hpMax = du and du.maxHealth,
     })
   else
     -- An enemy dying is how we learn the pull was a kill.

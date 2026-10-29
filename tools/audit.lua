@@ -110,7 +110,7 @@ declare(FRAMEXML, [[
   DEFAULT_CHAT_FRAME GameTooltip SlashCmdList StaticPopupDialogs
   StaticPopup_Show UISpecialFrames
   UNKNOWN MouseIsOver RaidWarningFrame IsMouseButtonDown
-  ColorPickerFrame
+  ColorPickerFrame Screenshot TakeScreenshot
 ]])
 
 declare(SUPER, [[

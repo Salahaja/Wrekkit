@@ -17,6 +17,7 @@ store.lua
 archive.lua
 sync.lua
 announce.lua
+export.lua
 threat.lua
 talents.lua
 prices.lua
@@ -28,6 +29,7 @@ ui\chart.lua
 ui\meter.lua
 ui\report.lua
 ui\confirm.lua
+ui\export.lua
 ui\settings.lua
 ui\peers.lua
 ui\threat.lua

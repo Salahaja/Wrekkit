@@ -214,6 +214,11 @@ CreateFrame = function(kind, name, parent)
     SetID = function() end,
     GetID = function() return 0 end,
     SetSequence = function() end,
+    -- The export box: a multi-line edit box in a scroll frame.
+    SetMultiLine = function(self, v) self._multi = v end,
+    HighlightText = function(self) self._highlighted = true end,
+    SetScrollChild = function(self, c) self._child = c end,
+    UpdateScrollChildRect = function() end,
   }
 
   -- Frames share the region methods (SetPoint, sizing, visibility).
@@ -380,6 +385,7 @@ dofile("store.lua")
 dofile("archive.lua")
 dofile("sync.lua")
 dofile("announce.lua")
+dofile("export.lua")
 dofile("threat.lua")
 dofile("talents.lua")
 dofile("prices.lua")
@@ -390,6 +396,7 @@ dofile("ui/chart.lua")
 dofile("ui/meter.lua")
 dofile("ui/report.lua")
 dofile("ui/confirm.lua")
+dofile("ui/export.lua")
 dofile("ui/settings.lua")
 dofile("ui/peers.lua")
 dofile("ui/threat.lua")
@@ -1443,8 +1450,26 @@ step("announce: the death log and one death's last blows, as shown", function()
   R.DeathList = real
   if fail then error(fail) end
   if not string.find(one[1], "Fuff died at 1:15", 1, true) then error("the recap heading reads " .. one[1]) end
-  if table.getn(one) ~= 2 then error("Top 1 of a recap is the heading and one blow, got " .. table.getn(one)) end
-  if not string.find(one[2], "Wrath of Ragnaros", 1, true) then error("the blow kept is not the killing one: " .. one[2]) end
+  -- The heading, the three summary lines, and the last blow.
+  if table.getn(one) ~= 5 then error("Top 1 of a recap is the heading, the summary and one blow, got " .. table.getn(one)) end
+  if not string.find(one[2], "Killed by Ragnaros (Wrath of Ragnaros)", 1, true) then error("the summary reads " .. one[2]) end
+  if not string.find(one[4], "No healing reached them", 1, true) then error("the heal line reads " .. one[4]) end
+  if not string.find(one[5], "Wrath of Ragnaros", 1, true) then error("the blow kept is not the killing one: " .. one[5]) end
+  if string.find(table.concat(one, " "), "|c", 1, true) then error("colour codes in a chat line") end
+end)
+
+step("export: the whole list, where chat stops at 15", function()
+  local R = Wrekkit.report
+  local real = R.DeathList
+  local many = {}
+  for i = 1, 20 do table.insert(many, { name = "P" .. i, class = "ROGUE", t = i * 10, encounter = "Ragnaros" }) end
+  R.DeathList = function() return many end
+  local ctx = { metric = "deaths", metrics = { "deaths" }, encounters = {}, label = "MC", deaths = true }
+  local chat = table.getn(Wrekkit.announce:Lines(ctx, 40))
+  local text = Wrekkit.export:Shown(ctx)
+  R.DeathList = real
+  if chat ~= 17 then error("chat: the heading, 15 and a '...and 5 more', got " .. chat) end
+  if not string.find(text, "20. P20", 1, true) then error("the export stopped short: " .. string.sub(text, -80)) end
 end)
 
 step("announce: packed, lines share messages up to 255 characters", function()
@@ -1554,7 +1579,7 @@ step("meter: Raid Contrib by effect and the death log, opened and announced as s
   check(M.list.data[1] and M.list.data[1].name == "Fuff", "the deaths are not listed in order")
   if not fail then M.list.rows[1]:GetScript("OnClick")() end
   check(M.drill == R.DeathKey(deaths[1]), "clicking a death did not open its recap")
-  check(table.getn(M.list.data) == 2, "the recap does not show both blows")
+  check(table.getn(M.list.data) == 5, "the recap does not show the summary and both blows")
   ctx = M:AnnounceContext()
   check(ctx.deaths and ctx.deathDrill == M.drill and not ctx.drill, "the announcement is not that death's")
   local lines = Wrekkit.announce:Lines(ctx, 5)
@@ -1563,6 +1588,73 @@ step("meter: Raid Contrib by effect and the death log, opened and announced as s
   R.Effects, R.DeathList = realE, realD
   M:SetMetric(was or "damage")
   if fail then error(fail) end
+end)
+
+step("export: the report's button offers it, and the box opens selected", function()
+  if not UI.report.exportBtn then error("the report has no Export button") end
+  local items
+  local realMenu = UI.Menu
+  UI.Menu = function(_, _, its, onPick) items = its; UI._pick = onPick end
+  UI.report:Show()
+  UI.report.exportBtn:GetScript("OnClick")()
+  UI.Menu = realMenu
+  local offered = {}
+  for _, it in ipairs(items or {}) do if it.value then offered[it.value] = true end end
+  for _, v in ipairs({ "shown:file", "consumes:file", "shown:copy", "consumes:copy", "shot" }) do
+    if not offered[v] then error("the Export menu has no " .. v) end
+  end
+  -- Copy: the box opens with the text, selected, fenced for Discord.
+  UI._pick("consumes:copy")
+  UI._pick = nil
+  local box = _G["WrekkitExport"]
+  if not (box and box:IsShown()) then error("the copy box did not open") end
+  local text = box.editBox:GetText()
+  if string.sub(text, 1, 3) ~= "```" then error("not fenced: " .. string.sub(text, 1, 20)) end
+  if not string.find(text, "Wrekkit consumables", 1, true) then error("the box holds " .. string.sub(text, 1, 40)) end
+  if not box.editBox._highlighted then error("the text is not selected") end
+  -- Read only: a keystroke puts it back.
+  box.editBox:SetText("typed over")
+  box.editBox:GetScript("OnTextChanged")()
+  if box.editBox:GetText() ~= text then error("the box could be typed over") end
+  box:Hide()
+  -- The meter offers the same menu.
+  items = nil
+  UI.Menu = function(_, _, its, onPick) items = its; UI._pick = onPick end
+  UI.meter:WindowMenu(UI.meter.frame.bar)
+  if UI._pick then UI._pick("export") end
+  UI.Menu = realMenu
+  UI._pick = nil
+  local fromMeter = false
+  for _, it in ipairs(items or {}) do if it.value == "consumes:file" then fromMeter = true end end
+  if not fromMeter then error("the meter's Export... does not open the export menu") end
+end)
+
+step("timeline: clicking a death opens its recap", function()
+  local R = UI.report
+  R:Show()
+  R.state.tab = "summary"
+  local c = R.chart
+  c.sampleCount = 100
+  c.deaths = { { name = "Fuff", t = 40, deathKey = "Fuff:75" } }
+  local realAt = c.SecondAt
+  c.SecondAt = function() return 40, (40 / 100) * (c.plot and c.plot:GetWidth() or 0) end
+  local d = c:DeathAt()
+  if not d or d.name ~= "Fuff" then
+    c.SecondAt = realAt
+    error("the death under the cursor was not found")
+  end
+  -- The death as the Deaths tab finds it in the pulls on show.
+  local realList = Wrekkit.report.DeathList
+  Wrekkit.report.DeathList = function() return fakeDeaths() end
+  c.hit:GetScript("OnClick")()
+  c.SecondAt = realAt
+  local shown = R.mainList.data and R.mainList.data[1]
+  Wrekkit.report.DeathList = realList
+  if R.state.tab ~= "deaths" then error("the click did not open the Deaths tab") end
+  if R.state.deathDrill ~= "Fuff:75" then error("opened on " .. tostring(R.state.deathDrill)) end
+  if not (shown and shown.kind == "sum") then error("the recap is not what the tab shows") end
+  R.state.tab, R.state.deathDrill = "summary", nil
+  R:Refresh()
 end)
 
 step("mob frames: distance in yards, coloured by this character's bands", function()

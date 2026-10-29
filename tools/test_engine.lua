@@ -242,6 +242,7 @@ dofile("store.lua")
 dofile("archive.lua")
 dofile("sync.lua")
 dofile("announce.lua")
+dofile("export.lua")
 dofile("threat.lua")
 dofile("talents.lua")
 dofile("prices.lua")
@@ -609,6 +610,31 @@ check("named from the table when the client has not cached it",
   check("a potion and its look-alike still go to the potion", C:ConsumableItem(0, 17531, "0xP2"), 13444)
   Wrekkit.db.consumeSpells[24707] = was
   SpellInfo = realInfo
+end)()
+
+-- Exported for the officers: each player's consumables, priced, then each
+-- consumable and who used it, then the raid's total -- saved as a file.
+;(function()
+  local P = Wrekkit.prices
+  local realValue = P.Value
+  P.Value = function(self, id) return ({ [13446] = 5000 })[id] end
+  local ctx = { encounters = { enc }, label = "Test", petMode = "merge" }
+  local text = Wrekkit.export:Consumes(ctx)
+  local function has(s) return string.find(text, s, 1, true) ~= nil end
+  check("export: the rogue, his uses and their cost", has("Fuff (1 death): 3 uses, 1g 0s"), true)
+  check("export: a priced item and its cost", has("Major Healing Potion") and has("1g 0s"), true)
+  check("export: an unpriced one says so", has("Dark Rune"), true)
+  check("export: each consumable and who used it", has("Fuff x2, Elfpriest"), true)
+  check("export: the raid's total", has("Raid: ") and has("1 use with no price"), true)
+  check("export: no colour codes in a file", has("|c"), false)
+  DISK = {}
+  local name = Wrekkit.export:Run(ctx, "consumes", "file")
+  check("export: saved under its own name", name and string.find(name, "^Wrekkit_Consumes_") ~= nil, true)
+  check("  with the list in it", name and DISK[name] == text, true)
+  check("  a name the file API takes", name and string.find(name, "^[%w_%-]+%.txt$") ~= nil, true)
+  local shown, head = Wrekkit.export:Shown({ metric = "consumes", encounters = { enc }, label = "Test", petMode = "merge" })
+  check("export: what is on screen, its heading first", string.find(shown, head, 1, true) == 1, true)
+  P.Value = realValue
 end)()
 
 -- Between pulls: held, and credited to the next pull -- the pre-pull fire
@@ -2905,8 +2931,46 @@ for _, d in ipairs(night.deaths) do
 end
 check("the later pull sits well into the night", lateDeath and lateDeath.t > 30, true)
 local rows = Wrekkit.report:DeathRecap(lateDeath)
-local _, _, secs = string.find(rows[1].label, "^%-(%d+%.%d)s")
+-- The first event, past the summary lines.
+local _, _, secs = string.find((function()
+  for _, r in ipairs(rows) do if r.kind ~= "sum" then return r.label end end
+  return ""
+end)(), "^%-(%d+%.%d)s")
 check("a later pull's recap is timed from its own death", tonumber(secs), 1, 0.01)
+
+-- The last 10 seconds, all of it: the heals that reached them and the hits
+-- they avoided, not only the hits that landed -- and a summary on top.
+;(function()
+  Wrekkit.ResetData("all")
+  IN_COMBAT = true
+  fire("PLAYER_REGEN_DISABLED")
+  local E = Wrekkit.encounter
+  E:Damage("0xBoss", "0xP1", 0, 300, {})          -- 11s before: past the window
+  advance(6)
+  E:Heal("0xP2", "0xP1", 2061, 500, 100, {})
+  advance(1)
+  E:Miss("0xBoss", "0xP1", 0, 3)
+  advance(1)
+  E:Damage("0xBoss", "0xP1", 0, 2000, { crit = true })
+  advance(3)
+  E:Damage("0xBoss", "0xP1", 0, 900, {})
+  fire("UNIT_DIED", "0xP1")
+  local d = E.live.deaths[1]
+  check("the recap keeps the last 10 seconds", d and table.getn(d.recap), 4)
+  check("  a heal that reached them", d.recap[1].k, "h")
+  check("  with its overheal", d.recap[1].x, 100)
+  check("  a hit they avoided, and how", d.recap[2].x, "dodged")
+  check("  a crit is marked", d.recap[3].crit, true)
+  local rows = Wrekkit.report:DeathRecap(d)
+  check("summary: what killed them", rows[1].label, "Killed by Onyxia (Melee)")
+  check("summary: the damage they took", rows[2].value, Wrekkit.Short(2900))
+  check("summary: who healed them", string.find(rows[3].label, "Elfpriest " .. Wrekkit.Short(500), 1, true) ~= nil, true)
+  check("a heal reads as one", rows[4].value, "+500 (100 over)")
+  check("an avoided hit says how", rows[5].value, "dodged")
+  check("a crit says so", rows[6].value, "-2,000 crit")
+  IN_COMBAT = false
+  fire("PLAYER_REGEN_ENABLED")
+end)()
 
 Wrekkit.ResetData("all")
 end

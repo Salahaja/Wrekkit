@@ -66,6 +66,7 @@ local HELP = {
   { "/wrek channel <chan>", "auto | raid | party | guild" },
   { "/wrek request", "look for other Wrekkit users" },
   { "/wrek announce [chan]", "post what is on screen to chat (asks first)" },
+  { "/wrek export [consumes] [copy]", "save what is on screen (or the consumables list) to a file" },
   { "/wrek threat", "show or hide the threat window" },
   { "/wrek threat <where>", "window | docked | meter | off" },
   { "/wrek threat tank", "I'm the tank: auto, always, never (cycles)" },
@@ -299,6 +300,22 @@ local function handler(msg)
 
   elseif cmd == "request" then
     W.sync:Discover(channelArg(a[2]))
+
+  elseif cmd == "export" then
+    -- What is on screen, or its pulls' consumables list; to a file under
+    -- CustomData\, or "copy" for the box to copy from.
+    local ctx = announceContext()
+    local which, how = "shown", "file"
+    for i = 2, table.getn(a) do
+      local w = string.lower(a[i] or "")
+      if w == "consumes" or w == "consumables" then which = "consumes" end
+      if w == "copy" then how = "copy" end
+    end
+    if which == "shown" and ctx.metric == "threat" then
+      W.Print("threat is live; switch the meter to a recorded metric to export it.")
+      return
+    end
+    W.export:Run(ctx, which, how)
 
   elseif cmd == "announce" or cmd == "post" then
     --[[ Announces whatever is on screen, and always through the

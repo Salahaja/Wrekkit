@@ -946,6 +946,7 @@ function M:WindowMenu(anchor)
     { text = "Full report", value = "report" },
     { text = "Threat window", value = "threat", checked = threatShown },
     { text = "Announce to chat...", value = "announce" },
+    { text = "Export...", value = "export" },
     { text = "Meter", header = true },
     { text = "Compact", value = "compact", checked = s.compact == true },
     { text = "Toolbar", value = "toolbar", checked = s.showToolbar ~= false },
@@ -971,6 +972,8 @@ function M:WindowMenu(anchor)
         return
       end
       UI.AnnounceMenu(self.frame, anchor, M:AnnounceContext())
+    elseif value == "export" then
+      UI.ExportMenu(self.frame, anchor, M:AnnounceContext())
     elseif value == "threat" then
       if threatShown then
         UI.threat:SetDisplay("off")
@@ -1404,7 +1407,8 @@ function M:RenderView(pane, view, segLabel, key)
       local color = W.ClassColor(target.class)
       out.seg = (target.name or "?") .. " - " .. W.Clock(target.t or 0)
       list:SetData(W.report:DeathRecap(target), function(row, st, i)
-        row:SetData(nil, st.label, st.value, st.note or "", 0, color, 52)
+        local label = (st.kind == "sum") and ("|cffe0a22c" .. st.label .. "|r") or st.label
+        row:SetData(nil, label, W.report.RecapValue(st), st.note or "", 0, color, 52)
         row.tip = nil
         clicks(row, back)
       end)

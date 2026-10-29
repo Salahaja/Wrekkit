@@ -320,14 +320,17 @@ function A:DeathLines(ctx, view, count)
           target.encounter or ctx.label or "?"),
       }
       local recap = W.report:DeathRecap(target)
-      local first = table.getn(recap) - count + 1
-      if first < 1 then first = 1 end
-      for i = first, table.getn(recap) do
-        local st = recap[i]
+      local events = {}
+      for _, st in ipairs(recap) do
         local note = (st.note and st.note ~= "") and ("  (" .. st.note .. ")") or ""
         local value = (st.value and st.value ~= "") and ("  " .. st.value) or ""
-        table.insert(out, "  " .. st.label .. value .. note)
+        local line = "  " .. st.label .. value .. note
+        -- The summary always goes; of the events, the last `count`.
+        if st.kind == "sum" then table.insert(out, line) else table.insert(events, line) end
       end
+      local first = table.getn(events) - count + 1
+      if first < 1 then first = 1 end
+      for i = first, table.getn(events) do table.insert(out, events[i]) end
       return out
     end
   end
@@ -350,9 +353,10 @@ function A:DeathLines(ctx, view, count)
   return out
 end
 
-function A:Lines(ctx, count)
+--- `cap` raises the MAX_LINES ceiling, for an export: a file is not chat.
+function A:Lines(ctx, count, cap)
   count = count or (W.db and W.db.announceCount) or 5
-  if count > MAX_LINES then count = MAX_LINES end
+  if count > (cap or MAX_LINES) then count = cap or MAX_LINES end
   if count < 1 then count = 1 end
 
   local encounters = ctx.encounters or {}

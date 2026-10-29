@@ -484,11 +484,22 @@ function R:Create()
   end)
   self.announceBtn = announceBtn
 
+  -- The pulls picked, out of the game: a text file for Discord, the
+  -- consumables list for the officers, a box to copy from, a screenshot.
+  local exportBtn = UI.Button(header, "Export", 52, 18, nil)
+  exportBtn:SetPoint("RIGHT", announceBtn, "LEFT", -4, 0)
+  exportBtn:SetScript("OnClick", function()
+    W.Guard("export click", function()
+      UI.ExportMenu(R.frame, exportBtn, R:AnnounceContext())
+    end)
+  end)
+  self.exportBtn = exportBtn
+
   -- Other people's logs: browse who is sharing and pull from them.
   local peersBtn = UI.Button(header, "Shared", 52, 18, function()
     W.Guard("open peers", function() UI.peers:Toggle() end)
   end)
-  peersBtn:SetPoint("RIGHT", announceBtn, "LEFT", -4, 0)
+  peersBtn:SetPoint("RIGHT", exportBtn, "LEFT", -4, 0)
   self.peersBtn = peersBtn
 
   ------------------------------------------------------------------
@@ -561,6 +572,13 @@ function R:Create()
   chart:SetHeight(170)
   chart.onToggle = function() R:RefreshChart() end
   self.chart = chart
+  -- A death on the timeline, clicked: the Deaths tab, open on its recap.
+  chart.onDeathClick = function(d)
+    R.state.tab = "deaths"
+    R.state.drill, R.state.contribDrill = nil, nil
+    R.state.deathDrill = d.deathKey or W.report.DeathKey(d)
+    R:Refresh()
+  end
 
   local leftPane, leftList, leftTitle = self:MakeTablePane(content, "Damage Done")
   leftPane:SetPoint("TOPLEFT", chart, "BOTTOMLEFT", 0, -8)
@@ -900,6 +918,8 @@ function R:RefreshChart(view)
     for i, d in ipairs(view.deaths) do
       local c = {}
       for k, v in pairs(d) do c[k] = v end
+      -- Keyed before it moves, so a click finds the death in the view.
+      c.deathKey = W.report.DeathKey(d)
       c.t = (d.t or 0) - base
       deaths[i] = c
     end
@@ -1157,7 +1177,8 @@ function R:FillDeaths(view)
         (target.name or "?") .. " died at " .. W.Clock(target.t or 0))
       self.mainPane.totalText:SetText("click to go back")
       self.mainList:SetData(W.report:DeathRecap(target), function(row, st, i)
-        row:SetData(nil, st.label, st.value, st.note or "", 0,
+        local label = (st.kind == "sum") and ("|cffe0a22c" .. st.label .. "|r") or st.label
+        row:SetData(nil, label, W.report.RecapValue(st), st.note or "", 0,
           W.ClassColor(target.class), 110)
         row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
         row:SetScript("OnClick", function()

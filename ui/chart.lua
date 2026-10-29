@@ -352,6 +352,25 @@ function UI.Chart(parent)
     return sec, x
   end
 
+  --[[ The death under the cursor: the nearest marker within DEATH_REACH
+       pixels. A marker is a 1px line, and a second can be under a pixel
+       wide on a long pull, so "this second" alone would make it a target
+       nobody could hit. ]]
+  local DEATH_REACH = 6
+  function c:DeathAt()
+    local sec, x = self:SecondAt()
+    if not sec then return nil end
+    local w = plot:GetWidth() or 0
+    local n = self.sampleCount or 0
+    if w <= 0 or n <= 0 then return nil end
+    local best, bestD
+    for _, d in ipairs(self.deaths or {}) do
+      local dx = math.abs((d.t or 0) / n * w - x)
+      if dx <= DEATH_REACH and (not bestD or dx < bestD) then best, bestD = d, dx end
+    end
+    return best
+  end
+
   function c:ShowReadout()
     local sec, x = self:SecondAt()
     if not sec then
@@ -382,12 +401,17 @@ function UI.Chart(parent)
       GameTooltip:AddLine("nothing happening", 0.6, 0.6, 0.6)
     end
 
-    -- Who died in this second, since that is the question a marker raises.
+    -- Who died here, since that is the question a marker raises -- and
+    -- that a click says how.
+    local near = self:DeathAt()
     for _, d in ipairs(self.deaths or {}) do
-      if math.floor(d.t or 0) == sec then
+      if d == near or math.floor(d.t or 0) == sec then
         GameTooltip:AddLine((d.name or "?") .. " died",
           W.color.death[1], W.color.death[2], W.color.death[3])
       end
+    end
+    if near and self.onDeathClick then
+      GameTooltip:AddLine("Click: " .. (near.name or "?") .. "'s death recap", 0.62, 0.65, 0.72)
     end
 
     --[[ What actually happened, which is the question a spike raises. Only
@@ -428,6 +452,12 @@ function UI.Chart(parent)
   end
 
   hit:SetScript("OnEnter", function() c:ShowReadout() end)
+  -- A death marker clicked: whoever shows the chart opens its recap.
+  hit:RegisterForClicks("LeftButtonUp")
+  hit:SetScript("OnClick", function()
+    local d = c:DeathAt()
+    if d and c.onDeathClick then W.Guard("death recap", function() c.onDeathClick(d) end) end
+  end)
   hit:SetScript("OnUpdate", function()
     -- IsVisible, not IsShown: IsShown reports this frame's own flag only, so
     -- a child of a hidden window still answers true and this would keep

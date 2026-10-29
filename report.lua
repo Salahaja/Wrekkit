@@ -405,6 +405,7 @@ function R:View(encounters, opts)
         -- Carried through, or clicking a death in the report finds nothing
         -- to show: the window reads the view, not the encounter behind it.
         recap = d.recap,
+        hpMax = d.hpMax,
         -- The death time within its own pull. t above is shifted onto the
         -- session timeline, which is right for the chart and wrong for
         -- measuring the recap lines against.
@@ -703,6 +704,17 @@ function R:ContribEffects(view, filter)
   return out
 end
 
+--- Every player in the view the filter lets through, by name: the
+--- consumables export lists the ones who used nothing too.
+function R:Players(view, filter)
+  local out = {}
+  for _, row in ipairs(view.rows or {}) do
+    if row.isPlayer and matches(row, filter) then table.insert(out, row) end
+  end
+  table.sort(out, function(a, b) return (a.name or "") < (b.name or "") end)
+  return out
+end
+
 --- What a support effect's number counts: mana for Wisdom, else healing.
 function R.EffectUnit(e)
   if not e or e.kind ~= "support" then return "" end
@@ -716,6 +728,15 @@ function R:DeathList(view)
   for _, d in ipairs(view.deaths or {}) do table.insert(out, d) end
   table.sort(out, function(a, b) return (a.t or 0) < (b.t or 0) end)
   return out
+end
+
+--- A recap row's value, coloured for the windows (never for chat): hits
+--- red, heals green, avoided grey, the summary in the accent.
+local RECAP_HUE = { d = "ff6b6b", h = "5fd36a", m = "9d9d9d", sum = "e0a22c" }
+function R.RecapValue(st)
+  local hue = st and RECAP_HUE[st.kind or ""]
+  if not hue or not st.value or st.value == "" then return st and st.value or "" end
+  return "|cff" .. hue .. st.value .. "|r"
 end
 
 --- One death, by a key that survives the view being rebuilt.
@@ -892,6 +913,24 @@ end
      name first when asked what they use.
 
      Oldest first, so it reads as a sequence rather than a list. ]]
+local function sharesText(by, order, total)
+  table.sort(order, function(x, y) return by[x] > by[y] end)
+  local parts = {}
+  for i = 1, 3 do
+    local who = order[i]
+    if not who then break end
+    table.insert(parts, who .. " " .. W.Short(by[who]))
+  end
+  if table.getn(order) > 3 then table.insert(parts, "+" .. (table.getn(order) - 3) .. " more") end
+  return table.concat(parts, ", ")
+end
+
+--[[ Rows open with what the seconds add up to (kind "sum"): what killed
+     them, the damage they took and from whom, the healing that reached
+     them and from whom -- "how did they die" in three lines, before the
+     sequence that shows it. Then every event (kind "d" a hit, "h" a heal,
+     "m" a hit they avoided), each with their health after it. Recaps saved
+     before heals were kept read as hits, which is all they held. ]]
 function R:DeathRecap(death)
   local rows = {}
   if not death then return rows end
@@ -901,16 +940,70 @@ function R:DeathRecap(death)
   -- death's time in that same pull -- never its session timeline time,
   -- which is off by however far into the night the pull was.
   local last = death.encT or death.t or 0
-  for _, e in ipairs(death.recap or {}) do
+  local recap = death.recap or {}
+  local function hpText(hp)
+    if not hp then return nil end
+    local max = death.hpMax
+    if max and max > 0 then return string.format("hp %s (%d%%)", W.Short(hp), math.floor(hp / max * 100 + 0.5)) end
+    return "hp " .. W.Short(hp)
+  end
+
+  local killer
+  local took, healed, span = 0, 0, 0
+  local dmgBy, dmgOrder, healBy, healOrder = {}, {}, {}, {}
+  for _, e in ipairs(recap) do
+    local kind = e.k or "d"
+    local who = e.src or "?"
+    local ago = e.ago or (last - (e.t or 0))
+    if ago > span then span = ago end
+    if kind == "d" then
+      killer = e
+      took = took + (e.a or 0)
+      if not dmgBy[who] then dmgBy[who] = 0 table.insert(dmgOrder, who) end
+      dmgBy[who] = dmgBy[who] + (e.a or 0)
+    elseif kind == "h" and (e.a or 0) > 0 then
+      healed = healed + e.a
+      if not healBy[who] then healBy[who] = 0 table.insert(healOrder, who) end
+      healBy[who] = healBy[who] + e.a
+    end
+  end
+  local secs = string.format("%.0fs", math.ceil(span))
+  if killer then
+    local what = killer.src or "?"
+    if killer.spell and killer.spell ~= "" then what = what .. " (" .. killer.spell .. ")" end
+    table.insert(rows, { kind = "sum", label = "Killed by " .. what, value = W.Comma(killer.a or 0) })
+    table.insert(rows, { kind = "sum", label = "Took in the last " .. secs .. ": " .. sharesText(dmgBy, dmgOrder),
+                         value = W.Short(took) })
+    if healed > 0 then
+      table.insert(rows, { kind = "sum", label = "Healed in the last " .. secs .. ": " .. sharesText(healBy, healOrder),
+                           value = W.Short(healed) })
+    else
+      table.insert(rows, { kind = "sum", label = "No healing reached them in the last " .. secs, value = "0" })
+    end
+  end
+
+  for _, e in ipairs(recap) do
+    local kind = e.k or "d"
     local ago = e.ago or (last - (e.t or 0))
     local who = e.src or "?"
     if e.spell and e.spell ~= "" and e.spell ~= "Melee" then
       who = who .. "  " .. e.spell
     end
+    local value
+    if kind == "h" then
+      value = "+" .. W.Comma(e.a or 0)
+      if (e.x or 0) > 0 then value = value .. " (" .. W.Short(e.x) .. " over)" end
+    elseif kind == "m" then
+      value = e.x or "missed"
+    else
+      value = "-" .. W.Comma(e.a or 0)
+    end
+    if e.crit then value = value .. " crit" end
     table.insert(rows, {
+      kind = kind,
       label = string.format("-%.1fs  %s", ago, who),
-      value = W.Comma(e.a or 0),
-      note = e.hp and ("hp " .. W.Short(e.hp)) or nil,
+      value = value,
+      note = hpText(e.hp),
     })
   end
 
