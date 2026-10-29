@@ -1716,14 +1716,26 @@ end
      left side cut to its letters before the total, rather than running
      under it. ]]
 function M:FillHead(head, o, segLabel)
-  local narrow = UI.FrameWidth(head) < 200 * UI.FontScale()
+  local width = UI.FrameWidth(head)
+  local narrow = width < 200 * UI.FontScale()
   local where = (o.seg ~= segLabel) and ("  |cff9d9d9d" .. o.seg .. "|r") or ""
   local label = narrow and ((o.short or o.title) .. ((o.seg ~= segLabel) and (" " .. o.seg) or ""))
     or (o.title .. where)
-  head.right:SetText(o.footR or "")
+  --[[ The total, in a header, is the figure alone: drilled in, the footer's
+       "2.18M  (click one for detail)" left the label no room at all -- and
+       with none, it was not cut, so the two ran into each other and the
+       half beside. Short of room even so, the total gives way. ]]
+  local right = o.footR or ""
+  local _, _, figure = string.find(right, "^(.-)  %(")
+  if figure then right = figure end
+  head.right:SetText(right)
   head.label:SetText(label)
-  local room = UI.FrameWidth(head) - 12 - UI.FullTextWidth(head.right, o.footR or "") - 6
-  if room > 0 then UI.FitName(head.label, label, room) end
+  local room = width - 12 - UI.FullTextWidth(head.right, right) - 6
+  if room < 30 then
+    head.right:SetText("")
+    room = width - 12
+  end
+  if room > 0 then UI.FitName(head.label, label, room) else head.label:SetText("") end
 end
 
 --[[ The meter as a threat meter: the same rows the threat window draws,

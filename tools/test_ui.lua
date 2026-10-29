@@ -4006,6 +4006,30 @@ step("meter: compact, it goes down to 120 with a short title and tight rows", fu
   if fail then error(fail) end
 end)
 
+step("meter split: a half's header stays inside it, drilled in or not", function()
+  local M = UI.meter
+  local head = M.head1
+  local was = head:GetWidth()
+  head:SetWidth(200)
+  local o = { title = "Damage Done", short = "DMG", seg = "Salahaja - All Session",
+              footR = "2.18M  (click one for detail)" }
+  M:FillHead(head, o, "All Session")
+  local label, right = head.label:GetText() or "", head.right:GetText() or ""
+  local fail
+  if right ~= "2.18M" then fail = "the drilled header's total reads '" .. right .. "'" end
+  if not fail and UI.FullTextWidth(head.label, label) + UI.FullTextWidth(head.right, right) + 18 > 200 then
+    fail = "the header's label and total run past its 200px: " .. label .. " / " .. right
+  end
+  if not fail and label == "" then fail = "the label was dropped with room to spare" end
+  -- Barely any room: the label keeps it, the total goes.
+  head:SetWidth(60)
+  M:FillHead(head, o, "All Session")
+  if not fail and (head.right:GetText() or "") ~= "" then fail = "at 60px the total stayed over the label" end
+  if not fail and UI.FullTextWidth(head.label, head.label:GetText()) > 48 then fail = "at 60px the label runs out" end
+  head:SetWidth(was)
+  if fail then error(fail) end
+end)
+
 step("meter: compact drops the emblem, and its split goes narrow too", function()
   local M = UI.meter
   local s = M:Settings()
