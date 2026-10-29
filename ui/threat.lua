@@ -322,8 +322,12 @@ function TW.Paint(row, item, index)
   local sub = r.tank and "tank" or T.PctText(item.shown)
   local subW = tight and 30 or 40
   if tight and s.showTPS then
-    sub = W.Short(r.tps or 0) .. "/s"
-    subW = 36
+    -- Short on a narrow row: "1.9k/s", "850/s".
+    local tps = r.tps or 0
+    if tps >= 10000 then sub = string.format("%.0fk/s", tps / 1000)
+    elseif tps >= 1000 then sub = string.format("%.1fk/s", tps / 1000)
+    else sub = string.format("%.0f/s", tps) end
+    subW = 34
     value = row._shortValue or ""
     if r.tank then name = "|cff5a9bff" .. name .. "|r" end
   end

@@ -1315,7 +1315,16 @@ function UI.Row(parent, height)
     local scale = (W.db and W.db.fontScale) or 1
     if self._list and self._list._textScale then scale = scale * self._list._textScale() end
     local subW = math.ceil((subWidth or 64) * scale)
+    --[[ A list whose second column is the point of it (_keepSub: the
+         threat window's rate or %) gives it the width its text needs, and
+         it is one line tall either way: given less, "1.85k/s" wrapped onto
+         two lines of the row. ]]
+    if self._list and self._list._keepSub then
+      local need = math.ceil(UI.FullTextWidth(self.sub, sub or "")) + 2
+      if need > subW then subW = need end
+    end
     self.sub:SetWidth(subW)
+    self.sub:SetHeight(self:GetHeight() or 18)
 
     --[[ The row's width, from its list when it has one. A list re-anchors
          its rows when the row height changes -- which the stretched row

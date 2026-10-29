@@ -4115,6 +4115,15 @@ step("threat: narrow, a row is its name, its threat per second and its bar", fun
   if not fail and math.abs((row.bar:GetWidth() or 0) - 0.69 * 110) > 2 then
     fail = "the bar is not how close they are: " .. tostring(row.bar:GetWidth())
   end
+  -- A rate past a thousand, short, and on one line in a column as wide.
+  item.row.tps = 1850
+  list:SetData({ item }, UI.threat.Paint)
+  if not fail and row.sub:GetText() ~= "1.9k/s" then fail = "1850/s reads " .. tostring(row.sub:GetText()) end
+  if not fail and (row.sub:GetWidth() or 0) < UI.FullTextWidth(row.sub, row.sub:GetText()) then
+    fail = "the rate's column is narrower than the rate: it wraps"
+  end
+  if not fail and (row.sub:GetHeight() or 0) > (row:GetHeight() or 18) then fail = "the rate's column is taller than a line" end
+  item.row.tps = 450
   -- With threat per second off, the % comes back.
   st.showTPS = false
   list:SetData({ item }, UI.threat.Paint)
