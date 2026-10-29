@@ -110,7 +110,7 @@ declare(FRAMEXML, [[
   DEFAULT_CHAT_FRAME GameTooltip SlashCmdList StaticPopupDialogs
   StaticPopup_Show UISpecialFrames
   UNKNOWN MouseIsOver RaidWarningFrame IsMouseButtonDown
-  ColorPickerFrame
+  ColorPickerFrame Screenshot TakeScreenshot
 ]])
 
 declare(SUPER, [[
@@ -644,6 +644,12 @@ end
 
 step("initialise", function()
   WrekkitDB = nil
+  --[[ Every warning, alert, flash and popup is off by default for players
+       (threat.lua); this drives them all, so it runs with them on --
+       through the defaults, so a scenario's ResetSettings keeps them. ]]
+  local d = W.threat.defaults
+  d.warnText, d.warnSound, d.raidWarning, d.warnPulled = true, true, true, true
+  d.tankAlerts, d.warnLostAggro, d.flash, d.flashFrame, d.tauntPopup = true, true, true, true, true
   W.InitDB()
   if (os.getenv("WREKKIT_SKIN") or "") ~= "" then
     W.db.skin = os.getenv("WREKKIT_SKIN")
@@ -896,7 +902,8 @@ step("threat meter", function()
               "#TMTv1=Onyxia:43981:Fuff:97;Whelp:12:Elfpriest:80;Drake:13:Fuff:40;")
   if not T.tankMobs[43981] then error("tank mode section was not read") end
   local _, _, _, text = T:Display(T:Live())
-  if text ~= "88%" then error("a tank should see the runner-up at 97/110 = 88%, got " .. tostring(text)) end
+  -- The runner-up at 97/110 = 88% to pulling: a tank's hold is the 12% left.
+  if text ~= "12%" then error("a tank should see a 12% hold (runner-up at 88%), got " .. tostring(text)) end
   local closing = false
   for _, a in ipairs(alerts) do
     if string.find(a, "Fuff at 88%", 1, true) then closing = true end
@@ -905,7 +912,8 @@ step("threat meter", function()
 
   -- Another mob's plate, named only by tank mode's low 16 bits (0x000C).
   local _, _, _, whelp = T:ForMob("0xF00000000000000C", "0xF00000000000000C")
-  if whelp ~= "73%" then error("tank mode did not reach another mob's plate: " .. tostring(whelp)) end
+  -- Elfpriest at 80/110 = 73% to pulling it: the tank's hold is 27%.
+  if whelp ~= "27%" then error("tank mode did not reach another mob's plate: " .. tostring(whelp)) end
   UI.threat:Refresh()
   local mobRows = 0
   for _, it in ipairs(UI.threat.list.data) do
@@ -1598,7 +1606,8 @@ step("threat meter", function()
     end
   end
   if marked ~= 1 then error(marked .. " rows marked as the target, not 1") end
-  if drake2pct ~= "88%" then error("a held mob's row shows " .. tostring(drake2pct) .. ", not its 88% share") end
+  -- Fuff 80% of the way to pulling it: a 20% hold.
+  if drake2pct ~= "20%" then error("a held mob's row shows " .. tostring(drake2pct) .. ", not the 20% hold") end
   -- Collapsed, the target keeps its row even when nothing is wrong with it.
   T:Settings().mobFramesCollapse = "always"
   UI.mobs.lastUpdate = nil

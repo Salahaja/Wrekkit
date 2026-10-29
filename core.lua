@@ -312,12 +312,15 @@ function W.SanitizeDB(db)
       "current")
     -- A metric that no longer exists would fall back to damage while the
     -- menu ticked nothing; name it outright instead.
-    if m.metric ~= "threat" and not (W.metrics and W.metrics.byKey and W.metrics.byKey[m.metric]) then
+    -- The meter's own views (ui/meter.lua M.VIEWS) are not metrics either.
+    local views = { threat = true, contribFx = true, deathLog = true }
+    if not views[m.metric] and not (W.metrics and W.metrics.byKey and W.metrics.byKey[m.metric]) then
       m.metric = "damage"
     end
     if type(m.search) ~= "string" then m.search = "" end
     if type(m.window) == "table" then
-      clampSetting(m.window, "w", 260, 2000, 260)
+      -- 120 is a compact meter's floor (ui/meter.lua widens a full one).
+      clampSetting(m.window, "w", 120, 2000, 260)
       clampSetting(m.window, "h", 110, 2000, 200)
     end
   end
@@ -447,6 +450,6 @@ end
 function W.ScheduleFinish(delay)
   W.After(delay, function()
     local E = W.encounter
-    if E.live and not E.inCombat then E:Finish() end
+    if E.live and not E.inCombat then E:Finish(nil, true) end
   end, "finish")
 end

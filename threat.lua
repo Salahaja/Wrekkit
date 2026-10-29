@@ -63,7 +63,8 @@ T.PULL_MELEE = 110
 T.PULL_RANGED = 130
 
 local TPS_WINDOW = 10     -- seconds threat-per-second looks back
-local TPS_SLOTS = 24      -- readings kept per player for it
+local TPS_SLOTS = 128     -- readings kept per player: a minute at the 0.5s
+                          -- default, for the time to pull aggro (steadyRate)
 local STALE = 3           -- a reading older than this is not current
 local LOST_SHOW = 4       -- seconds a lost mob's plate says so
 local REARM = 5           -- points below a line before it can warn again
@@ -89,29 +90,39 @@ T.defaults = {
   showThreat = true,
   showTPS = true,
   showPullLine = true,
+  textScale = 100,         -- the threat window's text, % of Wrekkit's text size
+  hideTitle = false,       -- no title bar: the mob and its tank go in the footer
+  pinMe = false,           -- your own row first, wherever your threat puts you
+  showETA = false,         -- seconds until a player pulls aggro, at the current rates
+  etaWindow = 20,          -- ... the rates averaged over this many seconds
+  etaWho = "all",          -- ... "me": on your row only; "all": every player's
   locked = false,
   opacity = 1.0,
   window = { point = "CENTER", x = -320, y = -180, w = 240, h = 170 },
 
   -- warnings, damage dealers and healers
-  warnText = true,
+  --[[ Every warning, alert, flash and popup is off until asked for: the
+       meter and the % say how close you are, and a screen that talks,
+       beeps and flashes by itself is one people turn the addon off over.
+       Each is one tick in Settings > Threat. ]]
+  warnText = false,
   warnFlash = false,       -- flash the screen edges with each warning (opt-in)
-  warnSound = true,
-  raidWarning = true,      -- danger warnings also as a raid warning, on this screen only
-  warnPulled = true,       -- you took aggro off the tank
+  warnSound = false,
+  raidWarning = false,     -- danger warnings also as a raid warning, on this screen only
+  warnPulled = false,      -- you took aggro off the tank
   textSize = 26,
 
   -- warnings, tanks
-  tankAlerts = true,       -- someone is closing in on a mob you hold
+  tankAlerts = false,      -- someone is closing in on a mob you hold
   tankWarnAt = 85,         -- ... at this % of the way to pulling it
-  warnLostAggro = true,    -- a mob you held turned to someone else
+  warnLostAggro = false,   -- a mob you held turned to someone else
 
   -- flashing: keeps going for as long as the danger lasts, unlike the
   -- warnings above, which say it once
-  flash = true,
+  flash = false,
   flashAt = 85,            -- you, at this % to pull (or a mob on you)
   tankFlashAt = 90,        -- tanking: the runner-up on any mob you hold
-  flashFrame = true,       -- blink the target-frame %
+  flashFrame = false,      -- blink the target-frame %
   flashScreen = false,     -- pulse the screen edges as well
   flashSpeed = 3,          -- blinks a second
   edgeWidth = 30,          -- how far the screen-edge flash reaches in, px
@@ -127,7 +138,7 @@ T.defaults = {
                            -- otherwise: be warned by a tank's relay
 
   -- taunting
-  tauntPopup = true,       -- a button to click when a mob gets away
+  tauntPopup = false,      -- a button to click when a mob gets away (opt-in)
   tauntSpell = "",         -- empty: the class's own (T.TAUNT_DEFAULTS);
                            -- else names, comma-separated, best first
   tauntAoE = false,        -- also fall back to Challenging Shout / Roar
@@ -217,6 +228,7 @@ function T:Sanitize(s)
   if s.tankMode == true then s.tankMode = "on" elseif s.tankMode == false then s.tankMode = "auto" end
   s.tankMode = oneOf(s.tankMode, { "auto", "on", "off" }, d.tankMode)
   s.basis = oneOf(s.basis, { "pull", "tank" }, d.basis)
+  s.etaWho = oneOf(s.etaWho, { "me", "all" }, d.etaWho)
   s.display = oneOf(s.display, { "window", "docked", "meter", "off" }, d.display)
   s.show = oneOf(s.show, { "always", "group", "combat" }, d.show)
   s.frameStyle = oneOf(s.frameStyle, { "clean", "number", "badge" }, d.frameStyle)
@@ -230,6 +242,8 @@ function T:Sanitize(s)
   s.plateStyle = oneOf(s.plateStyle, { "auto", "shagu", "stock" }, d.plateStyle)
   s.interval = clamp(s.interval, 0.25, 2, d.interval)
   s.rows = math.floor(clamp(s.rows, 3, 20, d.rows))
+  s.textScale = clamp(s.textScale, 70, 180, d.textScale)
+  s.etaWindow = clamp(s.etaWindow, 10, 60, d.etaWindow)
   s.warnAt = clamp(s.warnAt, 10, 150, d.warnAt)
   s.dangerAt = clamp(s.dangerAt, 10, 150, d.dangerAt)
   -- A danger line below the warning line would skip the warning entirely.
@@ -282,7 +296,9 @@ function T:Sanitize(s)
   s.lastWindow = oneOf(s.lastWindow, { "window", "docked" }, "docked")
   if type(s.window) ~= "table" then s.window = {} end
   local w = s.window
-  w.w = clamp(w.w, 180, 2000, d.window.w)
+  -- 90 is for a window with no title bar (ui/threat.lua widens it to 120
+  -- when the bar comes back).
+  w.w = clamp(w.w, 90, 2000, d.window.w)
   w.h = clamp(w.h, 80, 2000, d.window.h)
   if type(w.point) ~= "string" then w.point = d.window.point end
   w.x = tonumber(w.x) or d.window.x
@@ -603,6 +619,7 @@ local function tps(r, threat, now)
   end
   if not oldest then return 0 end
   local dt = now - ts[oldest]
+  r.span = dt
   if dt <= 0 then return 0 end
   local v = (threat - vs[oldest]) / dt
   if v < 0 then v = 0 end
@@ -615,6 +632,73 @@ function T.PullPercent(row)
   if row.tank then return 100 end
   local line = row.melee and T.PULL_MELEE or T.PULL_RANGED
   return (row.perc or 0) / line * 100
+end
+
+--[[ A steadier rate, for the time to pull aggro: the threat gained over
+     the last `window` seconds, over how long that was -- and the seconds
+     it covers.
+
+     Threat comes in lumps -- a crit, an Execute, a Searing Pain -- and one
+     moves a rate by its size over the window. The per-second figure (tps)
+     looks back ten seconds, and the time to pull divides by the small
+     difference of two such rates, so one crit could halve it. Over 20
+     seconds the same crit moves it half as much, over 30 a third.
+
+     First reading to last on purpose, not a line fitted through them all:
+     threat is a running total, so its gains are what is random, and their
+     plain sum is the steadiest rate there is. A fitted line weighs the
+     newest readings least, so it is both noisier and slower to see a
+     cooldown go up. ]]
+local function steadyRate(r, window)
+  local n, ts, vs = r.hn or 0, r.ts, r.vs
+  if not ts or n < 2 then return 0, 0 end
+  local now = ts[r.hi]
+  local oldest
+  for k = 1, n do
+    local t = ts[k]
+    if now - t <= window and (not oldest or t < ts[oldest]) then oldest = k end
+  end
+  if not oldest then return 0, 0 end
+  local span = now - ts[oldest]
+  if span <= 0 then return 0, 0 end
+  local v = (vs[r.hi] - vs[oldest]) / span
+  if v < 0 then v = 0 end
+  return v, span
+end
+T.SteadyRate = steadyRate
+
+-- A row's rate for the time to pull: fitted when it has readings; a row
+-- built without them (the preview) says its own.
+local function etaRate(r, window)
+  if r.ts and (r.hn or 0) >= 2 then return steadyRate(r, window) end
+  return r.tps or 0, r.span or 0
+end
+
+--[[ Seconds until a player pulls aggro off the tank, if both keep going as
+     they have over the last etaWindow seconds (steadyRate): the threat
+     still between them and the line (110% of the tank in melee, 130% at
+     range), over how fast they are closing on it. The line moves too -- it
+     is a share of the tank's threat, so it climbs at that share of the
+     tank's rate.
+
+     nil when they are not closing in (or are past it already), when either
+     has too little history to have a rate (ETA_SPAN), and past ETA_MAX,
+     where a rate says nothing yet. ]]
+local ETA_SPAN = 6
+local ETA_MAX = 60
+function T.PullETA(row, tank)
+  if not row or not tank or row.tank or row == tank then return nil end
+  local window = T:Settings().etaWindow or 20
+  local rowRate, rowSpan = etaRate(row, window)
+  local tankRate, tankSpan = etaRate(tank, window)
+  if rowSpan < ETA_SPAN or tankSpan < ETA_SPAN then return nil end
+  local line = (row.melee and T.PULL_MELEE or T.PULL_RANGED) / 100
+  local gap = line * (tank.threat or 0) - (row.threat or 0)
+  local closing = rowRate - line * tankRate
+  if gap <= 0 or closing <= 0 then return nil end
+  local secs = gap / closing
+  if secs > ETA_MAX then return nil end
+  return secs
 end
 
 --- The percentage a setting asked to see, for one row.
@@ -1255,6 +1339,16 @@ function T:Runner(cur)
   return nil
 end
 
+--[[ A tank's hold on a mob: 100% while nobody is near, falling as the
+     closest player catches up, 0% when they pull it -- read like a health
+     bar. It was the runner-up's own % to pulling, so a mob held safely
+     read 0% and looked like the one you had no threat on. ]]
+function T.Hold(runnerPull)
+  local h = 100 - (runnerPull or 0)
+  if h < 0 then h = 0 elseif h > 100 then h = 100 end
+  return h
+end
+
 --- Colour for a mob a tank holds, by how close the runner-up is.
 function T:TankColor(runnerPull)
   local s = self:Settings()
@@ -1265,10 +1359,11 @@ end
 
 --[[ What a frame should say about a table, as pct, colour, fresh, text.
 
-     Damage dealers and healers see their own percentage. Whoever holds
-     aggro sees something else: a tank sees how close the runner-up is,
-     in the tank's blue until it gets close; anyone else holding it sees
-     AGGRO in red, because a mob on a non-tank is never good news. ]]
+     Damage dealers and healers see their own percentage, rising as they
+     near pulling. Whoever holds aggro sees something else: a tank sees
+     their hold (T.Hold), falling as the runner-up closes in, in the tank's
+     blue until it gets close; anyone else holding it sees AGGRO in red,
+     because a mob on a non-tank is never good news. ]]
 function T:Display(cur)
   local me = cur and cur.me
   if not me then return nil end
@@ -1276,7 +1371,8 @@ function T:Display(cur)
     if self:IsTank() then
       local runner = self:Runner(cur)
       local pull = runner and runner.pull or 0
-      return pull, self:TankColor(pull), true, T.PctText(pull)
+      local hold = T.Hold(pull)
+      return hold, self:TankColor(pull), true, T.PctText(hold)
     end
     return 100, RED, true, "AGGRO"
   end
@@ -1583,7 +1679,8 @@ function T:ForMob(key, guid)
 
   local tm = low and self.tankMobs[low]
   if tm and now - tm.at <= STALE then
-    return tm.pull, self:TankColor(tm.pull), true, T.PctText(tm.pull)
+    local hold = T.Hold(tm.pull)
+    return hold, self:TankColor(tm.pull), true, T.PctText(hold)
   end
 
   -- A tank's relay says you are the one closest to pulling it.

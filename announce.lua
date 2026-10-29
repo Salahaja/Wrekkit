@@ -25,6 +25,16 @@ W.announce = {}
 local A = W.announce
 
 local SEND_INTERVAL = 0.4   -- seconds between chat lines
+
+--[[ The server's flood guard: about ten messages, each sent soon after the
+     one before, and it flags you as spamming (10/28: a top 10 -- twelve
+     messages, SEND_INTERVAL apart -- set it off; ShaguDPS's report, nine
+     messages at once, never has). So a post goes out BURST messages at a
+     time, and the rest wait for BURST_PAUSE of quiet, by which time the
+     guard has let go. Joined into fewer messages (A:Pack), a post rarely
+     needs the pause. ]]
+A.BURST = 8
+A.BURST_PAUSE = 6
 local MAX_LINES = 15        -- hard ceiling regardless of what is asked for
 
 ----------------------------------------------------------------------
@@ -141,8 +151,11 @@ function A:DrillLines(ctx, view, count)
   for i = 1, count do
     local a = abilities[i]
     if not a then break end
-    table.insert(out, string.format("%d. %s  %s", i, a.name,
-      W.Short(a.amount or 0)))
+    -- As the window shows it: an ability's own figure (a hit table's
+    -- "miss 4.1%", a buff's uptime) where it has one, with its note.
+    local note = (a._note and a._note ~= "") and ("  (" .. a._note .. ")") or ""
+    table.insert(out, string.format("%d. %s  %s%s", i, a.name,
+      a._value or W.Short(a.amount or 0), a._value and note or ""))
   end
   local extra = table.getn(abilities) - count
   if extra > 0 then
@@ -169,13 +182,18 @@ local function supportUnit(name)
   return " healing"
 end
 
+--[[ What an effect's number is, in words: "22.8k" on its own in chat left
+     people asking. Raid value is the damage an effect added to everyone's
+     hits; support is the mana or healing a judgement gave back. ]]
+local function effectUnit(e)
+  if e.kind == "support" then return supportUnit(e.name) end
+  return " damage"
+end
+
 --- Every effect, damage then support, as the report's Raid Contrib tab
 --- lists them.
 local function allEffects(view, filter)
-  local out = {}
-  for _, e in ipairs(W.report:Effects(view, "value", filter)) do table.insert(out, e) end
-  for _, e in ipairs(W.report:Effects(view, "support", filter)) do table.insert(out, e) end
-  return out
+  return W.report:ContribEffects(view, filter)
 end
 
 --[[ How raid value is told: ctx.valueMode when the announcement picked one
@@ -194,17 +212,17 @@ function A:EffectLines(ctx, view, count, name)
     if e.name == name then target = e end
   end
   if not target then return nil end
-  local unit = (target.kind == "support") and supportUnit(target.name) or ""
+  local unit = effectUnit(target)
   local n = table.getn(target.players)
   local out = {
-    string.format("Wrekkit  %s - %s (%s): %s%s from %d player%s%s", target.name, ctx.label or "?",
+    string.format("Wrekkit  %s - %s (%s): added %s%s, from %d player%s%s", target.name, ctx.label or "?",
       W.Duration(view.rateBase), W.Short(target.total), unit, n, n == 1 and "" or "s", filterNote(ctx)),
   }
   for i = 1, count do
     local p = target.players[i]
     if not p then break end
     local pct = target.total > 0 and p.amount / target.total * 100 or 0
-    table.insert(out, string.format("%d. %s  %s%s (%.1f%%)", i, p.name, W.Short(p.amount), unit, pct))
+    table.insert(out, string.format("%d. %s  +%s%s (%.1f%%)", i, p.name, W.Short(p.amount), unit, pct))
   end
   if n > count then table.insert(out, string.format("  ...and %d more", n - count)) end
   if string.find(target.name, "(est.)", 1, true) then table.insert(out, "  (est.) = estimated") end
@@ -245,9 +263,12 @@ function A:ValueLines(ctx, view, count, key)
   end
 
   local individual = individualMode(ctx)
+  local what = (ctx.contrib and "what each buff, debuff and judgement added")
+    or (key == "support" and "the mana and healing judgements gave back")
+    or "the extra damage each buff and debuff added"
   local out = {
-    string.format("Wrekkit  %s by effect - %s (%s)%s", ctx.contrib and "Raid contribution" or W.metrics.Label(metric),
-      ctx.label or "?", W.Duration(view.rateBase), filterNote(ctx)),
+    string.format("Wrekkit  %s - %s (%s): %s%s", ctx.contrib and "Raid contribution" or W.metrics.Label(metric),
+      ctx.label or "?", W.Duration(view.rateBase), what, filterNote(ctx)),
   }
   if table.getn(order) == 0 then
     table.insert(out, "  nothing recorded")
@@ -259,7 +280,7 @@ function A:ValueLines(ctx, view, count, key)
     local e = order[i]
     if not e then break end
     if string.find(e.name, "(est.)", 1, true) then estimated = true end
-    local unit = (e.kind == "support") and supportUnit(e.name) or ""
+    local unit = effectUnit(e)
     local n = table.getn(e.players)
     if individual then
       local who = {}
@@ -269,10 +290,10 @@ function A:ValueLines(ctx, view, count, key)
         table.insert(who, pl.name .. " " .. W.Short(pl.amount))
       end
       if n > NAMES_PER_LINE then table.insert(who, "+" .. (n - NAMES_PER_LINE) .. " more") end
-      table.insert(out, string.format("%d. %s  %s%s: %s", i, e.name, W.Short(e.total), unit,
+      table.insert(out, string.format("%d. %s  +%s%s: %s", i, e.name, W.Short(e.total), unit,
         table.concat(who, ", ")))
     else
-      table.insert(out, string.format("%d. %s  %s%s  (%d player%s)", i, e.name, W.Short(e.total),
+      table.insert(out, string.format("%d. %s  +%s%s  (%d player%s)", i, e.name, W.Short(e.total),
         unit, n, n == 1 and "" or "s"))
     end
   end
@@ -285,9 +306,60 @@ function A:ValueLines(ctx, view, count, key)
   return out
 end
 
-function A:Lines(ctx, count)
+--[[ The death log, as the report's Deaths tab and the meter's Death log
+     show it: who died, when, in which pull. Opened on one death
+     (ctx.deathDrill), the blows before it, the killing one last -- the
+     last `count` of them. ]]
+function A:DeathLines(ctx, view, count)
+  local deaths = W.report:DeathList(view)
+  if ctx.deathDrill then
+    local target
+    for _, d in ipairs(deaths) do
+      if W.report.DeathKey(d) == ctx.deathDrill then target = d end
+    end
+    if target then
+      local out = {
+        string.format("Wrekkit  %s died at %s - %s", target.name or "?", W.Clock(target.t or 0),
+          target.encounter or ctx.label or "?"),
+      }
+      local recap = W.report:DeathRecap(target)
+      local events = {}
+      for _, st in ipairs(recap) do
+        local note = (st.note and st.note ~= "") and ("  (" .. st.note .. ")") or ""
+        local value = (st.value and st.value ~= "") and ("  " .. st.value) or ""
+        local line = "  " .. st.label .. value .. note
+        -- The summary always goes; of the events, the last `count`.
+        if st.kind == "sum" then table.insert(out, line) else table.insert(events, line) end
+      end
+      local first = table.getn(events) - count + 1
+      if first < 1 then first = 1 end
+      for i = first, table.getn(events) do table.insert(out, events[i]) end
+      return out
+    end
+  end
+
+  local n = table.getn(deaths)
+  local out = {
+    string.format("Wrekkit  Deaths - %s: %d", ctx.label or "?", n),
+  }
+  if n == 0 then
+    table.insert(out, "  nobody died")
+    return out
+  end
+  for i = 1, count do
+    local d = deaths[i]
+    if not d then break end
+    table.insert(out, string.format("%d. %s  %s  (%s)", i, d.name or "?", W.Clock(d.t or 0),
+      d.encounter or "?"))
+  end
+  if n > count then table.insert(out, string.format("  ...and %d more", n - count)) end
+  return out
+end
+
+--- `cap` raises the MAX_LINES ceiling, for an export: a file is not chat.
+function A:Lines(ctx, count, cap)
   count = count or (W.db and W.db.announceCount) or 5
-  if count > MAX_LINES then count = MAX_LINES end
+  if count > (cap or MAX_LINES) then count = cap or MAX_LINES end
   if count < 1 then count = 1 end
 
   local encounters = ctx.encounters or {}
@@ -305,6 +377,11 @@ function A:Lines(ctx, count)
   if ctx.drill then
     local drilled = self:DrillLines(ctx, view, count)
     if drilled then return drilled end
+  end
+
+  -- The Deaths tab and the meter's Death log: the list, or one death.
+  if ctx.deaths then
+    return self:DeathLines(ctx, view, count)
   end
 
   -- The Raid Contrib tab drilled into one effect: who built it.
@@ -347,6 +424,29 @@ function A:Lines(ctx, count)
   return out
 end
 
+--[[ 1.12 chat has no line break: each line is a message of its own, and
+     each one waits its turn through the chat throttle. Packed (the
+     announcement's "Fewer messages", W.db.announcePack), a post's lines
+     are joined with " / " as many to a message as fit its 255 characters,
+     each heading starting a new one -- a top 5 in one message, not six. ]]
+A.MAX_MSG = 255
+local PACK_SEP = " / "
+
+function A:Pack(lines)
+  local out, cur = {}, nil
+  for _, l in ipairs(lines or {}) do
+    local text = string.gsub(l, "^%s+", "")
+    local heading = string.find(text, "^Wrekkit  ")
+    if cur and (heading or string.len(cur) + string.len(PACK_SEP) + string.len(text) > A.MAX_MSG) then
+      table.insert(out, cur)
+      cur = nil
+    end
+    cur = cur and (cur .. PACK_SEP .. text) or text
+  end
+  if cur then table.insert(out, cur) end
+  return out
+end
+
 --- One-line description of where this is going, for the confirmation.
 function A:Destination(channel, target)
   if channel == "WHISPER" then
@@ -362,16 +462,29 @@ end
 
 A.queue = {}
 
+--- Seconds until the next chat line may go out: 0 for now, or the rest of
+--- the pause once BURST have gone out together.
+function A:SendWait(now)
+  if now - (self.lastSentAt or -1000) >= A.BURST_PAUSE then self.burst = 0 end
+  if (self.burst or 0) < A.BURST then return 0 end
+  return self.lastSentAt + A.BURST_PAUSE - now
+end
+
 function A:Pump()
   if self.pumping then return end
   self.pumping = true
 
   local function step()
-    local job = table.remove(self.queue, 1)
-    if not job then
+    if not self.queue[1] then
       self.pumping = false
       return
     end
+    local wait = self:SendWait(GetTime())
+    if wait > 0 then
+      W.After(wait + 0.05, step, "announcePump")
+      return
+    end
+    local job = table.remove(self.queue, 1)
     if SendChatMessage then
       -- Guarded: a bad channel (left the raid mid-send) must not take the
       -- rest of the queue down with it.
@@ -379,6 +492,8 @@ function A:Pump()
         SendChatMessage(job.msg, job.channel, nil, job.target)
       end)
     end
+    self.burst = (self.burst or 0) + 1
+    self.lastSentAt = GetTime()
     W.After(SEND_INTERVAL, step, "announcePump")
   end
 
@@ -430,7 +545,7 @@ function A:Request(ctx, channel, target, count)
   ctx.count = count
   W.ui.ConfirmAnnounce(lines, channel, target, function(finalTarget, finalLines)
     local n = A:Send(finalLines or lines, channel, finalTarget)
-    W.Print("sent " .. n .. " line" .. (n == 1 and "" or "s") .. " to " ..
+    W.Print("sent " .. n .. " message" .. (n == 1 and "" or "s") .. " to " ..
       A:Destination(channel, finalTarget) .. ".")
   end, ctx)
 end

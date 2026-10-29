@@ -58,6 +58,12 @@ function R:Sessions()
   if live and live.totals and (live.totals.damage > 0 or live.totals.healing > 0) then
     place(live, true)
   end
+  -- Held a moment for the rest of its fight (E:Finish): not stored yet, but
+  -- it is part of the session.
+  local held = W.encounter.heldPull
+  if held and held ~= live and held.totals and (held.totals.damage > 0 or held.totals.healing > 0) then
+    place(held, true)
+  end
 
   table.sort(out, function(a, b) return a.startTime > b.startTime end)
   for _, s in ipairs(out) do
@@ -208,6 +214,13 @@ local function addAbilities(dst, src, pet)
     d.r25 = (d.r25 or 0) + (row.r25 or 0)
     d.r50 = (d.r50 or 0) + (row.r50 or 0)
     d.r75 = (d.r75 or 0) + (row.r75 or 0)
+    -- The hit table: hits that rolled on it, glancing and crushing blows.
+    -- A pull saved before `direct` counted every hit as one.
+    d.direct = (d.direct or 0) + (row.direct or row.hits or 0)
+    d.glances = (d.glances or 0) + (row.glances or 0)
+    d.glanceAmount = (d.glanceAmount or 0) + (row.glanceAmount or 0)
+    d.crushes = (d.crushes or 0) + (row.crushes or 0)
+    d.crushAmount = (d.crushAmount or 0) + (row.crushAmount or 0)
     if row.missBy then
       if not d.missBy then d.missBy = {} end
       for code, n in pairs(row.missBy) do
@@ -399,6 +412,7 @@ function R:View(encounters, opts)
         -- Carried through, or clicking a death in the report finds nothing
         -- to show: the window reads the view, not the encounter behind it.
         recap = d.recap,
+        hpMax = d.hpMax,
         -- The death time within its own pull. t above is shifted onto the
         -- session timeline, which is right for the chart and wrong for
         -- measuring the recap lines against.
@@ -687,6 +701,56 @@ function R:Effects(view, key, filter)
   return order
 end
 
+--[[ The Raid Contrib list -- the report's tab, the meter's view and their
+     announcements: the damage effects (Raid value), then what the
+     judgements give back (Raid support). ]]
+function R:ContribEffects(view, filter)
+  local out = {}
+  for _, e in ipairs(self:Effects(view, "value", filter)) do table.insert(out, e) end
+  for _, e in ipairs(self:Effects(view, "support", filter)) do table.insert(out, e) end
+  return out
+end
+
+--- Every player in the view the filter lets through, by name: the
+--- consumables export lists the ones who used nothing too.
+function R:Players(view, filter)
+  local out = {}
+  for _, row in ipairs(view.rows or {}) do
+    if row.isPlayer and matches(row, filter) then table.insert(out, row) end
+  end
+  table.sort(out, function(a, b) return (a.name or "") < (b.name or "") end)
+  return out
+end
+
+--- What a support effect's number counts: mana for Wisdom, else healing.
+function R.EffectUnit(e)
+  if not e or e.kind ~= "support" then return "" end
+  return e.name == "Judgement of Wisdom" and " mana" or " heal"
+end
+
+--- The view's deaths in the order they happened: the report's Deaths tab,
+--- the meter's Death log and their announcements.
+function R:DeathList(view)
+  local out = {}
+  for _, d in ipairs(view.deaths or {}) do table.insert(out, d) end
+  table.sort(out, function(a, b) return (a.t or 0) < (b.t or 0) end)
+  return out
+end
+
+--- A recap row's value, coloured for the windows (never for chat): hits
+--- red, heals green, avoided grey, the summary in the accent.
+local RECAP_HUE = { d = "ff6b6b", h = "5fd36a", m = "9d9d9d", sum = "e0a22c" }
+function R.RecapValue(st)
+  local hue = st and RECAP_HUE[st.kind or ""]
+  if not hue or not st.value or st.value == "" then return st and st.value or "" end
+  return "|cff" .. hue .. st.value .. "|r"
+end
+
+--- One death, by a key that survives the view being rebuilt.
+function R.DeathKey(d)
+  return tostring(d.name) .. ":" .. tostring(d.t)
+end
+
 function R:Rank(view, metricKey, filter)
   local metric = W.metrics.Get(metricKey)
   local ctx = { duration = view.rateBase, view = view }
@@ -775,6 +839,7 @@ end
 function R:Abilities(row, metricKey, ctx)
   local metric = W.metrics.Get(metricKey)
   if metric.detail == "auras" then return self:Auras(row, ctx or row._ctx) end
+  if metric.detail == "hitTable" then return self:HitTableRows(row, metricKey) end
   local source = row[metric.detail or "dmgAbility"]
   if not source then return {} end
 
@@ -808,6 +873,8 @@ function R:Abilities(row, metricKey, ctx)
       resisted = a.resisted or 0, resistHits = a.resistHits or 0,
       r25 = a.r25 or 0, r50 = a.r50 or 0, r75 = a.r75 or 0,
       missBy = a.missBy,
+      direct = a.direct or a.hits or 0, glances = a.glances or 0, glanceAmount = a.glanceAmount or 0,
+      crushes = a.crushes or 0, crushAmount = a.crushAmount or 0,
     })
   end)
   table.sort(out, W.ByField("amount"))
@@ -856,6 +923,24 @@ end
      name first when asked what they use.
 
      Oldest first, so it reads as a sequence rather than a list. ]]
+local function sharesText(by, order, total)
+  table.sort(order, function(x, y) return by[x] > by[y] end)
+  local parts = {}
+  for i = 1, 3 do
+    local who = order[i]
+    if not who then break end
+    table.insert(parts, who .. " " .. W.Short(by[who]))
+  end
+  if table.getn(order) > 3 then table.insert(parts, "+" .. (table.getn(order) - 3) .. " more") end
+  return table.concat(parts, ", ")
+end
+
+--[[ Rows open with what the seconds add up to (kind "sum"): what killed
+     them, the damage they took and from whom, the healing that reached
+     them and from whom -- "how did they die" in three lines, before the
+     sequence that shows it. Then every event (kind "d" a hit, "h" a heal,
+     "m" a hit they avoided), each with their health after it. Recaps saved
+     before heals were kept read as hits, which is all they held. ]]
 function R:DeathRecap(death)
   local rows = {}
   if not death then return rows end
@@ -865,16 +950,70 @@ function R:DeathRecap(death)
   -- death's time in that same pull -- never its session timeline time,
   -- which is off by however far into the night the pull was.
   local last = death.encT or death.t or 0
-  for _, e in ipairs(death.recap or {}) do
+  local recap = death.recap or {}
+  local function hpText(hp)
+    if not hp then return nil end
+    local max = death.hpMax
+    if max and max > 0 then return string.format("hp %s (%d%%)", W.Short(hp), math.floor(hp / max * 100 + 0.5)) end
+    return "hp " .. W.Short(hp)
+  end
+
+  local killer
+  local took, healed, span = 0, 0, 0
+  local dmgBy, dmgOrder, healBy, healOrder = {}, {}, {}, {}
+  for _, e in ipairs(recap) do
+    local kind = e.k or "d"
+    local who = e.src or "?"
+    local ago = e.ago or (last - (e.t or 0))
+    if ago > span then span = ago end
+    if kind == "d" then
+      killer = e
+      took = took + (e.a or 0)
+      if not dmgBy[who] then dmgBy[who] = 0 table.insert(dmgOrder, who) end
+      dmgBy[who] = dmgBy[who] + (e.a or 0)
+    elseif kind == "h" and (e.a or 0) > 0 then
+      healed = healed + e.a
+      if not healBy[who] then healBy[who] = 0 table.insert(healOrder, who) end
+      healBy[who] = healBy[who] + e.a
+    end
+  end
+  local secs = string.format("%.0fs", math.ceil(span))
+  if killer then
+    local what = killer.src or "?"
+    if killer.spell and killer.spell ~= "" then what = what .. " (" .. killer.spell .. ")" end
+    table.insert(rows, { kind = "sum", label = "Killed by " .. what, value = W.Comma(killer.a or 0) })
+    table.insert(rows, { kind = "sum", label = "Took in the last " .. secs .. ": " .. sharesText(dmgBy, dmgOrder),
+                         value = W.Short(took) })
+    if healed > 0 then
+      table.insert(rows, { kind = "sum", label = "Healed in the last " .. secs .. ": " .. sharesText(healBy, healOrder),
+                           value = W.Short(healed) })
+    else
+      table.insert(rows, { kind = "sum", label = "No healing reached them in the last " .. secs, value = "0" })
+    end
+  end
+
+  for _, e in ipairs(recap) do
+    local kind = e.k or "d"
     local ago = e.ago or (last - (e.t or 0))
     local who = e.src or "?"
     if e.spell and e.spell ~= "" and e.spell ~= "Melee" then
       who = who .. "  " .. e.spell
     end
+    local value
+    if kind == "h" then
+      value = "+" .. W.Comma(e.a or 0)
+      if (e.x or 0) > 0 then value = value .. " (" .. W.Short(e.x) .. " over)" end
+    elseif kind == "m" then
+      value = e.x or "missed"
+    else
+      value = "-" .. W.Comma(e.a or 0)
+    end
+    if e.crit then value = value .. " crit" end
     table.insert(rows, {
+      kind = kind,
       label = string.format("-%.1fs  %s", ago, who),
-      value = W.Comma(e.a or 0),
-      note = e.hp and ("hp " .. W.Short(e.hp)) or nil,
+      value = value,
+      note = hpText(e.hp),
     })
   end
 
@@ -887,6 +1026,42 @@ function R:DeathRecap(death)
     })
   end
   return rows
+end
+
+--[[ The hit table by attack, behind Miss % and Glancing blows: each of the
+     player's own attacks that rolled on it -- not a pet's, not a DoT's
+     ticks -- with how often it missed and was dodged, or for Glancing, how
+     often the white swings glanced and what they did. Most tried first.
+     Clicked, an attack opens its full spread (AbilityStats). ]]
+function R:HitTableRows(row, metricKey)
+  local all = self:Abilities(row, "damage")
+  local glancing = (metricKey == "glancing")
+  local out = {}
+  for _, a in ipairs(all) do
+    local by = a.missBy or {}
+    local missed = (by[1] or 0) + (by[2] or 0)
+    local avoided = missed + (by[3] or 0) + (by[4] or 0) + (by[5] or 0)
+    local direct = a.direct or a.hits or 0
+    local own = type(a.id) ~= "string" and not (direct <= 0 and (a.hits or 0) > 0)
+    if own and (not glancing or (a.id == 0 and (a.hits or 0) > 0)) then
+      local tries = direct + avoided
+      if tries > 0 then
+        if glancing then
+          a._value = string.format("%.1f%%", a.hits > 0 and (a.glances or 0) / a.hits * 100 or 0)
+          a._note = W.Short(a.glanceAmount or 0)
+        else
+          a._value = string.format("miss %.1f%%", missed / tries * 100)
+          a._note = string.format("dodge %.1f%%", (by[3] or 0) / tries * 100)
+        end
+        a._tries = tries
+        table.insert(out, a)
+      end
+    end
+  end
+  table.sort(out, function(x, y) return x._tries > y._tries end)
+  local top = out[1] and out[1]._tries or 0
+  for _, a in ipairs(out) do a._frac = top > 0 and a._tries / top or 0 end
+  return out
 end
 
 --[[ Stat lines for a single ability -- the second level of drilldown.
@@ -939,13 +1114,43 @@ function R:AbilityStats(a, metricKey)
   end
 
   add("Landed", W.Comma(hits))
-  if misses > 0 then
-    add("Missed", W.Comma(misses),
-      attempts > 0 and string.format("%.1f%% of %d", misses / attempts * 100, attempts) or nil)
+  --[[ A miss is a miss: what hit rating takes away. Dodged, parried and
+       blocked are their own lines below -- `misses` counts every attack
+       that did not land, and showing it as "Missed" counted each dodge
+       twice. Only a pull saved before the reasons were kept falls back to
+       it. ]]
+  local by = a.missBy
+  local trueMisses = by and (by[1] or 0) or misses
+  if trueMisses > 0 then
+    add("Missed", W.Comma(trueMisses),
+      attempts > 0 and string.format("%.1f%% of %d", trueMisses / attempts * 100, attempts) or nil)
   end
   if crits > 0 or hits > 0 then
     add("Crits", W.Comma(crits),
       hits > 0 and string.format("%.1f%%", crits / hits * 100) or nil)
+  end
+
+  --[[ Glancing blows: white swings at a mob above you, landing for less --
+       how many, what they did, and what that is against an ordinary hit
+       (neither a crit nor a glance), which is the damage glancing took. ]]
+  local glances = a.glances or 0
+  if glances > 0 and not isHeal then
+    local glanceAmount = a.glanceAmount or 0
+    add("Glancing", W.Comma(glances), hits > 0 and string.format("%.1f%% of what landed", glances / hits * 100) or nil)
+    add("Glancing damage", W.Comma(glanceAmount), "average " .. W.Comma(glanceAmount / glances))
+    local plain = hits - crits - glances
+    local plainAmount = total - critAmount - glanceAmount
+    if plain > 0 and plainAmount > 0 then
+      local each = plainAmount / plain
+      add("A glance did", string.format("%.0f%%", glanceAmount / glances / each * 100), "of an ordinary hit")
+      local lost = glances * each - glanceAmount
+      if lost > 0 then add("Lost to glancing", W.Comma(lost)) end
+    end
+  end
+  -- Crushing blows, on the damage a tank took.
+  if (a.crushes or 0) > 0 then
+    add("Crushing blows", W.Comma(a.crushes), hits > 0 and string.format("%.1f%% of what landed", a.crushes / hits * 100) or nil)
+    add("Crushing damage", W.Comma(a.crushAmount or 0), "average " .. W.Comma((a.crushAmount or 0) / a.crushes))
   end
 
   if hits > 0 then
@@ -1017,8 +1222,8 @@ function R:AbilityStats(a, metricKey)
     }
     local seen = {}
     for code, n in pairs(a.missBy) do
-      -- Full resists already have a line of their own above.
-      if code ~= 2 and n > 0 then
+      -- Misses and full resists already have lines of their own above.
+      if code ~= 1 and code ~= 2 and n > 0 then
         local name = MISS_NAME[code] or ("Reason " .. tostring(code))
         seen[name] = (seen[name] or 0) + n
       end
@@ -1199,10 +1404,11 @@ end
 -- The fingerprint's running sum, or nil if a pull is still live.
 local function fingerprint(encounters)
   local live = W.encounter and W.encounter.live
+  local held = W.encounter and W.encounter.heldPull
   local sum = 0
   for i = 1, table.getn(encounters) do
     local e = encounters[i]
-    if e == live then return nil end
+    if e == live or e == held then return nil end
     local t = e.totals
     sum = sum + (e.rev or 0)
     if t then sum = sum + (t.damage or 0) + (t.healing or 0) + (t.taken or 0) end

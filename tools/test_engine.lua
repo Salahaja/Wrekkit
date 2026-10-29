@@ -242,6 +242,7 @@ dofile("store.lua")
 dofile("archive.lua")
 dofile("sync.lua")
 dofile("announce.lua")
+dofile("export.lua")
 dofile("threat.lua")
 dofile("talents.lua")
 dofile("prices.lua")
@@ -588,6 +589,54 @@ check("a shared spell goes to the original item",
 check("named from the table when the client has not cached it",
   Wrekkit.capture:Item(13444, 17531), "Major Mana Potion")
 
+-- Drink and food: one spell for dozens of items, so another player's is
+-- Drink or Food -- not the item you last ate, at its price.
+;(function()
+  local realInfo = SpellInfo
+  SpellInfo = function(id)
+    if id == 1137 then return "Drink", nil, "x" end
+    if id == 24707 then return "Food", nil, "x" end
+    return realInfo(id)
+  end
+  local C = Wrekkit.capture
+  local was = Wrekkit.db.consumeSpells[24707]
+  check("another player's drink is a Drink, not one of its items", C:ConsumableItem(0, 1137, "0xP2"), -1)
+  check("  named Drink", C:Item(-1, 1137), "Drink")
+  check("  and unpriced", Wrekkit.prices:Value(-1), nil)
+  Wrekkit.db.consumeSpells[24707] = 83004     -- you once ate a Conjured Mana Orange
+  check("your own food does not name everyone's", C:ConsumableItem(0, 24707, "0xP2"), -2)
+  check("  your own still names its item", C:ConsumableItem(83004, 24707, "0xP1"), 83004)
+  check("a food spell the client cannot name, cast by many items", C:ConsumableItem(0, 433, "0xP2"), -3)
+  check("a potion and its look-alike still go to the potion", C:ConsumableItem(0, 17531, "0xP2"), 13444)
+  Wrekkit.db.consumeSpells[24707] = was
+  SpellInfo = realInfo
+end)()
+
+-- Exported for the officers: each player's consumables, priced, then each
+-- consumable and who used it, then the raid's total -- saved as a file.
+;(function()
+  local P = Wrekkit.prices
+  local realValue = P.Value
+  P.Value = function(self, id) return ({ [13446] = 5000 })[id] end
+  local ctx = { encounters = { enc }, label = "Test", petMode = "merge" }
+  local text = Wrekkit.export:Consumes(ctx)
+  local function has(s) return string.find(text, s, 1, true) ~= nil end
+  check("export: the rogue, his uses and their cost", has("Fuff (1 death): 3 uses, 1g 0s"), true)
+  check("export: a priced item and its cost", has("Major Healing Potion") and has("1g 0s"), true)
+  check("export: an unpriced one says so", has("Dark Rune"), true)
+  check("export: each consumable and who used it", has("Fuff x2, Elfpriest"), true)
+  check("export: the raid's total", has("Raid: ") and has("1 use with no price"), true)
+  check("export: no colour codes in a file", has("|c"), false)
+  DISK = {}
+  local name = Wrekkit.export:Run(ctx, "consumes", "file")
+  check("export: saved under its own name", name and string.find(name, "^Wrekkit_Consumes_") ~= nil, true)
+  check("  with the list in it", name and DISK[name] == text, true)
+  check("  a name the file API takes", name and string.find(name, "^[%w_%-]+%.txt$") ~= nil, true)
+  local shown, head = Wrekkit.export:Shown({ metric = "consumes", encounters = { enc }, label = "Test", petMode = "merge" })
+  check("export: what is on screen, its heading first", string.find(shown, head, 1, true) == 1, true)
+  P.Value = realValue
+end)()
+
 -- Between pulls: held, and credited to the next pull -- the pre-pull fire
 -- protection potion, the flask. Only your group's.
 ;(function()
@@ -865,6 +914,24 @@ check("all of them arrive eventually",
 
 check("a whisper with no name is refused",
   Wrekkit.announce:Send(aLines, "WHISPER", nil), 0)
+
+-- The server flags about ten messages in a row as spam: eight go, then a
+-- pause, then the rest.
+;(function()
+  local A = Wrekkit.announce
+  A.burst, A.lastSentAt = 0, nil
+  local t = NOW
+  for i = 1, A.BURST do
+    check("  burst line " .. i .. " goes now", A:SendWait(t), 0)
+    A.burst, A.lastSentAt = (A.burst or 0) + 1, t
+    t = t + 0.4
+  end
+  local wait = A:SendWait(t)
+  check("the ninth waits out the pause", wait > 0 and math.abs(wait - (A.BURST_PAUSE - 0.4)) < 0.01, true)
+  check("after the pause the count starts over", A:SendWait(t + wait), 0)
+  check("  and the guard has let go", A.burst, 0)
+  A.burst, A.lastSentAt = 0, nil
+end)()
 
 ----------------------------------------------------------------------
 -- peer browsing
@@ -2864,8 +2931,46 @@ for _, d in ipairs(night.deaths) do
 end
 check("the later pull sits well into the night", lateDeath and lateDeath.t > 30, true)
 local rows = Wrekkit.report:DeathRecap(lateDeath)
-local _, _, secs = string.find(rows[1].label, "^%-(%d+%.%d)s")
+-- The first event, past the summary lines.
+local _, _, secs = string.find((function()
+  for _, r in ipairs(rows) do if r.kind ~= "sum" then return r.label end end
+  return ""
+end)(), "^%-(%d+%.%d)s")
 check("a later pull's recap is timed from its own death", tonumber(secs), 1, 0.01)
+
+-- The last 10 seconds, all of it: the heals that reached them and the hits
+-- they avoided, not only the hits that landed -- and a summary on top.
+;(function()
+  Wrekkit.ResetData("all")
+  IN_COMBAT = true
+  fire("PLAYER_REGEN_DISABLED")
+  local E = Wrekkit.encounter
+  E:Damage("0xBoss", "0xP1", 0, 300, {})          -- 11s before: past the window
+  advance(6)
+  E:Heal("0xP2", "0xP1", 2061, 500, 100, {})
+  advance(1)
+  E:Miss("0xBoss", "0xP1", 0, 3)
+  advance(1)
+  E:Damage("0xBoss", "0xP1", 0, 2000, { crit = true })
+  advance(3)
+  E:Damage("0xBoss", "0xP1", 0, 900, {})
+  fire("UNIT_DIED", "0xP1")
+  local d = E.live.deaths[1]
+  check("the recap keeps the last 10 seconds", d and table.getn(d.recap), 4)
+  check("  a heal that reached them", d.recap[1].k, "h")
+  check("  with its overheal", d.recap[1].x, 100)
+  check("  a hit they avoided, and how", d.recap[2].x, "dodged")
+  check("  a crit is marked", d.recap[3].crit, true)
+  local rows = Wrekkit.report:DeathRecap(d)
+  check("summary: what killed them", rows[1].label, "Killed by Onyxia (Melee)")
+  check("summary: the damage they took", rows[2].value, Wrekkit.Short(2900))
+  check("summary: who healed them", string.find(rows[3].label, "Elfpriest " .. Wrekkit.Short(500), 1, true) ~= nil, true)
+  check("a heal reads as one", rows[4].value, "+500 (100 over)")
+  check("an avoided hit says how", rows[5].value, "dodged")
+  check("a crit says so", rows[6].value, "-2,000 crit")
+  IN_COMBAT = false
+  fire("PLAYER_REGEN_ENABLED")
+end)()
 
 Wrekkit.ResetData("all")
 end
@@ -3686,6 +3791,72 @@ IN_COMBAT = true
 end
 
 ----------------------------------------------------------------------
+print("\n-- the hit table: misses, dodges, glancing blows --")
+----------------------------------------------------------------------
+-- As Chronicle logged them on 10/25: a miss is 0 damage with 0x10, a dodge
+-- victim state 2, a parry 3; a glancing swing lands with 0x4002, a mob's
+-- crushing blow with 0x8002.
+;(function()
+  local E = Wrekkit.encounter
+  Wrekkit.ResetData("all")
+  IN_COMBAT = true
+  fire("PLAYER_REGEN_DISABLED")
+  for _ = 1, 6 do fire("AUTO_ATTACK_SELF", "0xP1", "0xBoss", 300, 2, 1, 1, 0, 0, 0) end       -- hits
+  for _ = 1, 4 do fire("AUTO_ATTACK_SELF", "0xP1", "0xBoss", 210, 16386, 1, 1, 0, 0, 0) end   -- glancing
+  fire("AUTO_ATTACK_SELF", "0xP1", "0xBoss", 0, 16, 0, 1, 0, 0, 0)          -- missed
+  fire("AUTO_ATTACK_SELF", "0xP1", "0xBoss", 0, 2, 2, 1, 0, 0, 0)           -- dodged
+  fire("AUTO_ATTACK_SELF", "0xP1", "0xBoss", 0, 2, 2, 1, 0, 0, 0)           -- dodged
+  fire("AUTO_ATTACK_SELF", "0xP1", "0xBoss", 0, 2, 3, 1, 0, 0, 0)           -- parried
+  fire("AUTO_ATTACK_SELF", "0xP1", "0xBoss", 0, 0, 7, 1, 0, 0, 0)           -- immune: not the table
+  fire("AUTO_ATTACK_OTHER", "0xBoss", "0xP2", 1500, 32770, 1, 1, 0, 0, 0)   -- crushing, on the priest
+  fire("AUTO_ATTACK_OTHER", "0xBoss", "0xP2", 0, 2, 2, 1, 0, 0, 0)          -- the priest dodged
+  local fuff = E.live.actors["0xP1"]
+  local melee = fuff and fuff.dmgAbility[0]
+  check("swings that missed are counted", melee and melee.missBy and melee.missBy[1], 1)
+  check("  and the ones dodged", melee and melee.missBy[3], 2)
+  check("  and parried", melee and melee.missBy[4], 1)
+  check("  an immune swing is not the hit table", melee and melee.missBy[7], nil)
+  check("glancing swings and their damage", melee and melee.glances, 4)
+  check("  what they did", melee and melee.glanceAmount, 840)
+  local priest = E.live.actors["0xP2"]
+  local taken = priest and priest.takenAbility[0]
+  check("a crushing blow, on whoever took it", taken and taken.crushes, 1)
+  local onyMelee = E.live.actors["0xBoss"].dmgAbility[0]
+  check("a mob's swing dodged counts against the mob", onyMelee and onyMelee.missBy and onyMelee.missBy[3], 1)
+  check("  and goes in the dodger's death recap", priest.recent and priest.recent[priest.recentAt].x, "dodged")
+
+  local view = Wrekkit.report:View({ E.live }, { petMode = "merge" })
+  local rows = Wrekkit.report:Rank(view, "missPct")
+  local row
+  for _, r in ipairs(rows) do if r.name == "Fuff" then row = r end end
+  -- 10 landed + 1 missed + 2 dodged + 1 parried = 14 that rolled.
+  check("Miss %: of everything that rolled on the table", row and row._v, 1 / 14 * 100, 0.01)
+  check("  dodged beside it", row and row._sub, "dodge 14.3%")
+  rows = Wrekkit.report:Rank(view, "glancing")
+  for _, r in ipairs(rows) do if r.name == "Fuff" then row = r end end
+  check("Glancing: of the white swings that landed", row and row._v, 40, 0.01)
+  local byAttack = Wrekkit.report:Abilities(row, "missPct")
+  check("by attack: Melee, its miss and dodge", byAttack[1] and byAttack[1]._value, "miss 7.1%")
+  local stats = Wrekkit.report:AbilityStats(byAttack[1], "missPct")
+  local function stat(label)
+    for _, st in ipairs(stats) do if st.label == label then return st end end
+  end
+  check("the spread: how many glanced", stat("Glancing") and stat("Glancing").value, "4")
+  -- An ordinary hit did 300, a glance 210: 70%, and 4 x 90 lost.
+  check("  what a glance did against an ordinary hit", stat("A glance did") and stat("A glance did").value, "70%")
+  check("  and what glancing cost", stat("Lost to glancing") and stat("Lost to glancing").value, "360")
+  check("  dodges and parries", stat("Dodged") and stat("Parried") and stat("Dodged").value, "2")
+  -- A dodge is not a miss: "Missed" is the one true miss, said once.
+  local missedLines = 0
+  for _, st in ipairs(stats) do if st.label == "Missed" then missedLines = missedLines + 1 end end
+  check("  one Missed line", missedLines, 1)
+  check("  counting only the true miss, not the dodges", stat("Missed") and stat("Missed").value, "1")
+  IN_COMBAT = false
+  fire("PLAYER_REGEN_ENABLED")
+  Wrekkit.ResetData("all")
+end)()
+
+----------------------------------------------------------------------
 print("\n-- crit % counts what could crit --")
 ----------------------------------------------------------------------
 do
@@ -3784,7 +3955,7 @@ print("\n-- mob watch: no AGGRO shouts when solo --")
   T.IsTank = function() return false end
   UnitAffectingCombat = function() return true end
   UnitCanAttack = function() return true end
-  UnitExists = function(u) return u == "0xMob1target" or u == "0xMob2target" end
+  UnitExists = function(u) return u == "0xMob1target" or u == "0xMob2target" or u == "0xMob3target" end
   UnitIsUnit = function(a, b) return b == "player" end
   GetNumRaidMembers = function() return 0 end
   GetNumPartyMembers = function() return 0 end
@@ -3797,12 +3968,22 @@ print("\n-- mob watch: no AGGRO shouts when solo --")
   check("solo, a mob on you is still marked", state, "onme")
   check("  but raises no AGGRO warning", table.getn(alerts), 0)
 
-  -- In a party the same thing is worth a shout.
+  -- In a party the same thing is worth a shout -- once it is asked for:
+  -- every warning is off until someone ticks it.
+  local s = T:Settings()
+  local wasPulled = s.warnPulled
+  check("aggro warnings are off until asked for", wasPulled, false)
   GetNumPartyMembers = function() return 4 end
+  T:WatchMob("0xMob3", "Defias Smuggler")
+  advance(1.5)
+  T:WatchMob("0xMob3", "Defias Smuggler")
+  check("  so a group's mob on you is quiet", table.getn(alerts), 0)
+  s.warnPulled = true
   T:WatchMob("0xMob2", "Defias Pillager")
   advance(1.5)
   T:WatchMob("0xMob2", "Defias Pillager")
   check("in a group, a mob turning on you warns", alerts[1], "AGGRO! Defias Pillager is on you")
+  s.warnPulled = wasPulled
 
   T.Alert, T.IsTank = real.Alert, real.IsTank
   UnitAffectingCombat, UnitCanAttack, UnitExists, UnitIsUnit = real.UAC, real.UCA, real.UE, real.UIU
@@ -4437,6 +4618,18 @@ fire("AUTO_ATTACK_OTHER", "0xWar", "0xV6", 400, 2, 0, 1, 0, 0, 0)
 fire("SPELL_ENERGIZE_BY_OTHER", "0xWar", "0xWar", 51750, 0, 59, 0)
 fire("SPELL_HEAL_BY_OTHER", "0xWar", "0xWar", 20343, 61, 0, 0)
 fire("SPELL_HEAL_ON_SELF", "0xWar", "0xWar", 20343, 61, 0, 0)
+-- A heal on the recording player arrives twice: BY_OTHER, then ON_SELF.
+-- Counted once, even with other heals landing in between (10/25).
+;(function()
+  local E = Wrekkit.encounter
+  local live = E.live
+  local function healOf(g) local a = live and live.actors[g] return a and ((a.healing or 0) + (a.overheal or 0)) or 0 end
+  local before = healOf("0xP2")
+  fire("SPELL_HEAL_BY_OTHER", "0xP1", "0xP2", 10960, 700, 0, 0)   -- Prayer of Healing on you
+  fire("SPELL_HEAL_BY_OTHER", "0xP3", "0xP2", 10960, 650, 0, 0)   -- and on someone else
+  fire("SPELL_HEAL_ON_SELF", "0xP1", "0xP2", 10960, 700, 0, 0)    -- its restatement
+  check("a heal on you is counted once", healOf("0xP2") - before, 1350)
+end)()
 check("Judgement of Wisdom: mana to its paladin", enc.actors["0xPal"].valueMana, 59)
 check("Judgement of Light: health, counted once", enc.actors["0xPal2"].valueHeal, 61)
 fire("SPELL_ENERGIZE_BY_OTHER", "0xWar", "0xWar", 51750, 1, 10, 0)
@@ -4756,6 +4949,45 @@ end)()
   advance(31)
   E:ExpireHeld(flicker)
   check("a combat that hurt nothing is dropped", table.getn(Wrekkit.db.encounters), before + 1)
+  E.live, E.inCombat, E.heldPull = realLive, realIn, nil
+end)()
+
+;(function()
+  -- A split pull (10/25): the tank pulls, the mob runs back, the fight goes
+  -- quiet for 6 s, then the raid engages. The mob is alive, so the pull is
+  -- held and the fight goes on in it.
+  local E = Wrekkit.encounter
+  local realLive, realIn = E.live, E.inCombat
+  E.live, E.inCombat, E.heldPull = nil, false, nil
+  fire("SPELL_DAMAGE_EVENT_OTHER", "0xBoss", "0xP3", 11267, 500, "0,0,0", 0, 0)
+  local first = E.live
+  advance(7)
+  fire("SPELL_DAMAGE_EVENT_OTHER", "0xBoss", "0xP3", 11267, 500, "0,0,0", 0, 0)
+  E:CombatEnd()
+  advance(6)
+  E:Finish(nil, true)
+  check("a pull whose mob lives is held, not stored", E.heldPull, first)
+  advance(6)
+  fire("SPELL_DAMAGE_EVENT_OTHER", "0xBoss", "0xP1", 11267, 800, "0,0,0", 0, 0)
+  check("the fight on its mob goes on in it", E.live, first)
+  -- Held, then a fight on another mob: its own pull, the held one stored.
+  E:CombatEnd()
+  advance(6)
+  E:Finish(nil, true)
+  local before = table.getn(Wrekkit.db.encounters)
+  advance(3)
+  fire("SPELL_DAMAGE_EVENT_OTHER", "0xAdd", "0xP1", 11267, 300, "0,0,0", 0, 0)
+  check("a fight on other mobs is a pull of its own", E.live ~= first, true)
+  check("  and the held one is stored", table.getn(Wrekkit.db.encounters), before + 1)
+  -- An explicit end (a zone change, a logout) stores it straight away.
+  E.live, E.inCombat, E.heldPull = nil, false, nil
+  fire("SPELL_DAMAGE_EVENT_OTHER", "0xBoss", "0xP3", 11267, 500, "0,0,0", 0, 0)
+  advance(8)
+  fire("SPELL_DAMAGE_EVENT_OTHER", "0xBoss", "0xP3", 11267, 500, "0,0,0", 0, 0)
+  E:CombatEnd()
+  local n0 = table.getn(Wrekkit.db.encounters)
+  E:Finish()
+  check("an explicit end stores it, mob alive or not", table.getn(Wrekkit.db.encounters), n0 + 1)
   E.live, E.inCombat, E.heldPull = realLive, realIn, nil
 end)()
 

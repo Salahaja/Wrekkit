@@ -35,6 +35,21 @@ local IDLE_END = 15
      ended and was dropped as too short -- and the opener with it (10/20
      Molten Core: a Holy Strike and a Judgement, every line-of-sight pull). ]]
 local OPENER_HOLD = 30
+--[[ A pull that ends with its mobs still alive is not over: the tank pulled
+     them back to the raid, or they were kited, and the fight resumes a few
+     seconds on. Split at MERGE_GAP, its first seconds became a pull of their
+     own (10/25 Molten Core: six pulls whose openers, 3-14k each, sat in a
+     separate "Flame Imp" or "Ancient Core Hound" pull 5.5-6.3 s before the
+     real one). Held this long, and resumed if the fight is on its mobs. ]]
+local ALIVE_HOLD = 12
+
+--- Did the pull end with any mob it hurt still alive?
+local function livingFoes(enc)
+  for _, a in pairs(enc.enemies or {}) do
+    if (a.taken or 0) > 0 and (a.deaths or 0) == 0 then return true end
+  end
+  return false
+end
 
 -- Read-only stand-in for an event that carried no details, so a missing
 -- table costs nothing rather than a new empty one per event.
@@ -580,23 +595,36 @@ function E:ActiveSeconds(enc, rec)
   return active
 end
 
---- How many hits before a death the recap keeps.
-local RECAP_HITS = 8
+--[[ What happened to each player lately, for the death recap: every hit
+     they took ("d"), every heal that reached them ("h", with its overheal)
+     and every hit they avoided ("m", with how). Eight hits, as it was, told
+     what landed last but not why nobody healed it -- or that the tank had
+     dodged the four before.
 
---- Remember the last few hits this actor took, oldest overwritten first.
---- A fixed ring rather than a growing list: this runs on every hit taken by
---- every player in the raid, and only the tail is ever read. The hp given
---- is health AFTER the hit: capture applies damage before we see it.
-local function noteRecent(a, enc, now, srcName, spell, amount, hp)
-  if not a.recent then a.recent = {} a.recentAt = 0 end
-  a.recentAt = math.mod(a.recentAt or 0, RECAP_HITS) + 1
-  a.recent[a.recentAt] = {
-    t = now - enc.startT,
-    src = srcName,
-    spell = spell,
-    a = amount,
-    hp = hp,
-  }
+     A ring of RECAP_RING entries per player, written in place: this runs
+     on every hit and every heal on everyone in the raid, so after its first
+     lap it makes no tables at all. A death copies out the RECAP_WINDOW
+     seconds before it, the newest RECAP_KEEP of them. The hp is health
+     AFTER the event: capture applies damage and healing before we see it. ]]
+local RECAP_RING = 64
+local RECAP_WINDOW = 10
+local RECAP_KEEP = 32      -- saved with the pull: a week of raids adds up
+
+local function noteRecent(a, enc, now, kind, srcName, spell, amount, hp, extra, crit)
+  local ring = a.recent
+  if not ring then
+    ring = {}
+    a.recent, a.recentAt = ring, 0
+  end
+  local at = math.mod(a.recentAt or 0, RECAP_RING) + 1
+  a.recentAt = at
+  local e = ring[at]
+  if not e then
+    e = {}
+    ring[at] = e
+  end
+  e.t, e.k, e.src, e.spell, e.a, e.hp = now - enc.startT, kind, srcName, spell, amount, hp
+  e.x, e.crit = extra, crit
 end
 
 --- The ring read out oldest-first, by position rather than by time: hits in
@@ -607,12 +635,19 @@ local function recentInOrder(a)
   local ring = a.recent
   if not ring then return out end
   local at = a.recentAt or 0
-  for i = 1, RECAP_HITS do
-    local e = ring[math.mod(at + i - 1, RECAP_HITS) + 1]
+  for i = 1, RECAP_RING do
+    local e = ring[math.mod(at + i - 1, RECAP_RING) + 1]
     if e then table.insert(out, e) end
   end
   return out
 end
+
+-- How a hit was avoided, by the client's miss code (E:Miss).
+local AVOIDED = {
+  [1] = "missed", [2] = "resisted", [3] = "dodged", [4] = "parried", [5] = "blocked",
+  [6] = "evaded", [7] = "immune", [8] = "immune", [9] = "deflected", [10] = "absorbed",
+  [11] = "reflected",
+}
 
 --- Environmental damage arrives as a number: the client EnvironmentalDamageType.
 local ENVIRONMENT = {
@@ -746,11 +781,19 @@ local function noteAmount(row, amount, isCrit)
   if isCrit then row.critAmount = (row.critAmount or 0) + amount end
 end
 
+local startingWith = {}
+
 --- A player or a pet: our side, as far as damage done is concerned.
 local function onOurSide(a) return a and (a.isPlayer or a.class == "PET") end
 
 function E:Damage(sourceGuid, targetGuid, spellId, amount, info)
-  if not self.live then self:CombatStart() end
+  if not self.live then
+    -- Which mobs this fight is on, for a pull held for its living mobs.
+    startingWith[1], startingWith[2] = sourceGuid, targetGuid
+    self.startingWith = startingWith
+    self:CombatStart()
+    self.startingWith = nil
+  end
   local enc = self.live
   if not enc then return end
   info = info or NO_INFO
@@ -783,6 +826,14 @@ function E:Damage(sourceGuid, targetGuid, spellId, amount, info)
     row.amount = row.amount + amount
     row.hits = row.hits + 1
     if info.crit then row.crits = row.crits + 1 end
+    --[[ For the hit table: the hits that rolled on it (`direct`: not a DoT
+         tick or a damage shield, which never did), and the white swings
+         that glanced, with what they did. ]]
+    if info.canCrit ~= false then row.direct = (row.direct or 0) + 1 end
+    if info.glancing then
+      row.glances = (row.glances or 0) + 1
+      row.glanceAmount = (row.glanceAmount or 0) + amount
+    end
     --[[ First hit decides, because a spell has exactly one school. Melee
          carries none at all and arrives as spell id 0, which W.SchoolName
          reads as Physical rather than as unknown. ]]
@@ -811,6 +862,11 @@ function E:Damage(sourceGuid, targetGuid, spellId, amount, info)
     local row = abilityRow(dst.takenAbility, spellId, spellName)
     row.amount = row.amount + amount
     row.hits = row.hits + 1
+    -- A mob's crushing blows, on the tank who took them.
+    if info.crushing then
+      row.crushes = (row.crushes or 0) + 1
+      row.crushAmount = (row.crushAmount or 0) + amount
+    end
     -- What school is actually hurting you is the whole point of this table.
     if row.school == nil then row.school = info.school end
     noteAmount(row, amount, info.crit)
@@ -825,8 +881,8 @@ function E:Damage(sourceGuid, targetGuid, spellId, amount, info)
       -- Remember the hit itself, so a death can be explained afterwards.
       local su = W.capture.units[sourceGuid]
       local tu = W.capture.units[targetGuid]
-      noteRecent(dst, enc, now, (su and su.name) or "?", spellName, amount,
-        tu and tu.health)
+      noteRecent(dst, enc, now, "d", (su and su.name) or "?", spellName, amount,
+        tu and tu.health, nil, info.crit)
     end
 
     -- Track the biggest thing we fought so the encounter can be named.
@@ -840,9 +896,9 @@ function E:Damage(sourceGuid, targetGuid, spellId, amount, info)
   end
 end
 
--- Guards against SPELL_HEAL_ON_SELF duplicating SPELL_HEAL_BY_SELF when you
--- heal yourself: the same caster/target/spell/amount inside one frame is a
--- restatement of one heal, never two.
+-- The same caster/target/spell/amount inside one frame is one heal stated
+-- twice, never two. (SPELL_HEAL_ON_SELF, the usual restatement, is no
+-- longer listened to at all; see capture.lua.)
 local lastHealKey, lastHealAt = nil, 0
 
 function E:Heal(casterGuid, targetGuid, spellId, effective, over, info)
@@ -888,6 +944,14 @@ function E:Heal(casterGuid, targetGuid, spellId, effective, over, info)
     b.eh = b.eh + effective
     contribute(b, "h", casterGuid, targetGuid, spellId, effective)
   end
+
+  -- For the death recap: what healing reached them, and when. Only players
+  -- already in the pull; a heal is no reason to start tracking someone.
+  local dst = enc.actors[targetGuid]
+  if dst and dst.isPlayer then
+    local tu = W.capture.units[targetGuid]
+    noteRecent(dst, enc, now, "h", src.name, spellName, effective, tu and tu.health, over, info.crit)
+  end
 end
 
 --[[ missInfo is the client's numeric reason, not a string:
@@ -915,6 +979,13 @@ function E:Miss(casterGuid, targetGuid, spellId, missInfo)
   local code = tonumber(missInfo) or 0
   if not row.missBy then row.missBy = {} end
   row.missBy[code] = (row.missBy[code] or 0) + 1
+
+  -- A hit a player avoided belongs in their death recap too.
+  local dst = enc.actors[targetGuid]
+  if dst and dst.isPlayer and AVOIDED[code] then
+    local tu = W.capture.units[targetGuid]
+    noteRecent(dst, enc, GetTime(), "m", src.name, row.name, 0, tu and tu.health, AVOIDED[code])
+  end
 end
 
 --- Someone removed an effect. Counted per spell as well as in total, so
@@ -953,7 +1024,7 @@ function E:Environmental(guid, damageType, damage, absorb, resist)
     -- Lava and falling kill people too. A recap that left them out would
     -- blame whatever hit them last before the lava did.
     local tu = W.capture.units[guid]
-    noteRecent(dst, enc, now, "Environment", kind, damage, tu and tu.health)
+    noteRecent(dst, enc, now, "d", "Environment", kind, damage, tu and tu.health)
   end
 end
 
@@ -1204,9 +1275,13 @@ function E:Death(guid)
        its distance from the death, which is what the recap prints and the
        one number that means the same thing in every view. ]]
   for _, e in ipairs(recentInOrder(a)) do
-    table.insert(recap, { t = e.t, ago = deathT - (e.t or deathT),
-                          src = e.src, spell = e.spell, a = e.a, hp = e.hp })
+    if (e.t or 0) >= deathT - RECAP_WINDOW then
+      table.insert(recap, { t = e.t, ago = deathT - (e.t or deathT), k = e.k,
+                            src = e.src, spell = e.spell, a = e.a, hp = e.hp, x = e.x, crit = e.crit })
+    end
   end
+  while table.getn(recap) > RECAP_KEEP do table.remove(recap, 1) end
+  local du = W.capture.units[guid]
   -- The next life starts with an empty ring; otherwise a second death soon
   -- after a rez is explained by hits from before the first.
   a.recent = nil
@@ -1219,6 +1294,8 @@ function E:Death(guid)
       name = a.name,
       class = a.class,
       recap = recap,
+      -- Their health bar's size, so the recap can say how full it was.
+      hpMax = du and du.maxHealth,
     })
   else
     -- An enemy dying is how we learn the pull was a kill.
@@ -1379,8 +1456,23 @@ function E:CombatStart()
   -- in it rather than lose it. Only within the same session, and soon.
   local held = self.heldPull
   self.heldPull = nil
-  if held and now - (self.heldPullAt or 0) <= OPENER_HOLD and self.session
+  --[[ A pull held for its living mobs goes on only if this fight is on one
+       of them; a fight on other mobs is a pull of its own, and the held one
+       is stored. (Entering combat yourself says nothing about which mob:
+       that goes on in it.) ]]
+  local onItsMobs = true
+  if held and held.heldAlive and self.startingWith then
+    local foes = held.enemies or {}
+    onItsMobs = (foes[self.startingWith[1]] or foes[self.startingWith[2]]) and true or false
+  end
+  if held and not onItsMobs then
+    self.heldPull = held
+    self:ExpireHeld(held)
+    held = nil
+  end
+  if held and now - (self.heldPullAt or 0) <= (self.heldPullFor or OPENER_HOLD) and self.session
      and held.sessionId == self.session.id then
+    held.heldAlive = nil
     self.live = held
     self.lastGroupHit = now
     self.inCombat = true
@@ -1610,7 +1702,10 @@ function E:FlushHeld()
 end
 
 --- `held`: a pull held as too short (see ExpireHeld), stored as it is.
-function E:Finish(held)
+--- `auto`: combat went quiet (W.ScheduleFinish) -- only then is a pull with
+--- living mobs held for the rest of its fight; a zone change, a logout or
+--- any other end stores it there and then.
+function E:Finish(held, auto)
   local enc = held or self.live
   if not held then self.live = nil end
   if not enc then return end
@@ -1620,18 +1715,23 @@ function E:Finish(held)
     self.inCombat = false
   end
   enc.duration = enc.stopT - enc.startT
-  if not held and enc.duration < (W.db and W.db.minTrashDuration or 6) then
-    -- Not dropped yet: the fight it opened may be on its way (OPENER_HOLD).
+  local short = enc.duration < (W.db and W.db.minTrashDuration or 6)
+  if not held and (short or (auto and livingFoes(enc))) then
+    --[[ Not stored yet: the fight it opened (OPENER_HOLD), or the rest of
+         the fight its living mobs are still in (ALIVE_HOLD), may be coming. ]]
+    local hold = short and OPENER_HOLD or ALIVE_HOLD
     W.Debug("holding a " .. string.format("%.1f", enc.duration) .. "s combat")
     enc.duration = nil
+    enc.heldAlive = not short or nil
     self:FlushHeld()
-    self.heldPull, self.heldPullAt = enc, GetTime()
-    W.After(OPENER_HOLD + 0.5, function()
+    self.heldPull, self.heldPullAt, self.heldPullFor = enc, GetTime(), hold
+    W.After(hold + 0.5, function()
       W.Guard("held pull", function() E:ExpireHeld(enc) end)
     end, "heldPull")
     W.capture:TrimUnits()
     return
   end
+  enc.heldAlive = nil
 
   -- Anything still up when the pull ended was up until the pull ended.
   -- Without this, a flask that was never removed reads as zero uptime --
@@ -1737,7 +1837,9 @@ local function topAbilities(tbl, limit)
                          max = r.max, min = r.min, critAmount = r.critAmount,
                          resisted = r.resisted, resistHits = r.resistHits,
                          r25 = r.r25, r50 = r.r50, r75 = r.r75,
-                         missBy = r.missBy, school = r.school })
+                         missBy = r.missBy, school = r.school,
+                         direct = r.direct, glances = r.glances, glanceAmount = r.glanceAmount,
+                         crushes = r.crushes, crushAmount = r.crushAmount })
   end
   table.sort(rows, W.ByField("amount"))
   while table.getn(rows) > limit do table.remove(rows) end

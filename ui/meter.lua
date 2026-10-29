@@ -118,7 +118,8 @@ function M:Encounters()
   local seg = s.segment
 
   if seg == "current" then
-    local live = W.encounter.live
+    -- A pull held a moment for the rest of its fight is still the current one.
+    local live = W.encounter.live or W.encounter.heldPull
     if live then return { live }, "Current" end
     -- Nothing in progress: fall through to the last pull rather than an
     -- empty window, which reads as "the addon is broken".
@@ -152,7 +153,7 @@ end
 function M:AnnounceContext()
   local s = self:Settings()
   local encounters, segLabel = self:Encounters()
-  return {
+  local ctx = {
     metric = s.metric,
     encounters = encounters,
     label = segLabel,
@@ -162,11 +163,25 @@ function M:AnnounceContext()
     drill = self.drill,
     drillAbility = self.drillAbility,
   }
+  -- The two list views announce as the report's tabs do; their drill is an
+  -- effect or a death, not a player.
+  if s.metric == "contribFx" then
+    ctx.metric, ctx.metrics, ctx.drill, ctx.drillAbility = "value", { "value" }, nil, nil
+    ctx.contrib, ctx.contribEffect = true, self.drill
+  elseif s.metric == "deathLog" then
+    ctx.metric, ctx.metrics, ctx.drill, ctx.drillAbility = "deaths", { "deaths" }, nil, nil
+    ctx.deaths, ctx.deathDrill = true, self.drill
+  end
+  return ctx
 end
 
 ----------------------------------------------------------------------
 -- construction
 ----------------------------------------------------------------------
+
+-- The toolbar's four toggles: smaller than they were (18), so the toolbar
+-- fits at the meter's narrowest with the filter open.
+local TOGGLE_W, TOGGLE_GAP = 14, 2
 
 function M:Create()
   if self.frame then return self.frame end
@@ -308,13 +323,14 @@ function M:Create()
     if UI.report then UI.report:Toggle() end
   end)
   reportBtn:SetPoint("RIGHT", tb, "RIGHT", -4, 0)
+  self.reportBtn = reportBtn
 
   ------------------------------------------------------------------
   -- toggles
   ------------------------------------------------------------------
 
   -- Ignore anyone outside the party/raid.
-  local groupBtn = UI.IconButton(tb, UI.media.group, 18, function()
+  local groupBtn = UI.IconButton(tb, UI.media.group, TOGGLE_W, function()
     local st = M:Settings()
     st.groupOnly = not st.groupOnly
     M:UpdateToggles()
@@ -331,7 +347,7 @@ function M:Create()
 
   -- Show only the players picked. Next to group-only: both decide who is
   -- counted. Picking itself is shift-click on a row.
-  local pickBtn = UI.IconButton(tb, UI.media.pick, 18, function()
+  local pickBtn = UI.IconButton(tb, UI.media.pick, TOGGLE_W, function()
     if arg1 == "RightButton" then
       UI.PickMenu(M.frame, M.pickBtn)
       return
@@ -346,11 +362,11 @@ function M:Create()
     M:UpdateToggles()
     M:Refresh()
   end, UI.PICK_TIP)
-  pickBtn:SetPoint("RIGHT", groupBtn, "LEFT", -2, 0)
+  pickBtn:SetPoint("RIGHT", groupBtn, "LEFT", -TOGGLE_GAP, 0)
   self.pickBtn = pickBtn
 
   -- Record combat outside instances.
-  local worldBtn = UI.IconButton(tb, UI.media.globe, 18, function()
+  local worldBtn = UI.IconButton(tb, UI.media.globe, TOGGLE_W, function()
     W.db.trackOpenWorld = not W.db.trackOpenWorld
     M:UpdateToggles()
     W.Print("open-world combat " ..
@@ -362,13 +378,13 @@ function M:Create()
       "Dim: only inside dungeons and raids.",
     },
   })
-  worldBtn:SetPoint("RIGHT", pickBtn, "LEFT", -2, 0)
+  worldBtn:SetPoint("RIGHT", pickBtn, "LEFT", -TOGGLE_GAP, 0)
   self.worldBtn = worldBtn
 
   -- Reset. Left-click closes the current log and starts a fresh one, keeping
   -- what came before; deleting the history outright is behind a right-click
   -- and a confirmation, because it cannot be undone.
-  local resetBtn = UI.IconButton(tb, UI.media.reset, 18, function()
+  local resetBtn = UI.IconButton(tb, UI.media.reset, TOGGLE_W, function()
     if arg1 == "RightButton" then
       if StaticPopup_Show then
         StaticPopup_Show("WREKKIT_RESET_ALL")
@@ -386,18 +402,28 @@ function M:Create()
       "Right-click: delete the history entirely.",
     },
   })
-  resetBtn:SetPoint("RIGHT", worldBtn, "LEFT", -2, 0)
+  resetBtn:SetPoint("RIGHT", worldBtn, "LEFT", -TOGGLE_GAP, 0)
   self.resetBtn = resetBtn
 
+  -- The four toggles folded into one, where the toolbar has no room for
+  -- them (M:LayoutToolbar): the same choices, ticked, in a menu.
+  local moreBtn = UI.Button(tb, "...", 22, 18, function()
+    W.Guard("meter toggles", function() M:TogglesMenu(M.moreBtn) end)
+  end)
+  moreBtn:SetPoint("RIGHT", reportBtn, "LEFT", -4, 0)
+  moreBtn:Hide()
+  self.moreBtn = moreBtn
+
   --[[ The filter keeps its own size: a 40px "Filter" button folded, 80px
-       open -- never stretched by the window. (It used to be pinned between
-       the edge and the Pets button to fill the gap, which made it grow with
-       every resize and undid the folding; at 110px fixed it had met the
-       icons at the meter's narrowest, at 80 it does not.) ]]
-  petBtn:ClearAllPoints()
-  petBtn:SetPoint("RIGHT", resetBtn, "LEFT", -4, 0)
+       open -- never stretched by the window. Pets sits beside it, moving
+       with it as it opens, and the toggles hold the right; where the two
+       would meet, the toggles fold (M:LayoutToolbar). Pets used to hang
+       off the toggles, and at the meter's narrowest the filter -- drawn
+       wider by a skin than it was set -- covered it. ]]
   search:ClearAllPoints()
   search:SetPoint("LEFT", tb, "LEFT", 4, 0)
+  petBtn:ClearAllPoints()
+  petBtn:SetPoint("LEFT", search, "RIGHT", 4, 0)
 
   ------------------------------------------------------------------
   -- list
@@ -406,6 +432,9 @@ function M:Create()
   local list = UI.ScrollList(f.body, s.rowHeight)
   list:SetPoint("TOPLEFT", tb, "BOTTOMLEFT", 2, -2)
   list:SetPoint("BOTTOMRIGHT", f.body, "BOTTOMRIGHT", -2, 16)
+  -- Narrow (a compact meter, a half side by side): no rank and one icon,
+  -- and a long name keeps its first letters rather than turning to "...".
+  list._tightBelow, list._clipNames = 200, true
   self.list = list
 
   -- The second half, when split: a header naming its metric -- click it
@@ -466,6 +495,7 @@ function M:Create()
 
   local list2 = UI.ScrollList(f.body, s.rowHeight)
   list2:Hide()
+  list2._tightBelow, list2._clipNames = 200, true
   self.list2 = list2
 
   ------------------------------------------------------------------
@@ -528,6 +558,71 @@ function M:UpdateToggles()
   end
   if self.worldBtn then self.worldBtn:SetLit(W.db.trackOpenWorld == true) end
   if self.resetBtn then self.resetBtn:SetLit(false) end
+  -- Folded, "..." is lit while either filter is on, as their icons would be.
+  if self.moreBtn and self.moreBtn.SetActive then
+    local s = self:Settings()
+    self.moreBtn:SetActive(s.groupOnly == true or (s.pickedOnly == true and W.report:AnyPicked()))
+  end
+end
+
+--[[ The toolbar's two ends: the filter and Pets from the left, Report and
+     the four toggles from the right. Where they would meet, the toggles
+     fold into "..." -- measured from where things really are, since a
+     skin may draw a button wider than it was made. ]]
+function M:LayoutToolbar()
+  local tb = self.toolbar
+  if not tb or not tb:IsShown() or not self.moreBtn then return end
+  local width = UI.FrameWidth(tb)
+  if width <= 0 then return end
+  local left = 4 + UI.FrameWidth(self.search) + 4 + UI.FrameWidth(self.petBtn)
+  local right = 4 + UI.FrameWidth(self.reportBtn) + 4
+  local toggles = 4 * TOGGLE_W + 3 * TOGGLE_GAP
+  local fold = left + 6 + toggles + right > width
+  if fold == self._toolsFolded then return end
+  self._toolsFolded = fold
+  for _, b in ipairs({ self.groupBtn, self.pickBtn, self.worldBtn, self.resetBtn }) do
+    if fold then b:Hide() else b:Show() end
+  end
+  if fold then self.moreBtn:Show() else self.moreBtn:Hide() end
+end
+
+--- The folded toggles, as a menu: each as its icon would do it.
+function M:TogglesMenu(anchor)
+  local s = self:Settings()
+  local items = {
+    { text = "Who is counted", header = true },
+    { text = "Group only", value = "group", checked = s.groupOnly == true },
+    { text = "Only picked players", value = "picked", checked = s.pickedOnly == true },
+    { text = "Pick players...", value = "pickmenu" },
+    { text = "Recording", header = true },
+    { text = "Open world too", value = "world", checked = W.db.trackOpenWorld == true },
+    { text = "Start a new log", value = "new" },
+    { text = "Delete all history...", value = "wipe" },
+  }
+  UI.Menu(self.frame, anchor, items, function(value)
+    if value == "group" then
+      s.groupOnly = not s.groupOnly
+    elseif value == "picked" then
+      if not s.pickedOnly and not W.report:AnyPicked() then
+        W.Print("nobody is picked yet: shift-click a player to pick them.")
+        return
+      end
+      s.pickedOnly = not s.pickedOnly
+    elseif value == "pickmenu" then
+      UI.PickMenu(M.frame, anchor)
+      return
+    elseif value == "world" then
+      W.db.trackOpenWorld = not W.db.trackOpenWorld
+      W.Print("open-world combat " ..
+        (W.db.trackOpenWorld and "is now recorded." or "is ignored (instances only)."))
+    elseif value == "new" then
+      W.ResetData("new")
+    elseif value == "wipe" then
+      if StaticPopup_Show then StaticPopup_Show("WREKKIT_RESET_ALL") else W.ResetData("all") end
+    end
+    M:UpdateToggles()
+    M:Refresh()
+  end, 180)
 end
 
 --[[ Lay the meter out for the current density settings.
@@ -552,6 +647,18 @@ function M:ApplyLayout()
 
   -- title bar
   f.bar:SetHeight(px(compact and 18 or 22))
+  -- Compact, no emblem: the title takes its place, 21px back for the name.
+  if f.mark and f._compactMark ~= compact then
+    f._compactMark = compact
+    f.title:ClearAllPoints()
+    if compact then
+      f.mark:Hide()
+      f.title:SetPoint("LEFT", f.bar, "LEFT", 6, 0)
+    else
+      f.mark:Show()
+      f.title:SetPoint("LEFT", f.mark, "RIGHT", 6, 0)
+    end
+  end
   if self.cogBtn then
     local size = px(compact and 13 or 16)
     self.cogBtn:SetWidth(size)
@@ -605,11 +712,14 @@ function M:ApplyLayout()
                  + 8                                   -- borders and insets
     -- Over and under: two rows in each half, and the second half's header.
     -- Side by side: the headers, and room for two columns.
-    local minW = px(260)
+    -- Compact (no toolbar, no footer): as narrow as 120, a name and its
+    -- number. The toolbar's search and buttons are what want 260.
+    local minW = compact and px(120) or px(260)
     local mode = self:SplitMode()
     if mode == "stacked" then
       chrome = chrome + rowH * 2 + px(16)
     elseif mode == "side" then
+      -- (compact: 200, two 100px columns -- M.SideMinWidth)
       chrome = chrome + px(16)
       minW = M.SideMinWidth()
     end
@@ -646,6 +756,7 @@ M.SPLIT_LABEL = SPLIT_LABEL
      columns: a short name and its number, once a narrow row has dropped its
      per-second column (see UI.Row). 400 was roomier than people wanted. ]]
 local SIDE_MIN_W = 300
+local SIDE_MIN_COMPACT = 200
 M.SIDE_MIN_W = SIDE_MIN_W
 
 --[[ How narrow side by side may go. Larger text needs more, but smaller
@@ -653,8 +764,10 @@ M.SIDE_MIN_W = SIDE_MIN_W
      shrink with it, and at 70% a minimum scaled down to 280 left two
      140-pixel columns with no room for a name. ]]
 function M.SideMinWidth()
-  local scaled = math.floor(SIDE_MIN_W * UI.FontScale() + 0.5)
-  if scaled < SIDE_MIN_W then return SIDE_MIN_W end
+  -- Compact: two 100px columns, a name and its number each in tight rows.
+  local base = (M:Settings().compact == true) and SIDE_MIN_COMPACT or SIDE_MIN_W
+  local scaled = math.floor(base * UI.FontScale() + 0.5)
+  if scaled < base then return base end
   return scaled
 end
 
@@ -791,12 +904,43 @@ end
 --- FontStrings do not size their parent, so without measuring the text the
 --- clickable area would be a fixed guess -- too small for "All Session",
 --- absurdly wide for "Current".
+--- Is the meter narrow (a compact meter made small)? Its title goes short.
+local NARROW_W = 200
+function M:Narrow()
+  local f = self.frame
+  return f and UI.FrameWidth(f) < NARROW_W * UI.FontScale() or false
+end
+
 function M:SetSegmentLabel(text)
   local b = self.segBtn
   if not b then return end
   text = text or ""
   b.label:SetText(text)
-  local w = b.label:GetStringWidth() or 0
+  local w = UI.FullTextWidth(b.label, text)
+  --[[ No further than the buttons on the right: past them it ran under the
+       split and settings buttons and out of a narrow window. Cut to the
+       letters that fit there ("Ragna"), as the rows' names are. ]]
+  local f = self.frame
+  if f then
+    local right = 4
+    for _, btn in ipairs({ f.closeButton, self.cogBtn, self.splitBtn }) do
+      if btn and btn:IsShown() then right = right + (btn:GetWidth() or 0) + 2 end
+    end
+    -- From the emblem's edge, or the bar's when compact has none.
+    local left = (f.mark and f.mark:IsShown()) and 27 or 6
+    -- The title first: cut too if even it does not fit ("DM" under "1+2").
+    local titleRoom = UI.FrameWidth(f.bar) - left - right - 4
+    local titleW = UI.FullTextWidth(f.title, f.title:GetText())
+    if titleW > titleRoom and titleRoom > 0 then
+      UI.FitName(f.title, f.title:GetText(), titleRoom)
+      titleW = titleRoom
+    end
+    local room = UI.FrameWidth(f.bar) - left - titleW - 6 - right - 8
+    if w > room then
+      if room > 8 then UI.FitName(b.label, text, room) else b.label:SetText("") end
+      w = math.max(0, room)
+    end
+  end
   b:SetWidth(w + 8)
   b:SetHeight(math.floor(13 * UI.FontScale() + 0.5))
 end
@@ -810,13 +954,23 @@ end
      at. A metric not named here still appears, under "Other", so adding
      one to W.metrics can never make it unreachable. ]]
 local METRIC_GROUPS = {
-  { "Damage", { "damage", "dps", "crit", "value" } },
+  { "Damage", { "damage", "dps", "crit", "missPct", "glancing", "value", "contribFx" } },
   { "Healing", { "healing", "hps", "healingTotal", "overheal", "healCrit", "support" } },
-  { "Survival", { "taken", "absorbed", "deaths" } },
+  { "Survival", { "taken", "absorbed", "deaths", "deathLog" } },
   { "Utility", { "dispels", "interrupts", "consumes", "consumeCost", "uptime" } },
   { "Enemies", { "enemy", "enemyTaken" } },
 }
 M.METRIC_GROUPS = METRIC_GROUPS
+
+--[[ Two of the report's tabs as meter views. They list effects and deaths
+     rather than rank players, so they are not in W.metrics: picked from the
+     same menu, opened the same way -- click a row for its detail, click
+     again or right-click to go back -- and announced as shown (M:RenderView,
+     M:AnnounceContext). ]]
+M.VIEWS = {
+  contribFx = { label = "Raid Contrib by effect", title = "Raid Contrib", short = "CONTRIB" },
+  deathLog = { label = "Death log", title = "Deaths", short = "DEATHS" },
+}
 
 --- `which` 2 picks the second metric of a split meter; otherwise the first.
 function M:MetricMenu(anchor, which)
@@ -832,12 +986,17 @@ function M:MetricMenu(anchor, which)
     local first = true
     for _, key in ipairs(g[2]) do
       local m = W.metrics.byKey[key]
-      if m then
+      local v = M.VIEWS[key]
+      if m or v then
         if first then
           table.insert(items, { text = g[1], header = true })
           first = false
         end
-        add(m)
+        if m then
+          add(m)
+        else
+          table.insert(items, { text = v.label, value = key, checked = (key == current) })
+        end
       end
     end
   end
@@ -920,6 +1079,7 @@ function M:WindowMenu(anchor)
     { text = "Full report", value = "report" },
     { text = "Threat window", value = "threat", checked = threatShown },
     { text = "Announce to chat...", value = "announce" },
+    { text = "Export...", value = "export" },
     { text = "Meter", header = true },
     { text = "Compact", value = "compact", checked = s.compact == true },
     { text = "Toolbar", value = "toolbar", checked = s.showToolbar ~= false },
@@ -945,6 +1105,8 @@ function M:WindowMenu(anchor)
         return
       end
       UI.AnnounceMenu(self.frame, anchor, M:AnnounceContext())
+    elseif value == "export" then
+      UI.ExportMenu(self.frame, anchor, M:AnnounceContext())
     elseif value == "threat" then
       if threatShown then
         UI.threat:SetDisplay("off")
@@ -1064,7 +1226,7 @@ local function makePainters(pane)
   local function paintActor(row, item, index)
     local color = item._color or W.ClassColor(item.class)
     if item.isPlayer then row:SetClass(item.class, UI.SpecIconFor(item.name, item.class)) end
-    row:SetData(item._rank, UI.RowName(item, M:Settings().pickedOnly),
+    row:SetData(item._rank, UI.RowName(item, M:Settings().pickedOnly, UI.RowTight(row)),
       item._text, item._sub, item._frac, color, 58)
     row.tip = function(self) actorTooltip(self, item, metricKey()) end
     --[[ The meter repaints twice a second. Without this the numbers under the
@@ -1294,13 +1456,144 @@ end
 --[[ Draw one pane from an already-built view, and say what its labels
      should read: { title, seg, footL, footR }. The first pane's go on the
      title bar and footer; the second's on its own header. ]]
+--[[ A list view (M.VIEWS) in one pane. The pane's drill field holds the
+     effect's name or the death's key while one is open. ]]
+function M:RenderView(pane, view, segLabel, key)
+  local list = self[pane.listField]
+  local drill = self[pane.drillField]
+  local out = { title = M.VIEWS[key].title, short = M.VIEWS[key].short, seg = segLabel }
+  local function back()
+    M[pane.drillField] = nil
+    UI.meter:Refresh()
+  end
+  local function clicks(row, onClick)
+    row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    row:SetScript("OnClick", onClick)
+  end
+  local function note(text)
+    list:SetData({ { label = text, value = "" } }, pane.paintStat)
+  end
+
+  if key == "contribFx" then
+    local effects = W.report:ContribEffects(view, self:Filter())
+    if drill then
+      local target
+      for _, e in ipairs(effects) do
+        if e.name == drill then target = e end
+      end
+      if target then
+        local unit = W.report.EffectUnit(target)
+        out.seg = target.name
+        list:SetData(target.players, function(row, p, i)
+          local share = target.total > 0 and p.amount / target.total or 0
+          row:SetClass(p.class, UI.SpecIconFor(p.name, p.class))
+          row:SetData(i, p.name, W.Short(p.amount) .. unit, string.format("%.1f%%", share * 100),
+            share, W.ClassColor(p.class), 42)
+          row.tip = nil
+          clicks(row, back)
+        end)
+        out.footL = W.Short(target.total) .. unit
+        out.footR = "click to go back"
+        return out
+      end
+      self[pane.drillField] = nil
+    end
+    if table.getn(effects) == 0 then
+      note((W.value and W.value:Enabled()) and "nothing recorded"
+        or "turn on Raid value (Settings > Recording)")
+      out.footL, out.footR = "", ""
+      return out
+    end
+    local top, added = 0, 0
+    for _, e in ipairs(effects) do
+      if e.kind == "value" then
+        added = added + e.total
+        if e.total > top then top = e.total end
+      end
+    end
+    list:SetData(effects, function(row, e, i)
+      local n = table.getn(e.players)
+      local frac = (e.kind == "value" and top > 0) and e.total / top or 0
+      row:SetData(i, e.name, W.Short(e.total) .. W.report.EffectUnit(e),
+        n .. (n == 1 and " player" or " players"), frac, W.color.accent, 58)
+      row.tip = nil
+      row.effectName = e.name
+      clicks(row, function()
+        if arg1 == "RightButton" then return end
+        M[pane.drillField] = (this or row).effectName
+        UI.meter:Refresh()
+      end)
+    end)
+    out.footL = table.getn(effects) .. " effects"
+    out.footR = W.Short(added) .. " added  (click one for who)"
+    return out
+  end
+
+  -- deathLog
+  local deaths = W.report:DeathList(view)
+  if drill then
+    local target
+    for _, d in ipairs(deaths) do
+      if W.report.DeathKey(d) == drill then target = d end
+    end
+    if target then
+      local color = W.ClassColor(target.class)
+      out.seg = (target.name or "?") .. " - " .. W.Clock(target.t or 0)
+      list:SetData(W.report:DeathRecap(target), function(row, st, i)
+        local label = (st.kind == "sum") and ("|cffe0a22c" .. st.label .. "|r") or st.label
+        row:SetData(nil, label, W.report.RecapValue(st), st.note or "", 0, color, 52)
+        row.tip = nil
+        clicks(row, back)
+      end)
+      out.footL = (target.name or "?") .. " died"
+      out.footR = "click to go back"
+      return out
+    end
+    self[pane.drillField] = nil
+  end
+  if table.getn(deaths) == 0 then
+    note("nobody died")
+    out.footL, out.footR = "", ""
+    return out
+  end
+  list:SetData(deaths, function(row, d, i)
+    row:SetClass(d.class, UI.SpecIconFor(d.name, d.class))
+    row:SetData(i, d.name or "?", W.Clock(d.t or 0), d.encounter or "", 0, W.ClassColor(d.class), 58)
+    row.tip = function(self)
+      if not GameTooltip then return end
+      GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+      local c = W.ClassColor(d.class)
+      GameTooltip:AddLine(d.name or "?", c[1], c[2], c[3])
+      GameTooltip:AddDoubleLine("Died", W.Clock(d.t or 0) .. "  " .. (d.encounter or ""),
+        0.78, 0.80, 0.85, 1, 1, 1)
+      local last = d.recap and d.recap[table.getn(d.recap)]
+      if last then
+        GameTooltip:AddDoubleLine("Last hit", (last.src or "?") .. "  " .. W.Comma(last.a or 0),
+          0.78, 0.80, 0.85, 1, 1, 1)
+      end
+      GameTooltip:AddLine("Click: the seconds before it", 0.62, 0.65, 0.72)
+      GameTooltip:Show()
+    end
+    row.deathKey = W.report.DeathKey(d)
+    clicks(row, function()
+      if arg1 == "RightButton" then return end
+      M[pane.drillField] = (this or row).deathKey
+      UI.meter:Refresh()
+    end)
+  end)
+  out.footL = table.getn(deaths) .. (table.getn(deaths) == 1 and " death" or " deaths")
+  out.footR = "click one for its recap"
+  return out
+end
+
 function M:RenderPane(pane, view, segLabel)
   local s = self:Settings()
   local list = self[pane.listField]
   local metricKey = s[pane.metricKey]
+  if M.VIEWS[metricKey] then return self:RenderView(pane, view, segLabel, metricKey) end
   local metric = W.metrics.Get(metricKey)
   local rows, _, total = W.report:Rank(view, metricKey, self:Filter())
-  local out = { title = W.metrics.Label(metric), seg = segLabel }
+  local out = { title = W.metrics.Label(metric), short = metric.short, seg = segLabel }
 
   local drill = self[pane.drillField]
   if drill then
@@ -1378,6 +1671,7 @@ end
 function M:RefreshInner()
   local f = self.frame
   if not f or not f:IsShown() then return end
+  self:LayoutToolbar()
 
   local s = self:Settings()
   local split = self:Split()
@@ -1394,9 +1688,7 @@ function M:RefreshInner()
   -- on its header, with its total where the footer would put it.
   if split then
     local o = self:RenderPane(PANES[2], view, segLabel)
-    local where = (o.seg ~= segLabel) and ("  |cff9d9d9d" .. o.seg .. "|r") or ""
-    self.head2.label:SetText(o.title .. where)
-    self.head2.right:SetText(o.footR or "")
+    self:FillHead(self.head2, o, segLabel)
   end
 
   local side = split and self:SplitMode() == "side"
@@ -1409,17 +1701,41 @@ function M:RefreshInner()
     return
   end
   local o = self:RenderPane(PANES[1], view, segLabel)
-  f.title:SetText(o.title)
+  -- Narrow, the metric's short name ("DMG"), so the pull's has room.
+  f.title:SetText((M:Narrow() and o.short) or o.title)
   self:SetSegmentLabel(o.seg)
   self.footL:SetText(o.footL or "")
   self.footR:SetText(o.footR or "")
   -- Side by side, the first column's header says the same, so the two
   -- columns read alike; the footer keeps the combat time.
-  if side then
-    local where = (o.seg ~= segLabel) and ("  |cff9d9d9d" .. o.seg .. "|r") or ""
-    self.head1.label:SetText(o.title .. where)
-    self.head1.right:SetText(o.footR or "")
+  if side then self:FillHead(self.head1, o, segLabel) end
+end
+
+--[[ A half's header: its metric, whose detail when drilled, and its total
+     on the right. Narrow, the metric's short name and no more; and the
+     left side cut to its letters before the total, rather than running
+     under it. ]]
+function M:FillHead(head, o, segLabel)
+  local width = UI.FrameWidth(head)
+  local narrow = width < 200 * UI.FontScale()
+  local where = (o.seg ~= segLabel) and ("  |cff9d9d9d" .. o.seg .. "|r") or ""
+  local label = narrow and ((o.short or o.title) .. ((o.seg ~= segLabel) and (" " .. o.seg) or ""))
+    or (o.title .. where)
+  --[[ The total, in a header, is the figure alone: drilled in, the footer's
+       "2.18M  (click one for detail)" left the label no room at all -- and
+       with none, it was not cut, so the two ran into each other and the
+       half beside. Short of room even so, the total gives way. ]]
+  local right = o.footR or ""
+  local _, _, figure = string.find(right, "^(.-)  %(")
+  if figure then right = figure end
+  head.right:SetText(right)
+  head.label:SetText(label)
+  local room = width - 12 - UI.FullTextWidth(head.right, right) - 6
+  if room < 30 then
+    head.right:SetText("")
+    room = width - 12
   end
+  if room > 0 then UI.FitName(head.label, label, room) else head.label:SetText("") end
 end
 
 --[[ The meter as a threat meter: the same rows the threat window draws,
@@ -1481,10 +1797,12 @@ UI.PICK_TIP = {
 --- A player row's name as drawn. Marked if picked -- unless only picked
 --- players are showing, when every row is one and the mark is noise -- and
 --- marked * when filled from that player's own report, not measured here.
-function UI.RowName(item, pickedOnly)
+--- `tight`: a narrow row (UI.RowTight), the name alone -- every letter of
+--- a marker or the spec is one of the name's.
+function UI.RowName(item, pickedOnly, tight)
   local name = item.name or "?"
-  if item.isPlayer then name = UI.WithSpec(item.name, name) end
-  if not pickedOnly and (item.isPlayer or item.class == "PET")
+  if item.isPlayer and not tight then name = UI.WithSpec(item.name, name) end
+  if not pickedOnly and not tight and (item.isPlayer or item.class == "PET")
      and W.report:IsPicked(item.ownerName or item.name) then
     name = "|cffe0a22c>|r " .. name
   end

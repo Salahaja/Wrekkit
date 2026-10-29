@@ -58,6 +58,18 @@ local NULL_GUID = "0x0000000000000000"
      every white hit as a critical -- a 100% crit rate on melee. ]]
 local HITINFO_CRIT = 128        -- 0x80, auto attacks (1.12)
 local SPELL_HIT_CRIT = 2        -- normalised code, spell damage
+local HITINFO_MISS = 16         -- 0x10
+local HITINFO_GLANCING = 16384  -- 0x4000: a white swing at a higher-level mob
+local HITINFO_CRUSHING = 32768  -- 0x8000: a mob's swing at a lower-level player
+
+--[[ A swing that did no damage still says what happened to it: the MISS
+     flag, or the victim's state -- 2 dodged, 3 parried, 5 blocked all of
+     it. Chronicle's log of 10/25 held 2,875 dodges, 2,176 parries, 2,788
+     misses and 279 full blocks, and Wrekkit counted none of them: a swing
+     of 0 was dropped on arrival, so a warrior's hit table had no misses in
+     it at all. Mapped to E:Miss's codes (its spells' missInfo). Immune,
+     evade and a full absorb are not the hit table and stay out. ]]
+local SWING_AVOIDED = { [2] = 3, [3] = 4, [5] = 5 }
 
 --[[ Damage that cannot crit, so it is no evidence about a crit chance.
      Periodic ticks -- a DoT, Consecration -- never crit in 1.12, and the
@@ -83,7 +95,9 @@ end
 C.events = {
   "AUTO_ATTACK_SELF", "AUTO_ATTACK_OTHER",
   "SPELL_DAMAGE_EVENT_SELF", "SPELL_DAMAGE_EVENT_OTHER",
-  "SPELL_HEAL_BY_SELF", "SPELL_HEAL_BY_OTHER", "SPELL_HEAL_ON_SELF",
+  -- Not SPELL_HEAL_ON_SELF: every heal on you also arrives as BY_SELF (you
+  -- cast it) or BY_OTHER (someone else did) -- see the dispatch below.
+  "SPELL_HEAL_BY_SELF", "SPELL_HEAL_BY_OTHER",
   -- BY_ only: ON_SELF repeats BY_SELF when you restore yourself.
   "SPELL_ENERGIZE_BY_SELF", "SPELL_ENERGIZE_BY_OTHER",
   "SPELL_MISS_SELF", "SPELL_MISS_OTHER",
@@ -582,6 +596,7 @@ local itemCache = {}
      worse answer in place even after the client learns the item. ]]
 function C:Item(itemId, spellId)
   if not itemId or itemId == 0 then return nil end
+  if itemId < 0 then return C.GENERIC_CONSUME[itemId] or "Food or drink" end
 
   local hit = itemCache[itemId]
   if hit then return hit end
@@ -639,10 +654,16 @@ local swingInfo, spellHitInfo, healInfo, shieldInfo = {}, {}, {}, {}
 
 function C:AUTO_ATTACK(attacker, target, damage, hitInfo, victimState, _, blocked, absorbed, resisted)
   damage = num(damage)
-  if damage <= 0 then return end
+  if damage <= 0 then
+    local code = hasBit(num(hitInfo), HITINFO_MISS) and 1 or SWING_AVOIDED[num(victimState)]
+    if code then W.encounter:Miss(attacker, target, 0, code) end
+    return
+  end
   self:TakeDamage(target, damage)
   local info = swingInfo
   info.crit = hasBit(num(hitInfo), HITINFO_CRIT)
+  info.glancing = hasBit(num(hitInfo), HITINFO_GLANCING)
+  info.crushing = hasBit(num(hitInfo), HITINFO_CRUSHING)
   info.canCrit = true
   info.absorbed = num(absorbed)
   info.blocked = num(blocked)
@@ -902,9 +923,40 @@ end
        no item                matched by spell: what you have learned, then
                               W.consumesDB (tools/make_consumes.lua, built from
                               the client's item cache). Players only.
-     A spell several items cast (Drink, Food, a server's joke potion reusing
-     Major Healing Potion's) is credited to the first, the lowest item id --
-     the original -- unless your own use taught which. ]]
+     A spell several items cast (a server's joke potion reusing Major
+     Healing Potion's) is credited to the first, the lowest item id -- the
+     original -- unless your own use taught which. Drink and food are the
+     exception (genericConsume). ]]
+
+--[[ Another player's drink or food: which item is not said. Every drink
+     casts one of a few "Drink" spells, every food a "Food" one, and each is
+     cast by dozens of items, from Morning Glory Dew to Conjured Mana
+     Orange. Credited to one of them, every drink a mage had read as the
+     Conjured Mana Orange you once ate (10/25 Molten Core: 51 of them), and
+     was priced as one. So they count as Drink or Food, under ids of their
+     own (never an item's), and unpriced. Your own stay exact: the client
+     names your item. A food or drink spell only one item is known to cast
+     keeps that item. ]]
+C.GENERIC_CONSUME = { [-1] = "Drink", [-2] = "Food", [-3] = "Food or drink" }
+local function genericConsume(spellId, known, learned)
+  local items = known and table.getn(known) / 2 or 0
+  if learned then
+    local listed = false
+    for i = 1, table.getn(known or {}), 2 do
+      if known[i] == learned then listed = true end
+    end
+    if not listed then items = items + 1 end
+  end
+  if items < 2 then return nil end
+  local name = string.lower(C:Spell(spellId) or "")
+  if string.find(name, "^drink") then return -1 end
+  if string.find(name, "^food") or string.find(name, "^refreshment") then return -2 end
+  -- Not named here (no SuperWoW or Nampower to ask): a spell this many
+  -- items cast is food or drink; a couple is a potion and a look-alike.
+  if string.find(name, "^spell %d") and items >= 3 then return -3 end
+  return nil
+end
+
 function C:ConsumableItem(itemId, spellId, casterGuid)
   local db = W.consumesDB or {}
   if itemId ~= 0 then
@@ -930,8 +982,10 @@ function C:ConsumableItem(itemId, spellId, casterGuid)
   local u = self.units[casterGuid] or self:Unit(casterGuid)
   if not u or not u.isPlayer then return nil end
   local learned = W.db and W.db.consumeSpells and W.db.consumeSpells[spellId]
-  if learned then return learned end
   local known = db[spellId]
+  local generic = genericConsume(spellId, known, learned)
+  if generic then return generic end
+  if learned then return learned end
   return known and known[1] or nil
 end
 
@@ -1030,9 +1084,14 @@ dispatch.SPELL_HEAL_BY_SELF = function(a1, a2, a3, a4, a5, a6)
   C:SPELL_HEAL(a1, a2, a3, a4, a5, a6)
 end
 dispatch.SPELL_HEAL_BY_OTHER = dispatch.SPELL_HEAL_BY_SELF
--- HEAL_ON_SELF can duplicate HEAL_BY_SELF when you heal yourself; the
--- aggregator de-dupes on (caster, target, spell, amount) within a tick.
-dispatch.SPELL_HEAL_ON_SELF = dispatch.SPELL_HEAL_BY_SELF
+--[[ SPELL_HEAL_ON_SELF is not listened to: it restates a heal on you that
+     BY_SELF or BY_OTHER already carried. The aggregator's one-heal memory
+     could not catch it -- a Prayer of Healing lands on five people between
+     the two copies, and the first copy has already raised your health, so
+     the second splits into different effective/overheal -- and every heal
+     anyone put on the recording player counted twice (10/25 Molten Core:
+     Zylla's Flash Heals on Salahaja exactly doubled, 85k in all). Chronicle
+     ignores ON_SELF for the same reason. ]]
 -- SPELL_ENERGIZE_BY_*(target, caster, spellId, powerType, amount, periodic)
 dispatch.SPELL_ENERGIZE_BY_SELF = function(a1, a2, a3, a4, a5) C:SPELL_ENERGIZE(a1, a2, a3, a4, a5) end
 dispatch.SPELL_ENERGIZE_BY_OTHER = dispatch.SPELL_ENERGIZE_BY_SELF

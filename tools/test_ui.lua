@@ -136,7 +136,12 @@ local function region(kind)
          width for "Gah" and "Shieldbarbie" cannot tell a working layout
          from a broken one. Roughly 6px a character at the default size. ]]
     GetStringWidth = function(self)
-      return string.len(self._text or "") * 6
+      -- Bounded, as the client's is: a font string given a width reports
+      -- no more than it (the text is cut to "..." by then). Measuring a
+      -- row's own name therefore always said it fit, and nothing was cut.
+      local full = string.len(self._text or "") * 6
+      if self._kind == "FontString" and (self._w or 0) > 0 and full > self._w then return self._w end
+      return full
     end,
   }
 
@@ -214,6 +219,11 @@ CreateFrame = function(kind, name, parent)
     SetID = function() end,
     GetID = function() return 0 end,
     SetSequence = function() end,
+    -- The export box: a multi-line edit box in a scroll frame.
+    SetMultiLine = function(self, v) self._multi = v end,
+    HighlightText = function(self) self._highlighted = true end,
+    SetScrollChild = function(self, c) self._child = c end,
+    UpdateScrollChildRect = function() end,
   }
 
   -- Frames share the region methods (SetPoint, sizing, visibility).
@@ -380,6 +390,7 @@ dofile("store.lua")
 dofile("archive.lua")
 dofile("sync.lua")
 dofile("announce.lua")
+dofile("export.lua")
 dofile("threat.lua")
 dofile("talents.lua")
 dofile("prices.lua")
@@ -390,6 +401,7 @@ dofile("ui/chart.lua")
 dofile("ui/meter.lua")
 dofile("ui/report.lua")
 dofile("ui/confirm.lua")
+dofile("ui/export.lua")
 dofile("ui/settings.lua")
 dofile("ui/peers.lua")
 dofile("ui/threat.lua")
@@ -472,7 +484,17 @@ print("\nWrekkit UI smoke test\n")
 
 local UI = Wrekkit.ui
 
-step("meter builds", function() UI.meter:Create() end)
+step("meter builds", function()
+  UI.meter:Create()
+  -- This harness resolves no anchors, so an anchored frame reads 100 wide;
+  -- the meter's lists and title bar are as wide as the 260 window here.
+  UI.meter.list:SetWidth(252)
+  if UI.meter.list2 then UI.meter.list2:SetWidth(252) end
+  UI.meter.frame.bar:SetWidth(258)
+  UI.meter.head1:SetWidth(252)
+  UI.meter.head2:SetWidth(252)
+  UI.meter.toolbar:SetWidth(256)
+end)
 step("meter shows", function() UI.meter:Show() end)
 step("meter refreshes", function() UI.meter:Refresh() end)
 
@@ -1414,6 +1436,283 @@ step("announce: lines can be left out, and contrib names who added each", functi
   if not string.find(joined, "2. Windfury Totem", 1, true) then error("the lines were not numbered again: " .. joined) end
 end)
 
+-- Two deaths with their last blows, the killing one last, for the views
+-- and announcements below.
+local function fakeDeaths()
+  return {
+    { name = "Fuff", class = "ROGUE", t = 75, encT = 75, encounter = "Ragnaros",
+      recap = { { ago = 3, src = "Ragnaros", spell = "Melee", a = 2000, hp = 3000 },
+                { ago = 1, src = "Ragnaros", spell = "Wrath of Ragnaros", a = 3500, hp = 1000 } } },
+    { name = "Elfpriest", class = "PRIEST", t = 130, encT = 130, encounter = "Ragnaros", recap = {} },
+  }
+end
+
+step("announce: the death log and one death's last blows, as shown", function()
+  local R = Wrekkit.report
+  local real = R.DeathList
+  local deaths = fakeDeaths()
+  R.DeathList = function() return deaths end
+  local A = Wrekkit.announce
+  local base = { metric = "deaths", metrics = { "deaths" }, encounters = {}, label = "MC", deaths = true }
+  local lines = A:Lines(base, 5)
+  local fail
+  if not string.find(lines[1], "Deaths - MC: 2", 1, true) then fail = "the heading reads " .. lines[1] end
+  if not fail and lines[2] ~= "1. Fuff  1:15  (Ragnaros)" then fail = "the first death reads " .. tostring(lines[2]) end
+  local drilled = {}
+  for k, v in pairs(base) do drilled[k] = v end
+  drilled.deathDrill = R.DeathKey(deaths[1])
+  local one = A:Lines(drilled, 1)
+  R.DeathList = real
+  if fail then error(fail) end
+  if not string.find(one[1], "Fuff died at 1:15", 1, true) then error("the recap heading reads " .. one[1]) end
+  -- The heading, the three summary lines, and the last blow.
+  if table.getn(one) ~= 5 then error("Top 1 of a recap is the heading, the summary and one blow, got " .. table.getn(one)) end
+  if not string.find(one[2], "Killed by Ragnaros (Wrath of Ragnaros)", 1, true) then error("the summary reads " .. one[2]) end
+  if not string.find(one[4], "No healing reached them", 1, true) then error("the heal line reads " .. one[4]) end
+  if not string.find(one[5], "Wrath of Ragnaros", 1, true) then error("the blow kept is not the killing one: " .. one[5]) end
+  if string.find(table.concat(one, " "), "|c", 1, true) then error("colour codes in a chat line") end
+end)
+
+step("export: the whole list, where chat stops at 15", function()
+  local R = Wrekkit.report
+  local real = R.DeathList
+  local many = {}
+  for i = 1, 20 do table.insert(many, { name = "P" .. i, class = "ROGUE", t = i * 10, encounter = "Ragnaros" }) end
+  R.DeathList = function() return many end
+  local ctx = { metric = "deaths", metrics = { "deaths" }, encounters = {}, label = "MC", deaths = true }
+  local chat = table.getn(Wrekkit.announce:Lines(ctx, 40))
+  local text = Wrekkit.export:Shown(ctx)
+  R.DeathList = real
+  if chat ~= 17 then error("chat: the heading, 15 and a '...and 5 more', got " .. chat) end
+  if not string.find(text, "20. P20", 1, true) then error("the export stopped short: " .. string.sub(text, -80)) end
+end)
+
+step("announce: packed, lines share messages up to 255 characters", function()
+  local A = Wrekkit.announce
+  local packed = A:Pack({ "Wrekkit  Damage Done - MC (1m)", "1. Fuff  10k", "2. Manner  9k", "  ...and 3 more",
+                          "Wrekkit  Healing - MC (1m)", "1. Elfpriest  5k" })
+  if table.getn(packed) ~= 2 then error("each heading starts a message: got " .. table.getn(packed)) end
+  if packed[1] ~= "Wrekkit  Damage Done - MC (1m) / 1. Fuff  10k / 2. Manner  9k / ...and 3 more" then
+    error("packed as " .. packed[1])
+  end
+  local many = { "Wrekkit  Damage Done - MC (1m)" }
+  for i = 1, 15 do table.insert(many, i .. ". " .. string.rep("n", 30) .. "  100k") end
+  packed = A:Pack(many)
+  if table.getn(packed) < 2 then error("sixteen long lines in one message") end
+  for _, m in ipairs(packed) do
+    if string.len(m) > 255 then error("a message of " .. string.len(m) .. " characters") end
+  end
+end)
+
+step("announce: Top 3, 5 or 10 in one click, and the next post starts there", function()
+  local was = Wrekkit.db.announceCount
+  Wrekkit.db.announceCount = nil
+  local ctx = { metrics = { "damage" }, metric = "damage", encounters = {}, label = "A", filter = {}, petMode = "merge" }
+  UI.ConfirmAnnounce({ "line" }, "GUILD", nil, function() end, ctx)
+  local dlg = _G["WrekkitConfirm"]
+  local fail
+  if (dlg.countStepper:GetWidth() or 0) < 100 then fail = "the Top stepper has no width to draw its buttons in" end
+  local three, ten
+  for _, b in ipairs(dlg.quickTop or {}) do
+    if b._top == 3 then three = b end
+    if b._top == 10 then ten = b end
+    if not fail and not b:IsShown() then fail = "the Top " .. b._top .. " button is hidden" end
+  end
+  if not fail and not (three and ten) then fail = "no Top 3 / Top 10 buttons" end
+  if not fail then
+    ten:GetScript("OnClick")()
+    if Wrekkit.db.announceCount ~= 10 then fail = "Top 10 was not remembered" end
+    if not fail and not ten._active then fail = "the button in use is not lit" end
+  end
+  UI.CloseConfirm()
+  if not fail then
+    UI.ConfirmAnnounce({ "line" }, "GUILD", nil, function() end, ctx)
+    if dlg.countStepper:IsShown() and not ten._active then fail = "the next post did not start at 10" end
+    three:GetScript("OnClick")()
+    if Wrekkit.db.announceCount ~= 3 then fail = "Top 3 was not remembered" end
+    UI.CloseConfirm()
+  end
+  -- One ability's spread has no Top: neither do its buttons.
+  if not fail then
+    local spread = {}
+    for k, v in pairs(ctx) do spread[k] = v end
+    spread.drill, spread.drillAbility = "Salahaja", 11267
+    UI.ConfirmAnnounce({ "line" }, "GUILD", nil, function() end, spread)
+    if three:IsShown() then fail = "Top buttons offered for one ability's spread" end
+    UI.CloseConfirm()
+  end
+  Wrekkit.db.announceCount = was
+  if fail then error(fail) end
+end)
+
+step("announce: Top N and leaving lines out work in a drilldown, per heading", function()
+  local sent
+  -- A player's abilities: a list, so Top N is offered.
+  local drilled = { metrics = { "damage" }, metric = "damage", encounters = {}, label = "A",
+                    filter = {}, petMode = "merge", drill = "Salahaja" }
+  UI.ConfirmAnnounce({ "line" }, "GUILD", nil, function() end, drilled)
+  local dlg = _G["WrekkitConfirm"]
+  if not dlg.countStepper:IsShown() then error("Top N is missing in a drilldown") end
+  UI.CloseConfirm()
+  -- One ability's spread: the lines it has.
+  drilled.drillAbility = 11267
+  UI.ConfirmAnnounce({ "line" }, "GUILD", nil, function() end, drilled)
+  if dlg.countStepper:IsShown() then error("Top N offered for one ability's spread") end
+  UI.CloseConfirm()
+
+  -- Two headings: leaving Fuff out of the damage leaves his healing line,
+  -- and each heading numbers from 1.
+  local lines = { "Wrekkit  Damage Done - A (1m)", "1. Fuff  10k", "2. Manner  9k",
+                  "Wrekkit  Healing - A (1m)", "1. Fuff  5k", "2. Elfpriest  4k", "  ...and 2 more" }
+  local real = Wrekkit.db.announcePack
+  Wrekkit.db.announcePack = false
+  UI.ConfirmAnnounce(lines, "SAY", nil, function(_, final) sent = final end,
+    { metrics = { "damage", "healing" }, encounters = {}, label = "A", filter = {}, petMode = "merge" })
+  arg1 = "LeftButton"
+  dlg.rowBtns[2]:GetScript("OnClick")()     -- 1. Fuff, under Damage Done
+  dlg.rowBtns[7]:GetScript("OnClick")()     -- ...and 2 more
+  dlg.sendBtn:GetScript("OnClick")()
+  local joined = table.concat(sent or {}, "~")
+  local fail
+  if joined ~= "Wrekkit  Damage Done - A (1m)~1. Manner  9k~Wrekkit  Healing - A (1m)~1. Fuff  5k~2. Elfpriest  4k" then
+    fail = "sent " .. joined
+  end
+  -- Packed: the same lines in two messages.
+  if not fail then
+    Wrekkit.db.announcePack = true
+    UI.ConfirmAnnounce(lines, "SAY", nil, function(_, final) sent = final end,
+      { metrics = { "damage", "healing" }, encounters = {}, label = "A", filter = {}, petMode = "merge" })
+    if not dlg.packCheck:IsShown() then fail = "no Fewer messages box" end
+    dlg.sendBtn:GetScript("OnClick")()
+    if not fail and table.getn(sent or {}) ~= 2 then fail = "packed into " .. table.getn(sent or {}) .. " messages" end
+  end
+  Wrekkit.db.announcePack = real
+  if fail then error(fail) end
+end)
+
+step("meter: Raid Contrib by effect and the death log, opened and announced as shown", function()
+  local R = Wrekkit.report
+  local realE, realD = R.Effects, R.DeathList
+  local deaths = fakeDeaths()
+  R.Effects = function(self, view, key)
+    if key == "support" then return {} end
+    return {
+      { name = "Sunder Armor", total = 60000, kind = "value",
+        players = { { name = "Wiredbro", class = "WARRIOR", amount = 40000 },
+                    { name = "Manner", class = "WARRIOR", amount = 20000 } } },
+    }
+  end
+  R.DeathList = function() return deaths end
+  local M = UI.meter
+  local was = M:Settings().metric
+  M:Show()
+  local fail
+  local function check(cond, why) if not fail and not cond then fail = why end end
+
+  -- Offered in the metric menu.
+  local items
+  local realMenu = UI.Menu
+  UI.Menu = function(_, _, its) items = its end
+  M:MetricMenu(M.frame.bar)
+  UI.Menu = realMenu
+  local offered = {}
+  for _, it in ipairs(items or {}) do if it.value then offered[it.value] = true end end
+  check(offered.contribFx and offered.deathLog, "the menu does not offer both views")
+
+  M:SetMetric("contribFx")
+  check(M.list.data[1] and M.list.data[1].name == "Sunder Armor", "the effects are not listed")
+  arg1 = "LeftButton"
+  if not fail then M.list.rows[1]:GetScript("OnClick")() end
+  check(M.drill == "Sunder Armor", "clicking an effect did not open it")
+  check(M.list.data[1] and M.list.data[1].name == "Wiredbro", "opened, it does not list who built it")
+  local ctx = M:AnnounceContext()
+  check(ctx.contrib and ctx.contribEffect == "Sunder Armor" and not ctx.drill,
+    "the announcement is not that effect's")
+  if not fail then M.list.rows[1]:GetScript("OnClick")() end
+  check(M.drill == nil, "clicking again did not go back")
+
+  M:SetMetric("deathLog")
+  check(M.list.data[1] and M.list.data[1].name == "Fuff", "the deaths are not listed in order")
+  if not fail then M.list.rows[1]:GetScript("OnClick")() end
+  check(M.drill == R.DeathKey(deaths[1]), "clicking a death did not open its recap")
+  check(table.getn(M.list.data) == 5, "the recap does not show the summary and both blows")
+  ctx = M:AnnounceContext()
+  check(ctx.deaths and ctx.deathDrill == M.drill and not ctx.drill, "the announcement is not that death's")
+  local lines = Wrekkit.announce:Lines(ctx, 5)
+  check(string.find(lines[1] or "", "Fuff died", 1, true), "announced as " .. tostring(lines[1]))
+
+  R.Effects, R.DeathList = realE, realD
+  M:SetMetric(was or "damage")
+  if fail then error(fail) end
+end)
+
+step("export: the report's button offers it, and the box opens selected", function()
+  if not UI.report.exportBtn then error("the report has no Export button") end
+  local items
+  local realMenu = UI.Menu
+  UI.Menu = function(_, _, its, onPick) items = its; UI._pick = onPick end
+  UI.report:Show()
+  UI.report.exportBtn:GetScript("OnClick")()
+  UI.Menu = realMenu
+  local offered = {}
+  for _, it in ipairs(items or {}) do if it.value then offered[it.value] = true end end
+  for _, v in ipairs({ "shown:file", "consumes:file", "shown:copy", "consumes:copy", "shot" }) do
+    if not offered[v] then error("the Export menu has no " .. v) end
+  end
+  -- Copy: the box opens with the text, selected, fenced for Discord.
+  UI._pick("consumes:copy")
+  UI._pick = nil
+  local box = _G["WrekkitExport"]
+  if not (box and box:IsShown()) then error("the copy box did not open") end
+  local text = box.editBox:GetText()
+  if string.sub(text, 1, 3) ~= "```" then error("not fenced: " .. string.sub(text, 1, 20)) end
+  if not string.find(text, "Wrekkit consumables", 1, true) then error("the box holds " .. string.sub(text, 1, 40)) end
+  if not box.editBox._highlighted then error("the text is not selected") end
+  -- Read only: a keystroke puts it back.
+  box.editBox:SetText("typed over")
+  box.editBox:GetScript("OnTextChanged")()
+  if box.editBox:GetText() ~= text then error("the box could be typed over") end
+  box:Hide()
+  -- The meter offers the same menu.
+  items = nil
+  UI.Menu = function(_, _, its, onPick) items = its; UI._pick = onPick end
+  UI.meter:WindowMenu(UI.meter.frame.bar)
+  if UI._pick then UI._pick("export") end
+  UI.Menu = realMenu
+  UI._pick = nil
+  local fromMeter = false
+  for _, it in ipairs(items or {}) do if it.value == "consumes:file" then fromMeter = true end end
+  if not fromMeter then error("the meter's Export... does not open the export menu") end
+end)
+
+step("timeline: clicking a death opens its recap", function()
+  local R = UI.report
+  R:Show()
+  R.state.tab = "summary"
+  local c = R.chart
+  c.sampleCount = 100
+  c.deaths = { { name = "Fuff", t = 40, deathKey = "Fuff:75" } }
+  local realAt = c.SecondAt
+  c.SecondAt = function() return 40, (40 / 100) * (c.plot and c.plot:GetWidth() or 0) end
+  local d = c:DeathAt()
+  if not d or d.name ~= "Fuff" then
+    c.SecondAt = realAt
+    error("the death under the cursor was not found")
+  end
+  -- The death as the Deaths tab finds it in the pulls on show.
+  local realList = Wrekkit.report.DeathList
+  Wrekkit.report.DeathList = function() return fakeDeaths() end
+  c.hit:GetScript("OnClick")()
+  c.SecondAt = realAt
+  local shown = R.mainList.data and R.mainList.data[1]
+  Wrekkit.report.DeathList = realList
+  if R.state.tab ~= "deaths" then error("the click did not open the Deaths tab") end
+  if R.state.deathDrill ~= "Fuff:75" then error("opened on " .. tostring(R.state.deathDrill)) end
+  if not (shown and shown.kind == "sum") then error("the recap is not what the tab shows") end
+  R.state.tab, R.state.deathDrill = "summary", nil
+  R:Refresh()
+end)
+
 step("mob frames: distance in yards, coloured by this character's bands", function()
   local MF = UI.mobs
   local s = Wrekkit.threat:Settings()
@@ -1503,6 +1802,20 @@ step("mob frames: distance in yards, coloured by this character's bands", functi
   end
   s.mobRangeBy = realBy
   if fail then error(fail) end
+end)
+
+step("meter: a pull held for the rest of its fight is still the current one", function()
+  local E = Wrekkit.encounter
+  local realLive, realHeld = E.live, E.heldPull
+  local fake = { totals = { damage = 100, healing = 0, taken = 0 }, actors = {}, enemies = {}, startTime = 1, startT = 1, stopT = 2, combat = 1 }
+  E.live, E.heldPull = nil, fake
+  local s = UI.meter:Settings()
+  local was = s.segment
+  s.segment = "current"
+  local list = UI.meter:Encounters()
+  s.segment = was
+  E.live, E.heldPull = realLive, realHeld
+  if list[1] ~= fake then error("a held pull vanished from the meter's Current") end
 end)
 
 step("clicking real handlers (not just setting state)", function()
@@ -3511,9 +3824,45 @@ step("threat: meter mode switches the meter for the fight and back", function()
   UI.meter:SetMetric("damage")
 end)
 
+step("threat: every warning, alert, flash and popup is off by default", function()
+  local d = Wrekkit.threat.defaults
+  for _, k in ipairs({ "warnText", "warnSound", "raidWarning", "warnPulled", "warnFlash", "tankAlerts",
+                       "warnLostAggro", "flash", "flashFrame", "flashScreen", "tauntPopup" }) do
+    if d[k] ~= false then error(k .. " is on by default") end
+  end
+end)
+
+step("threat: tanking, the % is your hold -- 100 safe, falling as someone closes", function()
+  local T = Wrekkit.threat
+  if T.Hold(0) ~= 100 or T.Hold(76) ~= 24 or T.Hold(130) ~= 0 then error("the hold is not 100 minus the runner-up") end
+  local realTank = T.IsTank
+  T.IsTank = function() return true end
+  local me = UnitName("player")
+  local mine = { name = me, isMe = true, tank = true, perc = 100, threat = 10000, pull = 100 }
+  local runner = { name = "Stabbs", perc = 84, threat = 8400, melee = true }
+  runner.pull = T.PullPercent(runner)          -- 84/110: 76% of the way
+  local cur = { rows = { mine, runner }, me = mine, tank = mine }
+  local pct, color, _, text = T:Display(cur)
+  local alone = { rows = { mine }, me = mine, tank = mine }
+  local _, _, _, safe = T:Display(alone)
+  T.IsTank = realTank
+  if math.abs(pct - (100 - runner.pull)) > 0.01 then error("the tank's number is " .. tostring(pct)) end
+  if text ~= T.PctText(100 - runner.pull) then error("the tank's text reads " .. tostring(text)) end
+  if safe ~= "100%" then error("nobody near should read 100%, got " .. tostring(safe)) end
+  -- A damage dealer still sees their own %, rising.
+  local dps = { name = me, isMe = true, perc = 84, threat = 8400, melee = true }
+  dps.pull = T.PullPercent(dps)
+  local _, _, _, own = T:Display({ rows = { dps }, me = dps })
+  if own ~= T.PctText(dps.pull) then error("a damage dealer's % changed: " .. tostring(own)) end
+end)
+
 step("threat: warnings fire once on the way up, not every reading", function()
   local T = Wrekkit.threat
   local TF = UI.threatFrames
+  -- Asked for: they are off by default.
+  local s = T:Settings()
+  local wasText = s.warnText
+  s.warnText = true
   local count = 0
   local real = TF.Message
   TF.Message = function(self, text, level) count = count + 1 end
@@ -3534,8 +3883,451 @@ step("threat: warnings fire once on the way up, not every reading", function()
   reading(125)     -- 96%: danger
   reading(126)
   TF.Message = real
+  s.warnText = wasText
   T.current = nil
   if count ~= 2 then error("expected 2 warnings (warn, danger), got " .. count) end
+end)
+
+step("threat: the window's own text size, on top of Wrekkit's", function()
+  local T = Wrekkit.threat
+  local s = T:Settings()
+  local TW = UI.threat
+  local was, wasScale = s.textScale, Wrekkit.db.fontScale
+  if not TW.frame then TW:Create() end
+  Wrekkit.db.fontScale = 1
+  UI.ApplyFontScale()
+  s.textScale = 150
+  TW:ApplyLayout()
+  local row = TW.list.rows[1]
+  local fail
+  if not row then fail = "the threat window has no rows" end
+  -- Not `row and row.name:GetFont()`: that keeps only the face.
+  local function sizeOf(r) if not r then return nil end local _, px = r.name:GetFont() return px end
+  local size = sizeOf(row)
+  if not fail and math.abs((size or 0) - 11 * 1.5) > 0.01 then fail = "row text is " .. tostring(size) .. ", not 16.5" end
+  if not fail and TW.list.rowHeight ~= 24 then fail = "rows are " .. tostring(TW.list.rowHeight) .. "px, not 24" end
+  -- Wrekkit's own text size on top: both apply.
+  Wrekkit.db.fontScale = 1.2
+  UI.ApplyFontScale()
+  size = sizeOf(row)
+  if not fail and math.abs((size or 0) - 11 * 1.5 * 1.2) > 0.01 then fail = "after a rescale the text is " .. tostring(size) end
+  -- The meter's rows are not touched.
+  local mrow = UI.meter.list.rows[1]
+  local msize = sizeOf(mrow)
+  if not fail and mrow and math.abs((msize or 0) - 11 * 1.2) > 0.01 then fail = "the meter's text moved too: " .. tostring(msize) end
+  s.textScale, Wrekkit.db.fontScale = was, wasScale
+  UI.ApplyFontScale()
+  TW:ApplyLayout()
+  if fail then error(fail) end
+end)
+
+step("threat: narrow, a row keeps its % and gives up the threat numbers", function()
+  local function narrowRow(keep)
+    local list = UI.ScrollList(UIParent, 16)
+    list:SetWidth(120)
+    list._keepSub = keep
+    list:SetData({ 1 }, function(row)
+      row:SetData(1, "Shieldbarbie", "12.3k  450/s", "92%", 0.5, { 1, 1, 1 }, 40)
+    end)
+    return list.rows[1]
+  end
+  local row = narrowRow(true)
+  if not row then error("no row was painted") end
+  if row.sub:GetText() ~= "92%" then error("the % was dropped: '" .. tostring(row.sub:GetText()) .. "'") end
+  if row.value:GetText() ~= "" then error("the threat numbers stayed: " .. tostring(row.value:GetText())) end
+  -- Every other list still gives up its second column first.
+  local other = narrowRow(false)
+  if other.value:GetText() == "" then error("a meter row lost its value instead of its second column") end
+  -- And the window itself may be made that narrow.
+  if (Wrekkit.threat:Settings().window.w or 0) < 120 then error("the saved width is under the floor") end
+  local saved = Wrekkit.threat:Settings().window.w
+  Wrekkit.threat:Settings().window.w = 120
+  Wrekkit.threat:Sanitize(Wrekkit.threat:Settings())
+  local kept = Wrekkit.threat:Settings().window.w
+  Wrekkit.threat:Settings().window.w = saved
+  if kept ~= 120 then error("a 120px window was changed to " .. tostring(kept)) end
+  -- 90 without a title bar; the bar back, and it is wide enough for it.
+  local T, TW = Wrekkit.threat, UI.threat
+  local st = T:Settings()
+  local was = { st.window.w, st.hideTitle, st.display }
+  st.window.w = 90
+  T:Sanitize(st)
+  if st.window.w ~= 90 then error("a 90px window was widened to " .. tostring(st.window.w)) end
+  if not TW.frame then TW:Create() end
+  TW:SetDisplay("window")
+  st.hideTitle = true
+  TW:ApplyLayout()
+  TW.frame:SetWidth(90)
+  st.hideTitle = false
+  TW:ApplyLayout()
+  local w = TW.frame:GetWidth()
+  st.window.w, st.hideTitle = was[1], was[2]
+  TW:ApplyLayout()
+  TW:SetDisplay(was[3])
+  if w < 120 then error("the title bar came back on a " .. w .. "px window") end
+end)
+
+step("meter: compact, it goes down to 120 with a short title and tight rows", function()
+  local M = UI.meter
+  local s = M:Settings()
+  local f = M.frame
+  local was = { s.compact, f:GetWidth(), M.list:GetWidth(), f.bar:GetWidth(), s.metric }
+  local fail
+  M:SetMetric("damage")
+  s.compact = true
+  M:ApplyLayout()
+  if (f._minW or 999) > 120 then fail = "a compact meter still stops at " .. tostring(f._minW) end
+  s.compact = false
+  M:ApplyLayout()
+  if not fail and (f._minW or 0) < 260 then fail = "a full meter, toolbar and all, went under 260" end
+  s.compact = true
+  M:ApplyLayout()
+  -- Narrow: the metric's short name, the pull's cut to fit, tight rows.
+  f:SetWidth(130)
+  f.bar:SetWidth(128)
+  M.list:SetWidth(122)
+  M:Refresh()
+  if not fail and f.title:GetText() ~= "DMG" then fail = "the narrow title reads " .. tostring(f.title:GetText()) end
+  local seg = M.segBtn
+  if not fail and seg and (seg:GetWidth() or 0) > 128 then fail = "the pull's name runs past the bar" end
+  local row = M.list.rows[1]
+  if not fail and row and row:IsShown() and (row.rank:GetText() or "") ~= "" then
+    fail = "a narrow meter row kept its rank"
+  end
+  s.compact, s.metric = was[1], was[5]
+  f:SetWidth(was[2]); M.list:SetWidth(was[3]); f.bar:SetWidth(was[4])
+  M:ApplyLayout()
+  -- A saved 120 is kept.
+  Wrekkit.db.meter.window.w = 120
+  Wrekkit.SanitizeDB(Wrekkit.db)
+  local kept = Wrekkit.db.meter.window.w
+  Wrekkit.db.meter.window.w = 260
+  if not fail and kept ~= 120 then fail = "a saved 120px meter was widened to " .. tostring(kept) end
+  if fail then error(fail) end
+end)
+
+step("meter split: a half's header stays inside it, drilled in or not", function()
+  local M = UI.meter
+  local head = M.head1
+  local was = head:GetWidth()
+  head:SetWidth(200)
+  local o = { title = "Damage Done", short = "DMG", seg = "Salahaja - All Session",
+              footR = "2.18M  (click one for detail)" }
+  M:FillHead(head, o, "All Session")
+  local label, right = head.label:GetText() or "", head.right:GetText() or ""
+  local fail
+  if right ~= "2.18M" then fail = "the drilled header's total reads '" .. right .. "'" end
+  if not fail and UI.FullTextWidth(head.label, label) + UI.FullTextWidth(head.right, right) + 18 > 200 then
+    fail = "the header's label and total run past its 200px: " .. label .. " / " .. right
+  end
+  if not fail and label == "" then fail = "the label was dropped with room to spare" end
+  -- Barely any room: the label keeps it, the total goes.
+  head:SetWidth(60)
+  M:FillHead(head, o, "All Session")
+  if not fail and (head.right:GetText() or "") ~= "" then fail = "at 60px the total stayed over the label" end
+  if not fail and UI.FullTextWidth(head.label, head.label:GetText()) > 48 then fail = "at 60px the label runs out" end
+  head:SetWidth(was)
+  if fail then error(fail) end
+end)
+
+step("meter: compact drops the emblem, and its split goes narrow too", function()
+  local M = UI.meter
+  local s = M:Settings()
+  local f = M.frame
+  local was = { s.compact, s.splitMode, s.metric, s.metric2, f:GetWidth(), f.bar:GetWidth(),
+                M.head1:GetWidth(), M.head2:GetWidth() }
+  local fail
+  s.compact = false
+  M:ApplyLayout()
+  if not f.mark:IsShown() then fail = "a full meter lost its emblem" end
+  s.compact = true
+  M:ApplyLayout()
+  if not fail and f.mark:IsShown() then fail = "a compact meter kept its emblem" end
+  local p = f.title._points and f.title._points[1]
+  if not fail and not (p and p[2] == f.bar) then fail = "the compact title did not move into the emblem's place" end
+
+  -- Side by side, compact: down to two 100px columns.
+  if not fail and M.SideMinWidth() ~= 200 then fail = "compact side by side stops at " .. M.SideMinWidth() end
+  s.compact = false
+  if not fail and M.SideMinWidth() ~= 300 then fail = "full side by side changed to " .. M.SideMinWidth() end
+  s.compact = true
+  M:SetMetric("damage")
+  M:SetSplit("side")
+  if not fail and (f._minW or 999) > 200 then fail = "a compact side-by-side meter stops at " .. tostring(f._minW) end
+  -- Each half narrow: its metric's short name, inside its header.
+  M.head1:SetWidth(96)
+  M.head2:SetWidth(96)
+  s.metric2 = "healing"
+  M:Refresh()
+  local h2 = M.head2.label:GetText() or ""
+  if not fail and string.find(h2, "Healing", 1, true) then fail = "a narrow half kept its long name: " .. h2 end
+  if not fail and UI.FullTextWidth(M.head2.label, h2) + UI.FullTextWidth(M.head2.right, M.head2.right:GetText()) > 96 then
+    fail = "a narrow header runs into its total"
+  end
+  M:SetSplit("off")
+  -- Over and under, compact, the floor is 120.
+  M:SetSplit("stacked")
+  if not fail and (f._minW or 999) > 120 then fail = "compact over-and-under stops at " .. tostring(f._minW) end
+  M:SetSplit("off")
+  -- The title never runs under the buttons.
+  f.bar:SetWidth(70)
+  M:Refresh()
+  local tw = UI.FullTextWidth(f.title, f.title:GetText())
+  if not fail and tw > 70 then fail = "the title runs past a 70px bar" end
+
+  s.compact, s.metric, s.metric2 = was[1], was[3], was[4]
+  f:SetWidth(was[5]); f.bar:SetWidth(was[6]); M.head1:SetWidth(was[7]); M.head2:SetWidth(was[8])
+  M:SetSplit(was[2] or "off")
+  M:ApplyLayout()
+  if fail then error(fail) end
+end)
+
+step("meter toolbar: Pets beside the filter, the toggles folding where there is no room", function()
+  local M = UI.meter
+  local tb = M.toolbar
+  local was = tb:GetWidth()
+  local s = M:Settings()
+  local fail
+  -- Pets hangs off the filter now, so the filter can never cover it.
+  local p = M.petBtn._points and M.petBtn._points[1]
+  if not (p and p[2] == M.search) then fail = "Pets is not beside the filter" end
+  -- At the meter's narrowest, all of it fits: no fold.
+  M._toolsFolded = nil
+  M:LayoutToolbar()
+  if not fail and M._toolsFolded then fail = "the toggles folded at 256px" end
+  if not fail and not M.groupBtn:IsShown() then fail = "the group toggle is hidden at 256px" end
+  -- Squeezed (a bigger text, a skin's wider buttons): one "..." menu.
+  tb:SetWidth(150)
+  M:LayoutToolbar()
+  if not fail and (M.groupBtn:IsShown() or not M.moreBtn:IsShown()) then fail = "squeezed, the toggles did not fold" end
+  local items, pick
+  local realMenu = UI.Menu
+  UI.Menu = function(_, _, its, onPick) items, pick = its, onPick end
+  if not fail then M.moreBtn:GetScript("OnClick")() end
+  UI.Menu = realMenu
+  local offered = {}
+  for _, it in ipairs(items or {}) do if it.value then offered[it.value] = true end end
+  for _, v in ipairs({ "group", "picked", "pickmenu", "world", "new", "wipe" }) do
+    if not fail and not offered[v] then fail = "the folded menu has no " .. v end
+  end
+  local before = s.groupOnly
+  if not fail then pick("group") end
+  if not fail and s.groupOnly == before then fail = "Group only from the menu did nothing" end
+  s.groupOnly = before
+  tb:SetWidth(was)
+  M:LayoutToolbar()
+  M:UpdateToggles()
+  if not fail and not M.groupBtn:IsShown() then fail = "widened again, the toggles did not come back" end
+  if fail then error(fail) end
+end)
+
+step("threat: narrow, a row is its name, its threat per second and its bar", function()
+  local T = Wrekkit.threat
+  local st = T:Settings()
+  local was = st.showTPS
+  st.showTPS = true
+  local list = UI.ScrollList(UIParent, 16)
+  list:SetWidth(110)
+  list._keepSub, list._tightBelow, list._clipNames = true, 200, true
+  local item = { row = { name = "Stabbs", class = "ROGUE", threat = 7600, tps = 450, perc = 76, pull = 69 },
+                 shown = 69, _frac = 0.69, _rank = 2 }
+  list:SetData({ item }, UI.threat.Paint)
+  local row = list.rows[1]
+  local fail
+  if (row.sub:GetText() or "") ~= "450/s" then fail = "the narrow row's number is " .. tostring(row.sub:GetText()) end
+  if not fail and string.find(row.value:GetText() or "", "7.6", 1, true) then fail = "the threat total stayed on a narrow row" end
+  if not fail and math.abs((row.bar:GetWidth() or 0) - 0.69 * 110) > 2 then
+    fail = "the bar is not how close they are: " .. tostring(row.bar:GetWidth())
+  end
+  -- A rate past a thousand, short, and on one line in a column as wide.
+  item.row.tps = 1850
+  list:SetData({ item }, UI.threat.Paint)
+  if not fail and row.sub:GetText() ~= "1.9k/s" then fail = "1850/s reads " .. tostring(row.sub:GetText()) end
+  if not fail and (row.sub:GetWidth() or 0) < UI.FullTextWidth(row.sub, row.sub:GetText()) then
+    fail = "the rate's column is narrower than the rate: it wraps"
+  end
+  if not fail and (row.sub:GetHeight() or 0) > (row:GetHeight() or 18) then fail = "the rate's column is taller than a line" end
+  item.row.tps = 450
+  -- With threat per second off, the % comes back.
+  st.showTPS = false
+  list:SetData({ item }, UI.threat.Paint)
+  if not fail and not string.find(row.sub:GetText() or "", "%", 1, true) then fail = "with the rate off, no % either" end
+  st.showTPS = was
+  if fail then error(fail) end
+end)
+
+step("threat: a narrow row drops its rank and keeps a name's first letters", function()
+  local function paintAt(width)
+    local list = UI.ScrollList(UIParent, 16)
+    list:SetWidth(width)
+    list._keepSub, list._tightBelow, list._clipNames = true, 200, true
+    list:SetData({ 1 }, function(row)
+      row:SetData(3, "Shieldbarbiethegreat", "", "92%", 0.5, { 1, 1, 1 }, 40)
+    end)
+    return list.rows[1]
+  end
+  local row = paintAt(150)
+  if row.rank:GetText() ~= "" then error("a narrow row kept its rank: " .. tostring(row.rank:GetText())) end
+  local shown = row.name:GetText() or ""
+  if string.find(shown, "...", 1, true) then error("the name was cut to dots: " .. shown) end
+  if shown == "" or string.find("Shieldbarbiethegreat", shown, 1, true) ~= 1 then
+    error("the name is not its first letters: " .. shown)
+  end
+  if string.len(shown) >= string.len("Shieldbarbiethegreat") then error("a name too long was not cut: " .. shown) end
+  if (row.name:GetStringWidth() or 0) > (row.name:GetWidth() or 0) then error("the cut name still overflows") end
+  -- Wide, the rank is back and the whole name fits.
+  local wide = paintAt(400)
+  if wide.rank:GetText() ~= "3." then error("a wide row lost its rank") end
+  if wide.name:GetText() ~= "Shieldbarbiethegreat" then error("a wide row's name was cut: " .. tostring(wide.name:GetText())) end
+  -- Cutting never splits a letter of a UTF-8 name.
+  local fs = UIParent:CreateFontString()
+  fs:SetText("Lunarâaaaaaaaaaaaa")
+  UI.FitName(fs, "Lunarâaaaaaaaaaaaa", 36)
+  local cut = fs:GetText()
+  local last = string.byte(cut, string.len(cut))
+  if last and last >= 192 then error("the cut ended half way through a letter") end
+end)
+
+step("threat: the title stays inside its bar, and the bar can go", function()
+  local T = Wrekkit.threat
+  local s = T:Settings()
+  local TW = UI.threat
+  if not TW.frame then TW:Create() end
+  local f = TW.frame
+  local was, wasDisplay = s.hideTitle, s.display
+  -- Anchored on both sides, so a long name is cut short, not run out.
+  local right = false
+  for _, p in ipairs(f.title._points or {}) do if p[1] == "RIGHT" then right = true end end
+  if not right then error("the title has no right edge to stop at") end
+
+  TW:SetDisplay("docked")
+  s.hideTitle = false
+  TW:ApplyLayout()
+  local withBar = f:GetHeight()
+  s.hideTitle = true
+  TW:ApplyLayout()
+  local fail
+  if f.bar:IsShown() then fail = "the title bar is still shown" end
+  if not fail and f.barRule and f.barRule:IsShown() then fail = "the bar's divider is still drawn" end
+  -- No bar is the small window: it fits its rows.
+  if not fail then
+    local fitted = false
+    local realFit = UI.FitHeight
+    UI.FitHeight = function() fitted = true end
+    TW:SetDisplay("window")
+    f:Show()
+    TW:Fit()
+    UI.FitHeight = realFit
+    TW:SetDisplay("docked")
+    TW:ApplyLayout()
+    if not fitted then fail = "a window with no title bar was not fitted to its rows" end
+  end
+  local top = f.body._points and f.body._points[1]
+  if not fail and not (top and top[2] == f) then fail = "the body does not start at the window's top" end
+  if not fail and not (f:GetHeight() < withBar) then fail = "docked, the window is no smaller without its bar" end
+  -- The footer says what the title did.
+  T:Demo(5)
+  f:Show()                -- "in a group" by default, and the harness is solo
+  f.body:SetWidth(400)    -- room for the whole footer: a narrow one is cut
+  TW:RefreshInner()
+  local foot = TW.footL:GetText() or ""
+  T:StopDemo()
+  if not fail and not string.find(foot, "aggro:", 1, true) then fail = "the footer reads " .. foot end
+  -- And the menu brings the bar back.
+  local items, pick
+  local realMenu = UI.Menu
+  UI.Menu = function(_, _, its, onPick) items, pick = its, onPick end
+  f:GetScript("OnMouseUp")()
+  UI.Menu = realMenu
+  if not fail and not pick then
+    arg1 = "RightButton"
+    UI.Menu = function(_, _, its, onPick) items, pick = its, onPick end
+    f:GetScript("OnMouseUp")()
+    UI.Menu = realMenu
+  end
+  if not fail and not pick then fail = "right-clicking the window opened no menu" end
+  if not fail then pick("titlebar") end
+  if not fail and (s.hideTitle or not f.bar:IsShown()) then fail = "the menu did not bring the title bar back" end
+  if not fail and f.barRule and not f.barRule:IsShown() then fail = "the bar came back without its divider" end
+  arg1 = "LeftButton"
+  s.hideTitle = was
+  TW:ApplyLayout()
+  TW:SetDisplay(wasDisplay)
+  if fail then error(fail) end
+end)
+
+step("threat: my row pinned to the top, and seconds to pulling aggro", function()
+  local T = Wrekkit.threat
+  local s = T:Settings()
+  local was = { s.pinMe, s.showETA, s.etaWho, s.showPullLine }
+  local me = UnitName("player")
+  -- Tank at 10000 gaining 500/s; me at range on 9000 gaining 900/s. The
+  -- line is 130% of the tank: 13000, climbing 650/s. 4000 to close at
+  -- 250/s: 16 seconds.
+  local tank = { name = "Tanky", tank = true, perc = 100, threat = 10000, tps = 500, span = 10, pull = 100 }
+  local mine = { name = me, isMe = true, melee = false, perc = 90, threat = 9000, tps = 900, span = 10 }
+  mine.pull = T.PullPercent(mine)
+  local rows = {}
+  table.insert(rows, tank)
+  for i = 1, 6 do
+    table.insert(rows, { name = "Dps" .. i, perc = 99 - i, threat = 9900 - i * 10, tps = 100, span = 10,
+                         melee = true, pull = (99 - i) / 1.1 })
+  end
+  table.insert(rows, mine)
+  local cur = { rows = rows, me = mine, tank = tank }
+
+  local eta = T.PullETA(mine, tank)
+  if not eta or math.abs(eta - 16) > 0.01 then error("expected 16s, got " .. tostring(eta)) end
+  if T.PullETA(rows[2], tank) then error("a player falling behind the line has no time to pull") end
+  if T.PullETA(tank, tank) then error("the tank has no time to pull") end
+  local young = { name = "New", perc = 90, threat = 9000, tps = 5000, span = 1 }
+  if T.PullETA(young, tank) then error("two seconds of history is not a rate") end
+
+  s.showPullLine = false
+  s.pinMe, s.showETA = false, false
+  local items = UI.threat.Rows(cur)
+  if items[1].row ~= tank then error("unpinned, the tank leads") end
+  for _, it in ipairs(items) do
+    if it.eta then error("no time shown with the option off") end
+  end
+
+  s.pinMe, s.showETA, s.etaWho = true, true, "me"
+  items = UI.threat.Rows(cur)
+  if items[1].row ~= mine then error("pinned, my row is first") end
+  if items[1]._rank ~= 8 then error("the pinned row keeps its rank, got " .. tostring(items[1]._rank)) end
+  if not items[1].eta then error("my time to pull is shown") end
+
+  -- Painted: the seconds are on the row.
+  local row = UI.threat.list and UI.threat.list.rows and UI.threat.list.rows[1]
+  if row then
+    UI.threat.Paint(row, items[1], 1)
+    local text = row.value and row.value:GetText() or ""
+    -- 16s, shown in fives past 10.
+    if not string.find(text, "20s", 1, true) then error("the row reads " .. text) end
+  end
+
+  s.pinMe, s.showETA, s.etaWho, s.showPullLine = was[1], was[2], was[3], was[4]
+
+  -- From real readings: a crit moves a 20s average half as much as 10s.
+  local function ring(rate, crit, critAgo)
+    local r = { ts = {}, vs = {}, hn = 0, hi = 0 }
+    local v = 0
+    for i = 1, 61 do
+      local t = (i - 1) * 0.5
+      v = v + (i > 1 and rate * 0.5 or 0)
+      if crit and math.abs((30 - t) - critAgo) < 0.01 then v = v + crit end
+      r.ts[i], r.vs[i] = t, v
+    end
+    r.hn, r.hi = 61, 61
+    return r
+  end
+  local clean = T.SteadyRate(ring(900), 20)
+  if math.abs(clean - 900) > 0.5 then error("a steady 900/s reads " .. clean) end
+  local r = ring(900, 3000, 2)
+  local over10, over20 = T.SteadyRate(r, 10) - 900, T.SteadyRate(r, 20) - 900
+  if math.abs(over10 - 300) > 1 or math.abs(over20 - 150) > 1 then
+    error(string.format("a 3000 crit moved the rate %.0f over 10s and %.0f over 20s", over10, over20))
+  end
 end)
 
 step("settings controls are laid out in two columns", function()

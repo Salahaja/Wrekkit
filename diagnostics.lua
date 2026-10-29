@@ -118,7 +118,6 @@ function W.Status()
     local dmg = (C.seen.SPELL_DAMAGE_EVENT_SELF or 0) + (C.seen.SPELL_DAMAGE_EVENT_OTHER or 0)
     local swing = (C.seen.AUTO_ATTACK_SELF or 0) + (C.seen.AUTO_ATTACK_OTHER or 0)
     local heal = (C.seen.SPELL_HEAL_BY_SELF or 0) + (C.seen.SPELL_HEAL_BY_OTHER or 0)
-        + (C.seen.SPELL_HEAL_ON_SELF or 0)
     line("            spell dmg " .. dmg .. "   swings " .. swing ..
          "   heals " .. heal .. "   deaths " .. (C.seen.UNIT_DIED or 0))
     if swing == 0 then

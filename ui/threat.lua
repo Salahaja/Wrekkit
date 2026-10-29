@@ -77,6 +77,24 @@ function TW.Rows(cur)
         rank = rank + 1
         it._rank = rank
       end
+      if it.row and s.showETA and (s.etaWho == "all" or it.row.isMe) then
+        it.eta = T.PullETA(it.row, cur.tank)
+      end
+    end
+
+    --[[ Your own row first, if asked: low on the list it is pushed past the
+         rows shown, and it trades places with everyone near your threat on
+         every update. It keeps its rank, so the number says where you are. ]]
+    if s.pinMe then
+      for i, it in ipairs(items) do
+        if it.row and it.row.isMe then
+          if i > 1 then
+            table.remove(items, i)
+            table.insert(items, 1, it)
+          end
+          break
+        end
+      end
     end
   end
 
@@ -161,6 +179,15 @@ local function rowTooltip(frame, item)
     GameTooltip:AddDoubleLine("To pulling aggro", T.PctText(r.pull), LABEL[1], LABEL[2], LABEL[3], 1, 1, 1)
     GameTooltip:AddLine(r.melee and "In melee range: pulls at 110%." or
       "At range: pulls at 130%.", DIM[1], DIM[2], DIM[3])
+    local cur = T:Live()
+    local eta = T.PullETA(r, cur and cur.tank)
+    if eta then
+      GameTooltip:AddDoubleLine("Pulls aggro in", string.format("%.0fs", math.ceil(eta)),
+        LABEL[1], LABEL[2], LABEL[3], 1, 1, 1)
+      GameTooltip:AddLine("If they and the tank keep the threat per second", DIM[1], DIM[2], DIM[3])
+      GameTooltip:AddLine("they averaged over the last " .. (T:Settings().etaWindow or 20) .. " seconds.",
+        DIM[1], DIM[2], DIM[3])
+    end
   end
   if not r.isMe and not r.tank then
     GameTooltip:AddLine("Click: whisper them their threat", DIM[1], DIM[2], DIM[3])
@@ -187,10 +214,13 @@ function TW.Paint(row, item, index)
     return
   end
   row.tip = tooltipFor(item)
+  row._shortValue = nil
 
   if item.pullLine then
     local value = s.showThreat and W.Short(item.threat) or ""
-    row:SetData(nil, "|cffd44f53-- pull aggro --|r", value,
+    -- Narrow, the words alone: the dashes were where its letters went.
+    local label = UI.RowTight(row) and "pull aggro" or "-- pull aggro --"
+    row:SetData(nil, "|cffd44f53" .. label .. "|r", value,
       T.PctText(item.shown), item._frac, PULL_COLOR, 40)
     return
   end
@@ -222,13 +252,16 @@ function TW.Paint(row, item, index)
 
   local r = item.row
   local name = r.name
-  if r.tank then name = "|cff5a9bff[T]|r " .. name end
+  -- Narrow, the name alone: the % column already says "tank", and every
+  -- letter of a marker is one of the name's.
+  local tight = UI.RowTight(row)
+  if r.tank and not tight then name = "|cff5a9bff[T]|r " .. name end
   -- One of the other tanks: their numbers raise no warnings for you.
-  if not r.tank and not r.isMe and T:IsCoTank(r.name) then
+  if not r.tank and not r.isMe and not tight and T:IsCoTank(r.name) then
     name = name .. " |cff5a9bff(tank)|r"
   end
-  name = UI.WithSpec(r.name, name)
-  if r.isMe then name = "|cffe0a22c>|r " .. name end
+  if not tight then name = UI.WithSpec(r.name, name) end
+  if r.isMe and not tight then name = "|cffe0a22c>|r " .. name end
 
   -- Left-click a player to whisper them their threat; right-click to mark
   -- or unmark them as one of the tanks.
@@ -264,13 +297,43 @@ function TW.Paint(row, item, index)
   else
     value = ""
   end
+  -- Seconds to pulling aggro at the current rates: red under 5, orange
+  -- under 10. Past 10, in fives: "35s" and "37s" say the same thing, and
+  -- a number that ticks between them only looks unsteady.
+  if item.eta then
+    local secs = math.ceil(item.eta)
+    if secs > 10 then secs = math.ceil(secs / 5) * 5 end
+    local hue = (secs <= 5 and "ff4d4d") or (secs <= 10 and "ffa033") or "c8c8c8"
+    local eta = "|cff" .. hue .. string.format("%.0fs", secs) .. "|r"
+    value = (value == "") and eta or (value .. "  " .. eta)
+    -- Too narrow for the threat numbers, the seconds still show.
+    row._shortValue = eta
+  end
 
   local color = W.ClassColor(r.class)
   if r.isMe and not r.tank then color = T:Color(item.shown) end
 
+  --[[ Narrow: the name, how fast they are gaining (threat per second),
+       and the bar for how close they are to pulling -- a glance, not a
+       table. The bar is already each one's way to the line, so the % gives
+       its column to the rate; the value keeps only the time to pull. The
+       tank, whose "tank" went with it, is named in the tank's blue. With
+       threat per second off, the % stays. ]]
+  local sub = r.tank and "tank" or T.PctText(item.shown)
+  local subW = tight and 30 or 40
+  if tight and s.showTPS then
+    -- Short on a narrow row: "1.9k/s", "850/s".
+    local tps = r.tps or 0
+    if tps >= 10000 then sub = string.format("%.0fk/s", tps / 1000)
+    elseif tps >= 1000 then sub = string.format("%.1fk/s", tps / 1000)
+    else sub = string.format("%.0f/s", tps) end
+    subW = 34
+    value = row._shortValue or ""
+    if r.tank then name = "|cff5a9bff" .. name .. "|r" end
+  end
+
   row:SetClass(r.class, UI.SpecIconFor(r.name, r.class))
-  row:SetData(item._rank, name, value, r.tank and "tank" or T.PctText(item.shown),
-    item._frac, color, 40)
+  row:SetData(item._rank, name, value, sub, item._frac, color, subW)
 end
 
 --- Why there is nothing to show, in words.
@@ -306,7 +369,9 @@ function TW:Create()
   local s = T:Settings()
 
   local f = UI.Window("WrekkitThreat", s.window.w, s.window.h, "Threat", {
-    minW = 180, minH = 80, barHeight = 20,
+    -- 120 wide: a name and its % (the threat numbers give way first);
+    -- 90 without the title bar, whose buttons alone want 110.
+    minW = 120, minH = 80, barHeight = 20,
   })
   self.frame = f
   UI.BindGeometry(f, s.window)
@@ -364,6 +429,12 @@ function TW:Create()
   self.roleBtn = roleBtn
   self:PaintRole()
 
+  --[[ The title stops short of the buttons. Anchored on its left only, a
+       long mob's name ran under them and out past the window's edge. One
+       line tall, so it is cut short with "..." rather than wrapped. ]]
+  f.title:SetPoint("RIGHT", roleBtn, "LEFT", -4, 0)
+  f.title:SetJustifyH("LEFT")
+
   local titleHit = CreateFrame("Button", nil, f.bar)
   titleHit:SetPoint("TOPLEFT", f.bar, "TOPLEFT", 0, 0)
   titleHit:SetPoint("BOTTOMRIGHT", roleBtn, "BOTTOMLEFT", -2, 0)
@@ -380,6 +451,12 @@ function TW:Create()
   local list = UI.ScrollList(f.body, 16)
   list:SetPoint("TOPLEFT", f.body, "TOPLEFT", 2, -2)
   list:SetPoint("BOTTOMRIGHT", f.body, "BOTTOMRIGHT", -2, 14)
+  -- Narrow, the % stays and the threat numbers go (UI.Row's SetData);
+  -- under 200px no rank and one icon, and a long name keeps its first
+  -- letters rather than turning into "...".
+  list._keepSub = true
+  list._tightBelow = 200
+  list._clipNames = true
   self.list = list
 
   local foot = UI.Text(f.body, 10, W.color.textFaint)
@@ -388,12 +465,34 @@ function TW:Create()
   local footR = UI.Text(f.body, 10, W.color.textFaint, "RIGHT")
   footR:SetPoint("BOTTOMRIGHT", f.body, "BOTTOMRIGHT", -16, 2)
   self.footR = footR
+  -- Cut short before the right-hand note (as wide as its text: none most
+  -- of the time), never run past the edge.
+  foot:SetPoint("RIGHT", footR, "LEFT", -4, 0)
+
+  --[[ The window itself is a handle too: drag it by its footer (or any
+       space the rows leave), right-click there for the menu. Without a
+       title bar that is the only way to move it and reach the menu, which
+       holds everything the bar's buttons do. ]]
+  f:RegisterForDrag("LeftButton")
+  f:SetScript("OnDragStart", function() TW:StartDrag() end)
+  f:SetScript("OnDragStop", function() TW:StopDrag() end)
+  f:SetScript("OnMouseUp", function()
+    if arg1 == "RightButton" then W.Guard("threat menu", function() TW:Menu(f) end) end
+  end)
 
   f.closeButton:SetScript("OnClick", function()
     TW:SetDisplay("off")
     W.Print("threat window hidden. |cffe0a22c/wrek threat|r brings it back; " ..
       "frames, plates and warnings stay on.")
   end)
+
+  -- Its own text size, on top of Wrekkit's (Settings > Threat).
+  local function size() return (T:Settings().textScale or 100) / 100 end
+  TW.TextScale = size
+  list:SetTextScale(size)
+  UI.ScaleFontBy(foot, size)
+  UI.ScaleFontBy(footR, size)
+  UI.ScaleFontBy(f.title, size)
 
   f.OnResize = function() TW:Refresh() end
   self:ApplyLayout()
@@ -436,16 +535,60 @@ function TW:ApplyLayout()
   local f = self.frame
   if not f then return end
   local s = T:Settings()
-  local scale = UI.FontScale()
+  -- Rows as tall as their text: Wrekkit's text size times this window's.
+  local own = TW.TextScale and TW.TextScale() or 1
+  local scale = UI.FontScale() * own
   local rowH = math.floor(16 * scale + 0.5)
   self.list:SetRowHeight(rowH)
+
+  --[[ The title bar: as tall as its text, or gone (hideTitle), the body
+       then starting at the window's top. Re-anchored only when that
+       changes -- never on a window being dragged. ]]
+  local headless = s.hideTitle == true
+  local barH = math.floor(20 * own + 0.5)
+  if barH < 20 then barH = 20 end
+  f.bar:SetHeight(barH)
+  f.title:SetHeight(barH)
+  if f._headless ~= headless and not f._moving then
+    f._headless = headless
+    f.body:ClearAllPoints()
+    --[[ The bar's divider goes with it. It is the window's texture, so
+         hiding the bar left it showing -- and the client stops laying out
+         a hidden frame, so it stayed where the bar's bottom was, as wide
+         as the window used to be: a line across the rows and out past the
+         edge once the window was narrowed. ]]
+    if headless then
+      f.bar:Hide()
+      if f.barRule then f.barRule:Hide() end
+      f.body:SetPoint("TOPLEFT", f, "TOPLEFT", f.inset or 1, -(f.inset or 1))
+    else
+      f.bar:Show()
+      if f.barRule then f.barRule:Show() end
+      f.body:SetPoint("TOPLEFT", f.bar, "BOTTOMLEFT", 0, -1)
+    end
+    f.body:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -(f.inset or 1), f.inset or 1)
+    if f.SetMinResize then f:SetMinResize(headless and 90 or 120, headless and 40 or 80) end
+    -- The bar back on a window made narrower without it: wide enough for
+    -- its buttons again.
+    if not headless and (f:GetWidth() or 0) < 120 then
+      f:SetWidth(120)
+      if s.window then s.window.w = 120 end
+    end
+  end
+  local chromeH = (headless and 0 or barH) + 18
+  if TW.TextScale then
+    self.list:SetTextScale(TW.TextScale)
+    UI.ScaleFontBy(self.footL, TW.TextScale)
+    UI.ScaleFontBy(self.footR, TW.TextScale)
+    UI.ScaleFontBy(f.title, TW.TextScale)
+  end
 
   if s.display == "docked" then
     local m = UI.meter:Create()
     f:ClearAllPoints()
     f:SetPoint("TOPLEFT", m, "BOTTOMLEFT", 0, -2)
     f:SetPoint("TOPRIGHT", m, "BOTTOMRIGHT", 0, -2)
-    f:SetHeight(20 + 18 + rowH * math.max(2, math.min(s.rows, 12)))
+    f:SetHeight(chromeH + rowH * math.max(2, math.min(s.rows, 12)))
     f.grip:Hide()
     -- Matches the meter it hangs from.
     if f.SetOpacity then f:SetOpacity(UI.meter:Settings().opacity) end
@@ -566,6 +709,8 @@ function TW:Menu(anchor)
     { text = "Threat", value = "col:showThreat", checked = s.showThreat == true },
     { text = "Threat per second", value = "col:showTPS", checked = s.showTPS == true },
     { text = "Pull-aggro line", value = "col:showPullLine", checked = s.showPullLine == true },
+    { text = "Time to pull aggro", value = "col:showETA", checked = s.showETA == true },
+    { text = "Keep my row at the top", value = "col:pinMe", checked = s.pinMe == true },
     { text = "Opacity", header = true },
     { text = "100%", value = "o:1", checked = TW:Opacity() >= 0.99 },
     { text = "80%", value = "o:0.8", checked = math.abs(TW:Opacity() - 0.8) < 0.03 },
@@ -573,6 +718,7 @@ function TW:Menu(anchor)
     { text = "40%", value = "o:0.4", checked = math.abs(TW:Opacity() - 0.4) < 0.03 },
     { text = "Window", header = true },
     { text = "Lock position", value = "lock", checked = s.locked == true },
+    { text = "Title bar", value = "titlebar", checked = s.hideTitle ~= true },
     { text = "Preview with test data", value = "demo" },
     { text = "Settings...", value = "settings" },
     { text = "Hide window", value = "d:off" },
@@ -599,6 +745,12 @@ function TW:Menu(anchor)
       TW:Refresh()
     elseif value == "lock" then
       s.locked = not s.locked
+    elseif value == "titlebar" then
+      s.hideTitle = not s.hideTitle
+      TW:ApplyLayout()
+      if s.hideTitle then
+        W.Print("threat window: no title bar. Drag it by its footer; right-click there for this menu.")
+      end
     elseif value == "demo" then
       T:Demo(15)
     elseif value == "settings" then
@@ -655,6 +807,17 @@ function TW:UpdateVisibility()
   end
 end
 
+--[[ The footer's left text, cut to the letters that fit beside the right
+     one ("Heroic Trai") rather than to "...". Measured from the body's
+     width, not the text's own: anchored at both ends, its own reads what
+     the client already cut it to. ]]
+function TW:FitFooter()
+  local f, footL, footR = self.frame, self.footL, self.footR
+  if not (f and footL and footR) then return end
+  local room = UI.FrameWidth(f.body) - 6 - 16 - (footR:GetStringWidth() or 0) - 4
+  if room > 0 then UI.FitName(footL, footL:GetText(), room) end
+end
+
 function TW:Refresh()
   W.Guard("threat window", function()
     TW:RefreshInner()
@@ -672,7 +835,9 @@ function TW:Fit()
     f._maxH = nil
     return
   end
-  if not s.fitRows then
+  -- No title bar is the small window: it fits its rows too, with no
+  -- empty rows under the last player.
+  if not (s.fitRows or s.hideTitle) then
     UI.UnfitHeight(f)
     return
   end
@@ -689,8 +854,9 @@ function TW:RefreshInner()
   if table.getn(rows) == 0 then
     f.title:SetText(tank and "Threat  |cff5a9bfftank|r" or "Threat")
     self.list:SetData({ { label = TW.EmptyNote() } }, paintNote)
-    self.footL:SetText("")
+    self.footL:SetText((T:Settings().hideTitle and tank) and "|cff5a9bfftank|r" or "")
     self.footR:SetText("")
+    self:FitFooter()
     return
   end
 
@@ -698,6 +864,12 @@ function TW:RefreshInner()
   if tank then title = title .. "  |cff5a9bfftank|r" end
   f.title:SetText(title)
   self.list:SetData(rows, TW.Paint)
-  self.footL:SetText(cur and ("aggro: " .. (cur.tank and cur.tank.name or "?")) or "")
+  local aggro = cur and ("aggro: " .. (cur.tank and cur.tank.name or "?")) or ""
+  -- No title bar: the footer names the mob, and says when you are the tank.
+  if T:Settings().hideTitle and cur then
+    aggro = (tank and "|cff5a9bfftank|r  " or "") .. (cur.name or "?") .. "  " .. aggro
+  end
+  self.footL:SetText(aggro)
   self.footR:SetText(T.demoUntil and "preview" or "")
+  self:FitFooter()
 end

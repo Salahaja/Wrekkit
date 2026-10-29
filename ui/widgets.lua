@@ -430,13 +430,19 @@ end
 
 --- Track any object with SetFont so it follows the scale. Returns it.
 --- `default`: set in the default face (UI.font), so a font choice moves it.
+UI.fontEntryOf = {}
 function UI.RegisterFont(obj, size, face, default)
-  table.insert(UI.fontObjects, { obj = obj, size = size, face = face, default = default })
+  local entry = { obj = obj, size = size, face = face, default = default }
+  table.insert(UI.fontObjects, entry)
+  UI.fontEntryOf[obj] = entry
   return obj
 end
 
+--[[ entry.extra, when set (UI.ScaleFontBy), is a window's own text size on
+     top of the global one -- the threat window's -- read each time the
+     text is sized, so a change to either keeps the other. ]]
 local function applyFont(entry, scale)
-  local px = entry.size * scale
+  local px = entry.size * scale * (entry.extra and entry.extra() or 1)
   -- The client refuses absurd sizes outright and leaves the string blank.
   if px < 6 then px = 6 elseif px > 32 then px = 32 end
   entry.obj:SetFont(entry.face, px)
@@ -448,6 +454,15 @@ function UI.ApplyFontScale()
   for _, entry in ipairs(UI.fontObjects) do
     applyFont(entry, scale)
   end
+end
+
+--- Size one piece of text by fn() on top of the global text size: a
+--- window's own text size. Applied now, and again by every rescale.
+function UI.ScaleFontBy(obj, fn)
+  local entry = obj and UI.fontEntryOf[obj]
+  if not entry then return end
+  entry.extra = fn
+  applyFont(entry, UI.FontScale())
 end
 
 function UI.Text(parent, size, color, justify, face)
@@ -1105,6 +1120,61 @@ function UI.SpecIconFor(name, class)
   return W.talents and W.talents:Icon(name, class) or nil
 end
 
+--[[ Text measured at its full width. A font string the row has given a
+     width reports no more than that width -- the client's text is already
+     cut to "..." -- so measuring the row's own name always said it fit,
+     and nothing was ever cut. This one has no width and no second anchor,
+     sits off screen, and is never seen. ]]
+local measurer
+local function fullWidth(fs, text)
+  if not measurer then
+    measurer = UIParent:CreateFontString(nil, "OVERLAY")
+    measurer:SetPoint("TOPLEFT", UIParent, "BOTTOMRIGHT", 200, -200)
+  end
+  local face, size, flags = fs:GetFont()
+  if face then measurer:SetFont(face, size or 12, flags) end
+  measurer:SetText(text or "")
+  return measurer:GetStringWidth() or 0
+end
+UI.FullTextWidth = fullWidth
+
+--[[ A name cut to the letters that fit -- "Shieldb" -- rather than the
+     client's "...", which on a narrow row was all there was room for.
+     Colour codes go from a cut name; a cut never splits a UTF-8 letter.
+     The longest prefix that fits is found by halving, a few measurements
+     a row. ]]
+local function fitName(fs, text, width)
+  text = text or ""
+  if fullWidth(fs, text) <= width then return end
+  local plain = string.gsub(text, "|c%x%x%x%x%x%x%x%x", "")
+  plain = string.gsub(plain, "|r", "")
+  local n = string.len(plain)
+  if n == 0 then return end
+  local ends = {}   -- where each letter ends, in bytes
+  for i = 2, n do
+    local b = string.byte(plain, i)
+    if b < 128 or b >= 192 then table.insert(ends, i - 1) end
+  end
+  table.insert(ends, n)
+  local lo, hi, best = 1, table.getn(ends), 1
+  while lo <= hi do
+    local mid = math.floor((lo + hi) / 2)
+    if fullWidth(fs, string.sub(plain, 1, ends[mid])) <= width then
+      best, lo = mid, mid + 1
+    else
+      hi = mid - 1
+    end
+  end
+  fs:SetText(string.sub(plain, 1, ends[best]))
+end
+UI.FitName = fitName
+
+--- Is this row's list narrow enough to tighten (list._tightBelow)?
+function UI.RowTight(row)
+  local list = row and row._list
+  return list and list._tightBelow and UI.FrameWidth(list) < list._tightBelow and true or false
+end
+
 function UI.Row(parent, height)
   local r = CreateFrame("Button", nil, parent)
   r:SetHeight(height or 18)
@@ -1167,11 +1237,23 @@ function UI.Row(parent, height)
 
   --- Paint one data row. `frac` is 0..1 of the widest bar in the list.
   r.SetData = function(self, rank, name, value, sub, frac, color, subWidth)
+    --[[ Narrow (a list's _tightBelow, the threat window's): no rank number
+         and one icon, the spec's where known -- 40px given back to the
+         name, which a narrow row had none of. ]]
+    local tight = UI.RowTight(self)
+    local gutter = tight and 4 or 26
+    if self._gutter ~= gutter then
+      self._gutter = gutter
+      self.icon:ClearAllPoints()
+      self.icon:SetPoint("LEFT", self, "LEFT", gutter - 2, 0)
+      self._iconW = nil
+    end
     -- The class icon: shown, sized to the row, and the name moved over for
     -- it -- or gone, and the name back at the gutter.
     -- A spec's tree icon where the spec is known and spec icons are on;
     -- else the class's.
     local mode = UI.IconMode()
+    if tight and mode == "both" then mode = "spec" end
     local coords = mode ~= "off" and CLASS_COORDS[self._nextClass or ""]
     local spec = coords and (mode == "spec" or mode == "both") and self._nextSpec
     self._nextClass, self._nextSpec = nil, nil
@@ -1216,9 +1298,9 @@ function UI.Row(parent, height)
     if self._iconW ~= iconW then
       self._iconW = iconW
       self.name:ClearAllPoints()
-      self.name:SetPoint("LEFT", self, "LEFT", 26 + iconW, 0)
+      self.name:SetPoint("LEFT", self, "LEFT", gutter + iconW, 0)
     end
-    self.rank:SetText(rank and tostring(rank) .. "." or "")
+    self.rank:SetText((rank and not tight) and (tostring(rank) .. ".") or "")
     -- One line, cut short with an ellipsis: a name with a space in it -- a
     -- pet's "Wolf (Owner)" -- wrapped otherwise. A row's own height is
     -- set outright (EnsureRows), so it reads truly.
@@ -1231,8 +1313,18 @@ function UI.Row(parent, height)
          digits instead of clipping them, and lowering it hands the space
          back to the name. ]]
     local scale = (W.db and W.db.fontScale) or 1
+    if self._list and self._list._textScale then scale = scale * self._list._textScale() end
     local subW = math.ceil((subWidth or 64) * scale)
+    --[[ A list whose second column is the point of it (_keepSub: the
+         threat window's rate or %) gives it the width its text needs, and
+         it is one line tall either way: given less, "1.85k/s" wrapped onto
+         two lines of the row. ]]
+    if self._list and self._list._keepSub then
+      local need = math.ceil(UI.FullTextWidth(self.sub, sub or "")) + 2
+      if need > subW then subW = need end
+    end
     self.sub:SetWidth(subW)
+    self.sub:SetHeight(self:GetHeight() or 18)
 
     --[[ The row's width, from its list when it has one. A list re-anchors
          its rows when the row height changes -- which the stretched row
@@ -1269,22 +1361,40 @@ function UI.Row(parent, height)
     local valueW = self.value:GetStringWidth() or 0
     valueW = math.ceil(valueW / STEP) * STEP
     if valueW < STEP then valueW = STEP end
+    -- 14 covers the gaps either side of the value. Tight, no value takes
+    -- no room: a narrow threat row with its numbers off is a name and a %.
+    local gaps = 14
+    if tight and (self.value:GetText() or "") == "" then valueW, gaps = 0, 6 end
 
-    -- 26 is the rank gutter; 14 covers the gaps either side of the value.
-    local nameW = w - 26 - iconW - subW - valueW - 14
+    -- The rank gutter: 26, or 4 when tight.
+    local nameW = w - gutter - iconW - subW - valueW - gaps
     --[[ Too narrow for everything -- a meter split into columns, at a small
          text size. The secondary column (per second, a percentage) goes
          first, and the value moves up to the edge. If the name still does
          not fit it is cut short. It used to be held at MIN_NAME_W regardless,
          which drew it straight over the value. ]]
-    if nameW < MIN_NAME_W and subW > 0 then
+    --[[ A list whose secondary column is the point of it (the threat
+         window's %, list._keepSub) gives up the value instead, and keeps
+         the %. ]]
+    if nameW < MIN_NAME_W and self._list and self._list._keepSub and valueW > STEP then
+      -- What the painter wants kept even then (row._shortValue: the time
+      -- to pull aggro), else nothing.
+      self.value:SetText(self._shortValue or "")
+      valueW = math.ceil((self.value:GetStringWidth() or 0) / STEP) * STEP
+      if valueW < STEP then valueW = STEP end
+      if (self._shortValue or "") == "" then valueW, gaps = 0, 6 end
+      nameW = w - gutter - iconW - subW - valueW - gaps
+    end
+    if nameW < MIN_NAME_W and subW > 0 and not (self._list and self._list._keepSub) then
       self.sub:SetText("")
       subW = 1
       self.sub:SetWidth(subW)
-      nameW = w - 26 - iconW - subW - valueW - 14
+      nameW = w - gutter - iconW - subW - valueW - gaps
     end
     if nameW < 1 then nameW = 1 end
     self.name:SetWidth(nameW)
+    -- The letters that fit, not "..." (list._clipNames).
+    if list and list._clipNames then fitName(self.name, name, nameW) end
     self:Show()
   end
 
@@ -1346,6 +1456,21 @@ function UI.ScrollList(parent, rowHeight, makeRow)
     return m
   end
 
+  -- A row's text, sized by the list's own text size (SetTextScale).
+  local function scaleRow(row, fn)
+    UI.ScaleFontBy(row.rank, fn)
+    UI.ScaleFontBy(row.name, fn)
+    UI.ScaleFontBy(row.value, fn)
+    UI.ScaleFontBy(row.sub, fn)
+  end
+
+  --- Give this list's rows a text size of their own: fn() times the global
+  --- one (the threat window's). Rows made later get it too.
+  function list:SetTextScale(fn)
+    self._textScale = fn
+    for _, row in ipairs(self.rows) do scaleRow(row, fn) end
+  end
+
   function list:EnsureRows(n)
     local scrollW = (self:MaxOffset() > 0) and 8 or 0
     local have = table.getn(self.rows)
@@ -1353,6 +1478,7 @@ function UI.ScrollList(parent, rowHeight, makeRow)
       self.rows[i] = self.makeRow(self, self.rowHeight)
       -- Placed by this list, so it spans it (see the row's SetData).
       self.rows[i]._list = self
+      if self._textScale then scaleRow(self.rows[i], self._textScale) end
     end
     -- Re-anchor when the layout changed: the scrollbar appearing or
     -- vanishing moves the right inset, and the row height is a live
@@ -1502,11 +1628,14 @@ function UI.Window(name, width, height, title, opts)
   local rule = UI.Line(f, W.color.border)
   rule:SetPoint("BOTTOMLEFT", bar, "BOTTOMLEFT", 0, 0)
   rule:SetPoint("BOTTOMRIGHT", bar, "BOTTOMRIGHT", 0, 0)
+  -- The window's, not the bar's: a window that hides its bar hides this too.
+  f.barRule = rule
 
   local mark = bar:CreateTexture(nil, "OVERLAY")
   mark:SetTexture(UI.media.emblem)
   mark:SetWidth(14) mark:SetHeight(14)
   mark:SetPoint("LEFT", bar, "LEFT", 7, 0)
+  f.mark = mark
 
   f.title = UI.Text(bar, 12, W.color.text)
   f.title:SetPoint("LEFT", mark, "RIGHT", 6, 0)

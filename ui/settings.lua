@@ -1015,6 +1015,10 @@ function S:BuildThreat()
   check(self, "Fit window to its rows", get, set,
     { "In its own window: shrinks to the players it", "shows, with no empty space under them, never",
       "taller than you sized it." })
+  get, set = opt("hideTitle")
+  check(self, "No title bar", get, set,
+    { "A smaller window: no bar, fitted to its rows,", "the mob and who has aggro in the footer.",
+      "Drag it by the footer; right-click there for", "the window's menu." })
 
   choice(self, "I'm the tank",
     {
@@ -1057,17 +1061,46 @@ function S:BuildThreat()
     250, 2000, 250,
     function(v) return string.format("%.2fs", v / 1000) end)
 
-  slider(self, "Threat window opacity  (docked: follows the meter)",
+  -- Side by side: the tab is as tall as a 768px screen allows.
+  stepper(self, "Text size",
+    function() return ts().textScale or 100 end,
+    function(v) ts().textScale = v; redraw() end,
+    70, 180, 5, pct)
+  stepper(self, "Own window opacity",
     function() return math.floor(ts().opacity * 100 + 0.5) end,
     function(v) ts().opacity = v / 100; redraw() end,
-    20, 100, 5,
-    function(v) return v .. "%" end)
+    20, 100, 5, pct)
 
   get, set = opt("showTPS")
   check(self, "Threat per second", get, set)
   get, set = opt("showPullLine")
   check(self, "Pull-aggro line", get, set,
     { "A row at the threat where aggro moves to you." })
+  get, set = opt("pinMe")
+  check(self, "Keep my row at the top", get, set,
+    { "Your own row first, whatever your threat: it", "keeps its rank number, and no longer moves",
+      "or drops off the list as the threat shifts." })
+  -- One control for two settings: the window menu toggles showETA alone.
+  choice(self, "Time to pull aggro",
+    {
+      { value = "off", label = "off" },
+      { value = "me", label = "mine" },
+      { value = "all", label = "everyone's" },
+    },
+    function() local s = ts() return s.showETA and s.etaWho or "off" end,
+    function(v)
+      local s = ts()
+      s.showETA = (v ~= "off")
+      if v ~= "off" then s.etaWho = v end
+      redraw()
+    end,
+    { "Seconds until a player pulls aggro if they and", "the tank keep the threat per second they",
+      "averaged lately (below). Shown while they are", "closing in, within a minute. Red under 5s." })
+  stepper(self, "Pull time averages",
+    function() return ts().etaWindow or 20 end,
+    function(v) ts().etaWindow = v; redraw() end,
+    10, 60, 5,
+    function(v) return "last " .. v .. "s" end)
 
   ------------------------------------------------------------------
   heading(self, "Warnings")
@@ -1159,10 +1192,6 @@ function S:BuildThreat()
       "hitting a group member, AGGRO (not tanking)", "on one hitting you. With SuperWoW, every mob",
       "with a plate; without, every mob your group", "has targeted." })
 
-  get, set = opt("mobSummary")
-  check(self, "Mob count under the %", get, set,
-    { "\"4 held  1 slipping  1 loose\" under the", "target-frame %, with more than one mob." })
-
   textField(self, "Co-tanks",
     function() return ts().coTanks end,
     function(v) ts().coTanks = v or "" end)
@@ -1208,6 +1237,9 @@ function S:BuildThreat()
 
   get, set = opt("frame")
   check(self, "Show on target frame", get, set)
+  get, set = opt("mobSummary")
+  check(self, "Mob count under the %", get, set,
+    { "\"4 held  1 slipping  1 loose\" under the", "target-frame %, with more than one mob." })
   get, set = pick("frameStyle")
   choice(self, "Style",
     {
