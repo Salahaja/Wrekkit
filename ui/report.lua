@@ -22,6 +22,8 @@ local HEADER_H = 44
 R.tabs = {
   { key = "summary", label = "Summary" },
   { key = "damage", label = "Damage", metric = "damage" },
+  -- Misses and dodges by player (and by attack, clicked): where hit is short.
+  { key = "hittable", label = "Hit Table", metric = "missPct" },
   { key = "healing", label = "Healing", metric = "healing" },
   { key = "taken", label = "Taken", metric = "taken" },
   { key = "enemies", label = "Enemies", metric = "enemy" },

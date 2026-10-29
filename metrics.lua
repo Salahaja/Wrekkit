@@ -296,6 +296,63 @@ M.list = {
   },
 }
 
+--[[ The hit table, from a player's own attacks: what missed (or was fully
+     resisted), what the target dodged, parried or blocked, and the white
+     swings that glanced. Attempts are the hits that rolled on the table --
+     not a DoT's ticks or a damage shield, which never did -- plus the ones
+     that did not land. A pet's lines ("pet:" keys) are its own table, not
+     its owner's. ]]
+local function hitTable(r)
+  local t = { attempts = 0, missed = 0, dodged = 0, parried = 0, blocked = 0,
+              swings = 0, glances = 0, glanceAmount = 0 }
+  W.report.eachAbility(r.dmgAbility, function(id, a)
+    if type(id) == "string" then return end
+    local direct = a.direct or a.hits or 0
+    -- Only ticks landed: a DoT, whose casts the table did not see land.
+    if direct <= 0 and (a.hits or 0) > 0 then return end
+    local by = a.missBy or {}
+    local missed = (by[1] or 0) + (by[2] or 0)
+    t.attempts = t.attempts + direct + missed + (by[3] or 0) + (by[4] or 0) + (by[5] or 0)
+    t.missed = t.missed + missed
+    t.dodged = t.dodged + (by[3] or 0)
+    t.parried = t.parried + (by[4] or 0)
+    t.blocked = t.blocked + (by[5] or 0)
+    if id == 0 then
+      t.swings = t.swings + (a.hits or 0)
+      t.glances = t.glances + (a.glances or 0)
+      t.glanceAmount = t.glanceAmount + (a.glanceAmount or 0)
+    end
+  end)
+  return t
+end
+M.HitTable = hitTable
+
+local function pctOf(n, d) return d > 0 and n / d * 100 or 0 end
+
+table.insert(M.list, {
+  key = "missPct", label = "Miss % (hit table)", short = "MISS", side = "player",
+  -- Missed and fully resisted, of every attack that rolled on the table:
+  -- what more hit would take away. Dodged beside it.
+  value = function(r) local t = hitTable(r) return pctOf(t.missed, t.attempts) end,
+  sub = function(r)
+    local t = hitTable(r)
+    return t.attempts > 0 and string.format("dodge %.1f%%", pctOf(t.dodged, t.attempts)) or ""
+  end,
+  -- 0% missed is the answer for someone at the cap, not a row to drop.
+  keepZero = function(r) return hitTable(r).attempts > 0 end,
+  percent = true,
+  detail = "hitTable",
+})
+table.insert(M.list, {
+  key = "glancing", label = "Glancing blows", short = "GLNC", side = "player",
+  -- Of the white swings that landed, how many glanced; what they did beside.
+  value = function(r) local t = hitTable(r) return pctOf(t.glances, t.swings) end,
+  sub = function(r) local t = hitTable(r) return t.glances > 0 and W.Short(t.glanceAmount) or "" end,
+  keepZero = function(r) return hitTable(r).swings > 0 end,
+  percent = true,
+  detail = "hitTable",
+})
+
 M.byKey = {}
 for _, m in ipairs(M.list) do M.byKey[m.key] = m end
 

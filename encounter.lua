@@ -826,6 +826,14 @@ function E:Damage(sourceGuid, targetGuid, spellId, amount, info)
     row.amount = row.amount + amount
     row.hits = row.hits + 1
     if info.crit then row.crits = row.crits + 1 end
+    --[[ For the hit table: the hits that rolled on it (`direct`: not a DoT
+         tick or a damage shield, which never did), and the white swings
+         that glanced, with what they did. ]]
+    if info.canCrit ~= false then row.direct = (row.direct or 0) + 1 end
+    if info.glancing then
+      row.glances = (row.glances or 0) + 1
+      row.glanceAmount = (row.glanceAmount or 0) + amount
+    end
     --[[ First hit decides, because a spell has exactly one school. Melee
          carries none at all and arrives as spell id 0, which W.SchoolName
          reads as Physical rather than as unknown. ]]
@@ -854,6 +862,11 @@ function E:Damage(sourceGuid, targetGuid, spellId, amount, info)
     local row = abilityRow(dst.takenAbility, spellId, spellName)
     row.amount = row.amount + amount
     row.hits = row.hits + 1
+    -- A mob's crushing blows, on the tank who took them.
+    if info.crushing then
+      row.crushes = (row.crushes or 0) + 1
+      row.crushAmount = (row.crushAmount or 0) + amount
+    end
     -- What school is actually hurting you is the whole point of this table.
     if row.school == nil then row.school = info.school end
     noteAmount(row, amount, info.crit)
@@ -1824,7 +1837,9 @@ local function topAbilities(tbl, limit)
                          max = r.max, min = r.min, critAmount = r.critAmount,
                          resisted = r.resisted, resistHits = r.resistHits,
                          r25 = r.r25, r50 = r.r50, r75 = r.r75,
-                         missBy = r.missBy, school = r.school })
+                         missBy = r.missBy, school = r.school,
+                         direct = r.direct, glances = r.glances, glanceAmount = r.glanceAmount,
+                         crushes = r.crushes, crushAmount = r.crushAmount })
   end
   table.sort(rows, W.ByField("amount"))
   while table.getn(rows) > limit do table.remove(rows) end

@@ -151,8 +151,11 @@ function A:DrillLines(ctx, view, count)
   for i = 1, count do
     local a = abilities[i]
     if not a then break end
-    table.insert(out, string.format("%d. %s  %s", i, a.name,
-      W.Short(a.amount or 0)))
+    -- As the window shows it: an ability's own figure (a hit table's
+    -- "miss 4.1%", a buff's uptime) where it has one, with its note.
+    local note = (a._note and a._note ~= "") and ("  (" .. a._note .. ")") or ""
+    table.insert(out, string.format("%d. %s  %s%s", i, a.name,
+      a._value or W.Short(a.amount or 0), a._value and note or ""))
   end
   local extra = table.getn(abilities) - count
   if extra > 0 then

@@ -58,6 +58,18 @@ local NULL_GUID = "0x0000000000000000"
      every white hit as a critical -- a 100% crit rate on melee. ]]
 local HITINFO_CRIT = 128        -- 0x80, auto attacks (1.12)
 local SPELL_HIT_CRIT = 2        -- normalised code, spell damage
+local HITINFO_MISS = 16         -- 0x10
+local HITINFO_GLANCING = 16384  -- 0x4000: a white swing at a higher-level mob
+local HITINFO_CRUSHING = 32768  -- 0x8000: a mob's swing at a lower-level player
+
+--[[ A swing that did no damage still says what happened to it: the MISS
+     flag, or the victim's state -- 2 dodged, 3 parried, 5 blocked all of
+     it. Chronicle's log of 10/25 held 2,875 dodges, 2,176 parries, 2,788
+     misses and 279 full blocks, and Wrekkit counted none of them: a swing
+     of 0 was dropped on arrival, so a warrior's hit table had no misses in
+     it at all. Mapped to E:Miss's codes (its spells' missInfo). Immune,
+     evade and a full absorb are not the hit table and stay out. ]]
+local SWING_AVOIDED = { [2] = 3, [3] = 4, [5] = 5 }
 
 --[[ Damage that cannot crit, so it is no evidence about a crit chance.
      Periodic ticks -- a DoT, Consecration -- never crit in 1.12, and the
@@ -642,10 +654,16 @@ local swingInfo, spellHitInfo, healInfo, shieldInfo = {}, {}, {}, {}
 
 function C:AUTO_ATTACK(attacker, target, damage, hitInfo, victimState, _, blocked, absorbed, resisted)
   damage = num(damage)
-  if damage <= 0 then return end
+  if damage <= 0 then
+    local code = hasBit(num(hitInfo), HITINFO_MISS) and 1 or SWING_AVOIDED[num(victimState)]
+    if code then W.encounter:Miss(attacker, target, 0, code) end
+    return
+  end
   self:TakeDamage(target, damage)
   local info = swingInfo
   info.crit = hasBit(num(hitInfo), HITINFO_CRIT)
+  info.glancing = hasBit(num(hitInfo), HITINFO_GLANCING)
+  info.crushing = hasBit(num(hitInfo), HITINFO_CRUSHING)
   info.canCrit = true
   info.absorbed = num(absorbed)
   info.blocked = num(blocked)

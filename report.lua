@@ -214,6 +214,13 @@ local function addAbilities(dst, src, pet)
     d.r25 = (d.r25 or 0) + (row.r25 or 0)
     d.r50 = (d.r50 or 0) + (row.r50 or 0)
     d.r75 = (d.r75 or 0) + (row.r75 or 0)
+    -- The hit table: hits that rolled on it, glancing and crushing blows.
+    -- A pull saved before `direct` counted every hit as one.
+    d.direct = (d.direct or 0) + (row.direct or row.hits or 0)
+    d.glances = (d.glances or 0) + (row.glances or 0)
+    d.glanceAmount = (d.glanceAmount or 0) + (row.glanceAmount or 0)
+    d.crushes = (d.crushes or 0) + (row.crushes or 0)
+    d.crushAmount = (d.crushAmount or 0) + (row.crushAmount or 0)
     if row.missBy then
       if not d.missBy then d.missBy = {} end
       for code, n in pairs(row.missBy) do
@@ -832,6 +839,7 @@ end
 function R:Abilities(row, metricKey, ctx)
   local metric = W.metrics.Get(metricKey)
   if metric.detail == "auras" then return self:Auras(row, ctx or row._ctx) end
+  if metric.detail == "hitTable" then return self:HitTableRows(row, metricKey) end
   local source = row[metric.detail or "dmgAbility"]
   if not source then return {} end
 
@@ -865,6 +873,8 @@ function R:Abilities(row, metricKey, ctx)
       resisted = a.resisted or 0, resistHits = a.resistHits or 0,
       r25 = a.r25 or 0, r50 = a.r50 or 0, r75 = a.r75 or 0,
       missBy = a.missBy,
+      direct = a.direct or a.hits or 0, glances = a.glances or 0, glanceAmount = a.glanceAmount or 0,
+      crushes = a.crushes or 0, crushAmount = a.crushAmount or 0,
     })
   end)
   table.sort(out, W.ByField("amount"))
@@ -1018,6 +1028,42 @@ function R:DeathRecap(death)
   return rows
 end
 
+--[[ The hit table by attack, behind Miss % and Glancing blows: each of the
+     player's own attacks that rolled on it -- not a pet's, not a DoT's
+     ticks -- with how often it missed and was dodged, or for Glancing, how
+     often the white swings glanced and what they did. Most tried first.
+     Clicked, an attack opens its full spread (AbilityStats). ]]
+function R:HitTableRows(row, metricKey)
+  local all = self:Abilities(row, "damage")
+  local glancing = (metricKey == "glancing")
+  local out = {}
+  for _, a in ipairs(all) do
+    local by = a.missBy or {}
+    local missed = (by[1] or 0) + (by[2] or 0)
+    local avoided = missed + (by[3] or 0) + (by[4] or 0) + (by[5] or 0)
+    local direct = a.direct or a.hits or 0
+    local own = type(a.id) ~= "string" and not (direct <= 0 and (a.hits or 0) > 0)
+    if own and (not glancing or (a.id == 0 and (a.hits or 0) > 0)) then
+      local tries = direct + avoided
+      if tries > 0 then
+        if glancing then
+          a._value = string.format("%.1f%%", a.hits > 0 and (a.glances or 0) / a.hits * 100 or 0)
+          a._note = W.Short(a.glanceAmount or 0)
+        else
+          a._value = string.format("miss %.1f%%", missed / tries * 100)
+          a._note = string.format("dodge %.1f%%", (by[3] or 0) / tries * 100)
+        end
+        a._tries = tries
+        table.insert(out, a)
+      end
+    end
+  end
+  table.sort(out, function(x, y) return x._tries > y._tries end)
+  local top = out[1] and out[1]._tries or 0
+  for _, a in ipairs(out) do a._frac = top > 0 and a._tries / top or 0 end
+  return out
+end
+
 --[[ Stat lines for a single ability -- the second level of drilldown.
 
      Averages are split into normal and crit rather than reported as one
@@ -1075,6 +1121,29 @@ function R:AbilityStats(a, metricKey)
   if crits > 0 or hits > 0 then
     add("Crits", W.Comma(crits),
       hits > 0 and string.format("%.1f%%", crits / hits * 100) or nil)
+  end
+
+  --[[ Glancing blows: white swings at a mob above you, landing for less --
+       how many, what they did, and what that is against an ordinary hit
+       (neither a crit nor a glance), which is the damage glancing took. ]]
+  local glances = a.glances or 0
+  if glances > 0 and not isHeal then
+    local glanceAmount = a.glanceAmount or 0
+    add("Glancing", W.Comma(glances), hits > 0 and string.format("%.1f%% of what landed", glances / hits * 100) or nil)
+    add("Glancing damage", W.Comma(glanceAmount), "average " .. W.Comma(glanceAmount / glances))
+    local plain = hits - crits - glances
+    local plainAmount = total - critAmount - glanceAmount
+    if plain > 0 and plainAmount > 0 then
+      local each = plainAmount / plain
+      add("A glance did", string.format("%.0f%%", glanceAmount / glances / each * 100), "of an ordinary hit")
+      local lost = glances * each - glanceAmount
+      if lost > 0 then add("Lost to glancing", W.Comma(lost)) end
+    end
+  end
+  -- Crushing blows, on the damage a tank took.
+  if (a.crushes or 0) > 0 then
+    add("Crushing blows", W.Comma(a.crushes), hits > 0 and string.format("%.1f%% of what landed", a.crushes / hits * 100) or nil)
+    add("Crushing damage", W.Comma(a.crushAmount or 0), "average " .. W.Comma((a.crushAmount or 0) / a.crushes))
   end
 
   if hits > 0 then

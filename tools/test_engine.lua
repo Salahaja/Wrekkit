@@ -3791,6 +3791,67 @@ IN_COMBAT = true
 end
 
 ----------------------------------------------------------------------
+print("\n-- the hit table: misses, dodges, glancing blows --")
+----------------------------------------------------------------------
+-- As Chronicle logged them on 10/25: a miss is 0 damage with 0x10, a dodge
+-- victim state 2, a parry 3; a glancing swing lands with 0x4002, a mob's
+-- crushing blow with 0x8002.
+;(function()
+  local E = Wrekkit.encounter
+  Wrekkit.ResetData("all")
+  IN_COMBAT = true
+  fire("PLAYER_REGEN_DISABLED")
+  for _ = 1, 6 do fire("AUTO_ATTACK_SELF", "0xP1", "0xBoss", 300, 2, 1, 1, 0, 0, 0) end       -- hits
+  for _ = 1, 4 do fire("AUTO_ATTACK_SELF", "0xP1", "0xBoss", 210, 16386, 1, 1, 0, 0, 0) end   -- glancing
+  fire("AUTO_ATTACK_SELF", "0xP1", "0xBoss", 0, 16, 0, 1, 0, 0, 0)          -- missed
+  fire("AUTO_ATTACK_SELF", "0xP1", "0xBoss", 0, 2, 2, 1, 0, 0, 0)           -- dodged
+  fire("AUTO_ATTACK_SELF", "0xP1", "0xBoss", 0, 2, 2, 1, 0, 0, 0)           -- dodged
+  fire("AUTO_ATTACK_SELF", "0xP1", "0xBoss", 0, 2, 3, 1, 0, 0, 0)           -- parried
+  fire("AUTO_ATTACK_SELF", "0xP1", "0xBoss", 0, 0, 7, 1, 0, 0, 0)           -- immune: not the table
+  fire("AUTO_ATTACK_OTHER", "0xBoss", "0xP2", 1500, 32770, 1, 1, 0, 0, 0)   -- crushing, on the priest
+  fire("AUTO_ATTACK_OTHER", "0xBoss", "0xP2", 0, 2, 2, 1, 0, 0, 0)          -- the priest dodged
+  local fuff = E.live.actors["0xP1"]
+  local melee = fuff and fuff.dmgAbility[0]
+  check("swings that missed are counted", melee and melee.missBy and melee.missBy[1], 1)
+  check("  and the ones dodged", melee and melee.missBy[3], 2)
+  check("  and parried", melee and melee.missBy[4], 1)
+  check("  an immune swing is not the hit table", melee and melee.missBy[7], nil)
+  check("glancing swings and their damage", melee and melee.glances, 4)
+  check("  what they did", melee and melee.glanceAmount, 840)
+  local priest = E.live.actors["0xP2"]
+  local taken = priest and priest.takenAbility[0]
+  check("a crushing blow, on whoever took it", taken and taken.crushes, 1)
+  local onyMelee = E.live.actors["0xBoss"].dmgAbility[0]
+  check("a mob's swing dodged counts against the mob", onyMelee and onyMelee.missBy and onyMelee.missBy[3], 1)
+  check("  and goes in the dodger's death recap", priest.recent and priest.recent[priest.recentAt].x, "dodged")
+
+  local view = Wrekkit.report:View({ E.live }, { petMode = "merge" })
+  local rows = Wrekkit.report:Rank(view, "missPct")
+  local row
+  for _, r in ipairs(rows) do if r.name == "Fuff" then row = r end end
+  -- 10 landed + 1 missed + 2 dodged + 1 parried = 14 that rolled.
+  check("Miss %: of everything that rolled on the table", row and row._v, 1 / 14 * 100, 0.01)
+  check("  dodged beside it", row and row._sub, "dodge 14.3%")
+  rows = Wrekkit.report:Rank(view, "glancing")
+  for _, r in ipairs(rows) do if r.name == "Fuff" then row = r end end
+  check("Glancing: of the white swings that landed", row and row._v, 40, 0.01)
+  local byAttack = Wrekkit.report:Abilities(row, "missPct")
+  check("by attack: Melee, its miss and dodge", byAttack[1] and byAttack[1]._value, "miss 7.1%")
+  local stats = Wrekkit.report:AbilityStats(byAttack[1], "missPct")
+  local function stat(label)
+    for _, st in ipairs(stats) do if st.label == label then return st end end
+  end
+  check("the spread: how many glanced", stat("Glancing") and stat("Glancing").value, "4")
+  -- An ordinary hit did 300, a glance 210: 70%, and 4 x 90 lost.
+  check("  what a glance did against an ordinary hit", stat("A glance did") and stat("A glance did").value, "70%")
+  check("  and what glancing cost", stat("Lost to glancing") and stat("Lost to glancing").value, "360")
+  check("  dodges and parries", stat("Dodged") and stat("Parried") and stat("Dodged").value, "2")
+  IN_COMBAT = false
+  fire("PLAYER_REGEN_ENABLED")
+  Wrekkit.ResetData("all")
+end)()
+
+----------------------------------------------------------------------
 print("\n-- crit % counts what could crit --")
 ----------------------------------------------------------------------
 do
