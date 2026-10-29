@@ -1293,7 +1293,18 @@ function UI.Row(parent, height)
          first, and the value moves up to the edge. If the name still does
          not fit it is cut short. It used to be held at MIN_NAME_W regardless,
          which drew it straight over the value. ]]
-    if nameW < MIN_NAME_W and subW > 0 then
+    --[[ A list whose secondary column is the point of it (the threat
+         window's %, list._keepSub) gives up the value instead, and keeps
+         the %. ]]
+    if nameW < MIN_NAME_W and self._list and self._list._keepSub and valueW > STEP then
+      -- What the painter wants kept even then (row._shortValue: the time
+      -- to pull aggro), else nothing.
+      self.value:SetText(self._shortValue or "")
+      valueW = math.ceil((self.value:GetStringWidth() or 0) / STEP) * STEP
+      if valueW < STEP then valueW = STEP end
+      nameW = w - 26 - iconW - subW - valueW - 14
+    end
+    if nameW < MIN_NAME_W and subW > 0 and not (self._list and self._list._keepSub) then
       self.sub:SetText("")
       subW = 1
       self.sub:SetWidth(subW)

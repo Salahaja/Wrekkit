@@ -292,7 +292,7 @@ function T:Sanitize(s)
   s.lastWindow = oneOf(s.lastWindow, { "window", "docked" }, "docked")
   if type(s.window) ~= "table" then s.window = {} end
   local w = s.window
-  w.w = clamp(w.w, 180, 2000, d.window.w)
+  w.w = clamp(w.w, 120, 2000, d.window.w)
   w.h = clamp(w.h, 80, 2000, d.window.h)
   if type(w.point) ~= "string" then w.point = d.window.point end
   w.x = tonumber(w.x) or d.window.x

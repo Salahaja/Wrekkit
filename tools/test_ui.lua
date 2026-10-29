@@ -3869,6 +3869,33 @@ step("threat: the window's own text size, on top of Wrekkit's", function()
   if fail then error(fail) end
 end)
 
+step("threat: narrow, a row keeps its % and gives up the threat numbers", function()
+  local function narrowRow(keep)
+    local list = UI.ScrollList(UIParent, 16)
+    list:SetWidth(120)
+    list._keepSub = keep
+    list:SetData({ 1 }, function(row)
+      row:SetData(1, "Shieldbarbie", "12.3k  450/s", "92%", 0.5, { 1, 1, 1 }, 40)
+    end)
+    return list.rows[1]
+  end
+  local row = narrowRow(true)
+  if not row then error("no row was painted") end
+  if row.sub:GetText() ~= "92%" then error("the % was dropped: '" .. tostring(row.sub:GetText()) .. "'") end
+  if row.value:GetText() ~= "" then error("the threat numbers stayed: " .. tostring(row.value:GetText())) end
+  -- Every other list still gives up its second column first.
+  local other = narrowRow(false)
+  if other.value:GetText() == "" then error("a meter row lost its value instead of its second column") end
+  -- And the window itself may be made that narrow.
+  if (Wrekkit.threat:Settings().window.w or 0) < 120 then error("the saved width is under the floor") end
+  local saved = Wrekkit.threat:Settings().window.w
+  Wrekkit.threat:Settings().window.w = 120
+  Wrekkit.threat:Sanitize(Wrekkit.threat:Settings())
+  local kept = Wrekkit.threat:Settings().window.w
+  Wrekkit.threat:Settings().window.w = saved
+  if kept ~= 120 then error("a 120px window was widened back to " .. tostring(kept)) end
+end)
+
 step("threat: the title stays inside its bar, and the bar can go", function()
   local T = Wrekkit.threat
   local s = T:Settings()

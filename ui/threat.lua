@@ -214,6 +214,7 @@ function TW.Paint(row, item, index)
     return
   end
   row.tip = tooltipFor(item)
+  row._shortValue = nil
 
   if item.pullLine then
     local value = s.showThreat and W.Short(item.threat) or ""
@@ -300,6 +301,8 @@ function TW.Paint(row, item, index)
     local hue = (secs <= 5 and "ff4d4d") or (secs <= 10 and "ffa033") or "c8c8c8"
     local eta = "|cff" .. hue .. string.format("%.0fs", secs) .. "|r"
     value = (value == "") and eta or (value .. "  " .. eta)
+    -- Too narrow for the threat numbers, the seconds still show.
+    row._shortValue = eta
   end
 
   local color = W.ClassColor(r.class)
@@ -343,7 +346,8 @@ function TW:Create()
   local s = T:Settings()
 
   local f = UI.Window("WrekkitThreat", s.window.w, s.window.h, "Threat", {
-    minW = 180, minH = 80, barHeight = 20,
+    -- 120 wide: a name and its % (the threat numbers give way first).
+    minW = 120, minH = 80, barHeight = 20,
   })
   self.frame = f
   UI.BindGeometry(f, s.window)
@@ -423,6 +427,8 @@ function TW:Create()
   local list = UI.ScrollList(f.body, 16)
   list:SetPoint("TOPLEFT", f.body, "TOPLEFT", 2, -2)
   list:SetPoint("BOTTOMRIGHT", f.body, "BOTTOMRIGHT", -2, 14)
+  -- Narrow, the % stays and the threat numbers go (UI.Row's SetData).
+  list._keepSub = true
   self.list = list
 
   local foot = UI.Text(f.body, 10, W.color.textFaint)
@@ -525,7 +531,7 @@ function TW:ApplyLayout()
       f.body:SetPoint("TOPLEFT", f.bar, "BOTTOMLEFT", 0, -1)
     end
     f.body:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -(f.inset or 1), f.inset or 1)
-    if f.SetMinResize then f:SetMinResize(180, headless and 40 or 80) end
+    if f.SetMinResize then f:SetMinResize(120, headless and 40 or 80) end
   end
   local chromeH = (headless and 0 or barH) + 18
   if TW.TextScale then
