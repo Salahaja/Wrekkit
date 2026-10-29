@@ -3980,6 +3980,20 @@ step("threat: the title stays inside its bar, and the bar can go", function()
   TW:ApplyLayout()
   local fail
   if f.bar:IsShown() then fail = "the title bar is still shown" end
+  if not fail and f.barRule and f.barRule:IsShown() then fail = "the bar's divider is still drawn" end
+  -- No bar is the small window: it fits its rows.
+  if not fail then
+    local fitted = false
+    local realFit = UI.FitHeight
+    UI.FitHeight = function() fitted = true end
+    TW:SetDisplay("window")
+    f:Show()
+    TW:Fit()
+    UI.FitHeight = realFit
+    TW:SetDisplay("docked")
+    TW:ApplyLayout()
+    if not fitted then fail = "a window with no title bar was not fitted to its rows" end
+  end
   local top = f.body._points and f.body._points[1]
   if not fail and not (top and top[2] == f) then fail = "the body does not start at the window's top" end
   if not fail and not (f:GetHeight() < withBar) then fail = "docked, the window is no smaller without its bar" end
@@ -4005,6 +4019,7 @@ step("threat: the title stays inside its bar, and the bar can go", function()
   if not fail and not pick then fail = "right-clicking the window opened no menu" end
   if not fail then pick("titlebar") end
   if not fail and (s.hideTitle or not f.bar:IsShown()) then fail = "the menu did not bring the title bar back" end
+  if not fail and f.barRule and not f.barRule:IsShown() then fail = "the bar came back without its divider" end
   arg1 = "LeftButton"
   s.hideTitle = was
   TW:ApplyLayout()

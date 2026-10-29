@@ -1017,8 +1017,8 @@ function S:BuildThreat()
       "taller than you sized it." })
   get, set = opt("hideTitle")
   check(self, "No title bar", get, set,
-    { "A smaller window: the mob and who has aggro", "go in the footer. Drag it by the footer, and",
-      "right-click there for the window's menu." })
+    { "A smaller window: no bar, fitted to its rows,", "the mob and who has aggro in the footer.",
+      "Drag it by the footer; right-click there for", "the window's menu." })
 
   choice(self, "I'm the tank",
     {

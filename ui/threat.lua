@@ -533,11 +533,18 @@ function TW:ApplyLayout()
   if f._headless ~= headless and not f._moving then
     f._headless = headless
     f.body:ClearAllPoints()
+    --[[ The bar's divider goes with it. It is the window's texture, so
+         hiding the bar left it showing -- and the client stops laying out
+         a hidden frame, so it stayed where the bar's bottom was, as wide
+         as the window used to be: a line across the rows and out past the
+         edge once the window was narrowed. ]]
     if headless then
       f.bar:Hide()
+      if f.barRule then f.barRule:Hide() end
       f.body:SetPoint("TOPLEFT", f, "TOPLEFT", f.inset or 1, -(f.inset or 1))
     else
       f.bar:Show()
+      if f.barRule then f.barRule:Show() end
       f.body:SetPoint("TOPLEFT", f.bar, "BOTTOMLEFT", 0, -1)
     end
     f.body:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -(f.inset or 1), f.inset or 1)
@@ -798,7 +805,9 @@ function TW:Fit()
     f._maxH = nil
     return
   end
-  if not s.fitRows then
+  -- No title bar is the small window: it fits its rows too, with no
+  -- empty rows under the last player.
+  if not (s.fitRows or s.hideTitle) then
     UI.UnfitHeight(f)
     return
   end

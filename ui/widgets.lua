@@ -1601,6 +1601,8 @@ function UI.Window(name, width, height, title, opts)
   local rule = UI.Line(f, W.color.border)
   rule:SetPoint("BOTTOMLEFT", bar, "BOTTOMLEFT", 0, 0)
   rule:SetPoint("BOTTOMRIGHT", bar, "BOTTOMRIGHT", 0, 0)
+  -- The window's, not the bar's: a window that hides its bar hides this too.
+  f.barRule = rule
 
   local mark = bar:CreateTexture(nil, "OVERLAY")
   mark:SetTexture(UI.media.emblem)
