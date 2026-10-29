@@ -644,6 +644,12 @@ end
 
 step("initialise", function()
   WrekkitDB = nil
+  --[[ Every warning, alert, flash and popup is off by default for players
+       (threat.lua); this drives them all, so it runs with them on --
+       through the defaults, so a scenario's ResetSettings keeps them. ]]
+  local d = W.threat.defaults
+  d.warnText, d.warnSound, d.raidWarning, d.warnPulled = true, true, true, true
+  d.tankAlerts, d.warnLostAggro, d.flash, d.flashFrame, d.tauntPopup = true, true, true, true, true
   W.InitDB()
   if (os.getenv("WREKKIT_SKIN") or "") ~= "" then
     W.db.skin = os.getenv("WREKKIT_SKIN")
