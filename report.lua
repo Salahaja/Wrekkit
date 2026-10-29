@@ -1114,9 +1114,16 @@ function R:AbilityStats(a, metricKey)
   end
 
   add("Landed", W.Comma(hits))
-  if misses > 0 then
-    add("Missed", W.Comma(misses),
-      attempts > 0 and string.format("%.1f%% of %d", misses / attempts * 100, attempts) or nil)
+  --[[ A miss is a miss: what hit rating takes away. Dodged, parried and
+       blocked are their own lines below -- `misses` counts every attack
+       that did not land, and showing it as "Missed" counted each dodge
+       twice. Only a pull saved before the reasons were kept falls back to
+       it. ]]
+  local by = a.missBy
+  local trueMisses = by and (by[1] or 0) or misses
+  if trueMisses > 0 then
+    add("Missed", W.Comma(trueMisses),
+      attempts > 0 and string.format("%.1f%% of %d", trueMisses / attempts * 100, attempts) or nil)
   end
   if crits > 0 or hits > 0 then
     add("Crits", W.Comma(crits),
@@ -1215,8 +1222,8 @@ function R:AbilityStats(a, metricKey)
     }
     local seen = {}
     for code, n in pairs(a.missBy) do
-      -- Full resists already have a line of their own above.
-      if code ~= 2 and n > 0 then
+      -- Misses and full resists already have lines of their own above.
+      if code ~= 1 and code ~= 2 and n > 0 then
         local name = MISS_NAME[code] or ("Reason " .. tostring(code))
         seen[name] = (seen[name] or 0) + n
       end

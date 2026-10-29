@@ -3846,6 +3846,11 @@ print("\n-- the hit table: misses, dodges, glancing blows --")
   check("  what a glance did against an ordinary hit", stat("A glance did") and stat("A glance did").value, "70%")
   check("  and what glancing cost", stat("Lost to glancing") and stat("Lost to glancing").value, "360")
   check("  dodges and parries", stat("Dodged") and stat("Parried") and stat("Dodged").value, "2")
+  -- A dodge is not a miss: "Missed" is the one true miss, said once.
+  local missedLines = 0
+  for _, st in ipairs(stats) do if st.label == "Missed" then missedLines = missedLines + 1 end end
+  check("  one Missed line", missedLines, 1)
+  check("  counting only the true miss, not the dodges", stat("Missed") and stat("Missed").value, "1")
   IN_COMBAT = false
   fire("PLAYER_REGEN_ENABLED")
   Wrekkit.ResetData("all")
