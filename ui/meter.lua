@@ -417,6 +417,9 @@ function M:Create()
   local list = UI.ScrollList(f.body, s.rowHeight)
   list:SetPoint("TOPLEFT", tb, "BOTTOMLEFT", 2, -2)
   list:SetPoint("BOTTOMRIGHT", f.body, "BOTTOMRIGHT", -2, 16)
+  -- Narrow (a compact meter, a half side by side): no rank and one icon,
+  -- and a long name keeps its first letters rather than turning to "...".
+  list._tightBelow, list._clipNames = 200, true
   self.list = list
 
   -- The second half, when split: a header naming its metric -- click it
@@ -477,6 +480,7 @@ function M:Create()
 
   local list2 = UI.ScrollList(f.body, s.rowHeight)
   list2:Hide()
+  list2._tightBelow, list2._clipNames = 200, true
   self.list2 = list2
 
   ------------------------------------------------------------------
@@ -616,7 +620,9 @@ function M:ApplyLayout()
                  + 8                                   -- borders and insets
     -- Over and under: two rows in each half, and the second half's header.
     -- Side by side: the headers, and room for two columns.
-    local minW = px(260)
+    -- Compact (no toolbar, no footer): as narrow as 120, a name and its
+    -- number. The toolbar's search and buttons are what want 260.
+    local minW = compact and px(120) or px(260)
     local mode = self:SplitMode()
     if mode == "stacked" then
       chrome = chrome + rowH * 2 + px(16)
@@ -802,12 +808,34 @@ end
 --- FontStrings do not size their parent, so without measuring the text the
 --- clickable area would be a fixed guess -- too small for "All Session",
 --- absurdly wide for "Current".
+--- Is the meter narrow (a compact meter made small)? Its title goes short.
+local NARROW_W = 200
+function M:Narrow()
+  local f = self.frame
+  return f and UI.FrameWidth(f) < NARROW_W * UI.FontScale() or false
+end
+
 function M:SetSegmentLabel(text)
   local b = self.segBtn
   if not b then return end
   text = text or ""
   b.label:SetText(text)
-  local w = b.label:GetStringWidth() or 0
+  local w = UI.FullTextWidth(b.label, text)
+  --[[ No further than the buttons on the right: past them it ran under the
+       split and settings buttons and out of a narrow window. Cut to the
+       letters that fit there ("Ragna"), as the rows' names are. ]]
+  local f = self.frame
+  if f then
+    local right = 4
+    for _, btn in ipairs({ f.closeButton, self.cogBtn, self.splitBtn }) do
+      if btn and btn:IsShown() then right = right + (btn:GetWidth() or 0) + 2 end
+    end
+    local room = UI.FrameWidth(f.bar) - 27 - UI.FullTextWidth(f.title, f.title:GetText()) - 6 - right - 8
+    if w > room then
+      if room > 8 then UI.FitName(b.label, text, room) else b.label:SetText("") end
+      w = math.max(0, room)
+    end
+  end
   b:SetWidth(w + 8)
   b:SetHeight(math.floor(13 * UI.FontScale() + 0.5))
 end
@@ -835,8 +863,8 @@ M.METRIC_GROUPS = METRIC_GROUPS
      again or right-click to go back -- and announced as shown (M:RenderView,
      M:AnnounceContext). ]]
 M.VIEWS = {
-  contribFx = { label = "Raid Contrib by effect", title = "Raid Contrib" },
-  deathLog = { label = "Death log", title = "Deaths" },
+  contribFx = { label = "Raid Contrib by effect", title = "Raid Contrib", short = "CONTRIB" },
+  deathLog = { label = "Death log", title = "Deaths", short = "DEATHS" },
 }
 
 --- `which` 2 picks the second metric of a split meter; otherwise the first.
@@ -1093,7 +1121,7 @@ local function makePainters(pane)
   local function paintActor(row, item, index)
     local color = item._color or W.ClassColor(item.class)
     if item.isPlayer then row:SetClass(item.class, UI.SpecIconFor(item.name, item.class)) end
-    row:SetData(item._rank, UI.RowName(item, M:Settings().pickedOnly),
+    row:SetData(item._rank, UI.RowName(item, M:Settings().pickedOnly, UI.RowTight(row)),
       item._text, item._sub, item._frac, color, 58)
     row.tip = function(self) actorTooltip(self, item, metricKey()) end
     --[[ The meter repaints twice a second. Without this the numbers under the
@@ -1328,7 +1356,7 @@ end
 function M:RenderView(pane, view, segLabel, key)
   local list = self[pane.listField]
   local drill = self[pane.drillField]
-  local out = { title = M.VIEWS[key].title, seg = segLabel }
+  local out = { title = M.VIEWS[key].title, short = M.VIEWS[key].short, seg = segLabel }
   local function back()
     M[pane.drillField] = nil
     UI.meter:Refresh()
@@ -1460,7 +1488,7 @@ function M:RenderPane(pane, view, segLabel)
   if M.VIEWS[metricKey] then return self:RenderView(pane, view, segLabel, metricKey) end
   local metric = W.metrics.Get(metricKey)
   local rows, _, total = W.report:Rank(view, metricKey, self:Filter())
-  local out = { title = W.metrics.Label(metric), seg = segLabel }
+  local out = { title = W.metrics.Label(metric), short = metric.short, seg = segLabel }
 
   local drill = self[pane.drillField]
   if drill then
@@ -1569,7 +1597,8 @@ function M:RefreshInner()
     return
   end
   local o = self:RenderPane(PANES[1], view, segLabel)
-  f.title:SetText(o.title)
+  -- Narrow, the metric's short name ("DMG"), so the pull's has room.
+  f.title:SetText((M:Narrow() and o.short) or o.title)
   self:SetSegmentLabel(o.seg)
   self.footL:SetText(o.footL or "")
   self.footR:SetText(o.footR or "")
@@ -1641,10 +1670,12 @@ UI.PICK_TIP = {
 --- A player row's name as drawn. Marked if picked -- unless only picked
 --- players are showing, when every row is one and the mark is noise -- and
 --- marked * when filled from that player's own report, not measured here.
-function UI.RowName(item, pickedOnly)
+--- `tight`: a narrow row (UI.RowTight), the name alone -- every letter of
+--- a marker or the spec is one of the name's.
+function UI.RowName(item, pickedOnly, tight)
   local name = item.name or "?"
-  if item.isPlayer then name = UI.WithSpec(item.name, name) end
-  if not pickedOnly and (item.isPlayer or item.class == "PET")
+  if item.isPlayer and not tight then name = UI.WithSpec(item.name, name) end
+  if not pickedOnly and not tight and (item.isPlayer or item.class == "PET")
      and W.report:IsPicked(item.ownerName or item.name) then
     name = "|cffe0a22c>|r " .. name
   end

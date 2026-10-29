@@ -484,7 +484,14 @@ print("\nWrekkit UI smoke test\n")
 
 local UI = Wrekkit.ui
 
-step("meter builds", function() UI.meter:Create() end)
+step("meter builds", function()
+  UI.meter:Create()
+  -- This harness resolves no anchors, so an anchored frame reads 100 wide;
+  -- the meter's lists and title bar are as wide as the 260 window here.
+  UI.meter.list:SetWidth(252)
+  if UI.meter.list2 then UI.meter.list2:SetWidth(252) end
+  UI.meter.frame.bar:SetWidth(258)
+end)
 step("meter shows", function() UI.meter:Show() end)
 step("meter refreshes", function() UI.meter:Refresh() end)
 
@@ -3931,6 +3938,45 @@ step("threat: narrow, a row keeps its % and gives up the threat numbers", functi
   TW:ApplyLayout()
   TW:SetDisplay(was[3])
   if w < 120 then error("the title bar came back on a " .. w .. "px window") end
+end)
+
+step("meter: compact, it goes down to 120 with a short title and tight rows", function()
+  local M = UI.meter
+  local s = M:Settings()
+  local f = M.frame
+  local was = { s.compact, f:GetWidth(), M.list:GetWidth(), f.bar:GetWidth(), s.metric }
+  local fail
+  M:SetMetric("damage")
+  s.compact = true
+  M:ApplyLayout()
+  if (f._minW or 999) > 120 then fail = "a compact meter still stops at " .. tostring(f._minW) end
+  s.compact = false
+  M:ApplyLayout()
+  if not fail and (f._minW or 0) < 260 then fail = "a full meter, toolbar and all, went under 260" end
+  s.compact = true
+  M:ApplyLayout()
+  -- Narrow: the metric's short name, the pull's cut to fit, tight rows.
+  f:SetWidth(130)
+  f.bar:SetWidth(128)
+  M.list:SetWidth(122)
+  M:Refresh()
+  if not fail and f.title:GetText() ~= "DMG" then fail = "the narrow title reads " .. tostring(f.title:GetText()) end
+  local seg = M.segBtn
+  if not fail and seg and (seg:GetWidth() or 0) > 128 then fail = "the pull's name runs past the bar" end
+  local row = M.list.rows[1]
+  if not fail and row and row:IsShown() and (row.rank:GetText() or "") ~= "" then
+    fail = "a narrow meter row kept its rank"
+  end
+  s.compact, s.metric = was[1], was[5]
+  f:SetWidth(was[2]); M.list:SetWidth(was[3]); f.bar:SetWidth(was[4])
+  M:ApplyLayout()
+  -- A saved 120 is kept.
+  Wrekkit.db.meter.window.w = 120
+  Wrekkit.SanitizeDB(Wrekkit.db)
+  local kept = Wrekkit.db.meter.window.w
+  Wrekkit.db.meter.window.w = 260
+  if not fail and kept ~= 120 then fail = "a saved 120px meter was widened to " .. tostring(kept) end
+  if fail then error(fail) end
 end)
 
 step("threat: a narrow row drops its rank and keeps a name's first letters", function()

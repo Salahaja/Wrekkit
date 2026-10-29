@@ -319,7 +319,8 @@ function W.SanitizeDB(db)
     end
     if type(m.search) ~= "string" then m.search = "" end
     if type(m.window) == "table" then
-      clampSetting(m.window, "w", 260, 2000, 260)
+      -- 120 is a compact meter's floor (ui/meter.lua widens a full one).
+      clampSetting(m.window, "w", 120, 2000, 260)
       clampSetting(m.window, "h", 110, 2000, 200)
     end
   end
