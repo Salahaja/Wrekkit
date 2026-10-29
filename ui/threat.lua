@@ -250,13 +250,16 @@ function TW.Paint(row, item, index)
 
   local r = item.row
   local name = r.name
-  if r.tank then name = "|cff5a9bff[T]|r " .. name end
+  -- Narrow, the name alone: the % column already says "tank", and every
+  -- letter of a marker is one of the name's.
+  local tight = UI.RowTight(row)
+  if r.tank and not tight then name = "|cff5a9bff[T]|r " .. name end
   -- One of the other tanks: their numbers raise no warnings for you.
-  if not r.tank and not r.isMe and T:IsCoTank(r.name) then
+  if not r.tank and not r.isMe and not tight and T:IsCoTank(r.name) then
     name = name .. " |cff5a9bff(tank)|r"
   end
-  name = UI.WithSpec(r.name, name)
-  if r.isMe then name = "|cffe0a22c>|r " .. name end
+  if not tight then name = UI.WithSpec(r.name, name) end
+  if r.isMe and not tight then name = "|cffe0a22c>|r " .. name end
 
   -- Left-click a player to whisper them their threat; right-click to mark
   -- or unmark them as one of the tanks.
@@ -309,8 +312,9 @@ function TW.Paint(row, item, index)
   if r.isMe and not r.tank then color = T:Color(item.shown) end
 
   row:SetClass(r.class, UI.SpecIconFor(r.name, r.class))
+  -- Narrow, the % column is as wide as "100%" and no wider.
   row:SetData(item._rank, name, value, r.tank and "tank" or T.PctText(item.shown),
-    item._frac, color, 40)
+    item._frac, color, tight and 30 or 40)
 end
 
 --- Why there is nothing to show, in words.
@@ -346,7 +350,8 @@ function TW:Create()
   local s = T:Settings()
 
   local f = UI.Window("WrekkitThreat", s.window.w, s.window.h, "Threat", {
-    -- 120 wide: a name and its % (the threat numbers give way first).
+    -- 120 wide: a name and its % (the threat numbers give way first);
+    -- 90 without the title bar, whose buttons alone want 110.
     minW = 120, minH = 80, barHeight = 20,
   })
   self.frame = f
@@ -427,18 +432,23 @@ function TW:Create()
   local list = UI.ScrollList(f.body, 16)
   list:SetPoint("TOPLEFT", f.body, "TOPLEFT", 2, -2)
   list:SetPoint("BOTTOMRIGHT", f.body, "BOTTOMRIGHT", -2, 14)
-  -- Narrow, the % stays and the threat numbers go (UI.Row's SetData).
+  -- Narrow, the % stays and the threat numbers go (UI.Row's SetData);
+  -- under 200px no rank and one icon, and a long name keeps its first
+  -- letters rather than turning into "...".
   list._keepSub = true
+  list._tightBelow = 200
+  list._clipNames = true
   self.list = list
 
   local foot = UI.Text(f.body, 10, W.color.textFaint)
   foot:SetPoint("BOTTOMLEFT", f.body, "BOTTOMLEFT", 6, 2)
-  -- Cut short before the right-hand note, never run past the edge.
-  foot:SetPoint("RIGHT", f.body, "RIGHT", -56, 0)
   self.footL = foot
   local footR = UI.Text(f.body, 10, W.color.textFaint, "RIGHT")
   footR:SetPoint("BOTTOMRIGHT", f.body, "BOTTOMRIGHT", -16, 2)
   self.footR = footR
+  -- Cut short before the right-hand note (as wide as its text: none most
+  -- of the time), never run past the edge.
+  foot:SetPoint("RIGHT", footR, "LEFT", -4, 0)
 
   --[[ The window itself is a handle too: drag it by its footer (or any
        space the rows leave), right-click there for the menu. Without a
@@ -531,7 +541,13 @@ function TW:ApplyLayout()
       f.body:SetPoint("TOPLEFT", f.bar, "BOTTOMLEFT", 0, -1)
     end
     f.body:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -(f.inset or 1), f.inset or 1)
-    if f.SetMinResize then f:SetMinResize(120, headless and 40 or 80) end
+    if f.SetMinResize then f:SetMinResize(headless and 90 or 120, headless and 40 or 80) end
+    -- The bar back on a window made narrower without it: wide enough for
+    -- its buttons again.
+    if not headless and (f:GetWidth() or 0) < 120 then
+      f:SetWidth(120)
+      if s.window then s.window.w = 120 end
+    end
   end
   local chromeH = (headless and 0 or barH) + 18
   if TW.TextScale then

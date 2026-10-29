@@ -3893,7 +3893,58 @@ step("threat: narrow, a row keeps its % and gives up the threat numbers", functi
   Wrekkit.threat:Sanitize(Wrekkit.threat:Settings())
   local kept = Wrekkit.threat:Settings().window.w
   Wrekkit.threat:Settings().window.w = saved
-  if kept ~= 120 then error("a 120px window was widened back to " .. tostring(kept)) end
+  if kept ~= 120 then error("a 120px window was changed to " .. tostring(kept)) end
+  -- 90 without a title bar; the bar back, and it is wide enough for it.
+  local T, TW = Wrekkit.threat, UI.threat
+  local st = T:Settings()
+  local was = { st.window.w, st.hideTitle, st.display }
+  st.window.w = 90
+  T:Sanitize(st)
+  if st.window.w ~= 90 then error("a 90px window was widened to " .. tostring(st.window.w)) end
+  if not TW.frame then TW:Create() end
+  TW:SetDisplay("window")
+  st.hideTitle = true
+  TW:ApplyLayout()
+  TW.frame:SetWidth(90)
+  st.hideTitle = false
+  TW:ApplyLayout()
+  local w = TW.frame:GetWidth()
+  st.window.w, st.hideTitle = was[1], was[2]
+  TW:ApplyLayout()
+  TW:SetDisplay(was[3])
+  if w < 120 then error("the title bar came back on a " .. w .. "px window") end
+end)
+
+step("threat: a narrow row drops its rank and keeps a name's first letters", function()
+  local function paintAt(width)
+    local list = UI.ScrollList(UIParent, 16)
+    list:SetWidth(width)
+    list._keepSub, list._tightBelow, list._clipNames = true, 200, true
+    list:SetData({ 1 }, function(row)
+      row:SetData(3, "Shieldbarbiethegreat", "", "92%", 0.5, { 1, 1, 1 }, 40)
+    end)
+    return list.rows[1]
+  end
+  local row = paintAt(150)
+  if row.rank:GetText() ~= "" then error("a narrow row kept its rank: " .. tostring(row.rank:GetText())) end
+  local shown = row.name:GetText() or ""
+  if string.find(shown, "...", 1, true) then error("the name was cut to dots: " .. shown) end
+  if shown == "" or string.find("Shieldbarbiethegreat", shown, 1, true) ~= 1 then
+    error("the name is not its first letters: " .. shown)
+  end
+  if string.len(shown) >= string.len("Shieldbarbiethegreat") then error("a name too long was not cut: " .. shown) end
+  if (row.name:GetStringWidth() or 0) > (row.name:GetWidth() or 0) then error("the cut name still overflows") end
+  -- Wide, the rank is back and the whole name fits.
+  local wide = paintAt(400)
+  if wide.rank:GetText() ~= "3." then error("a wide row lost its rank") end
+  if wide.name:GetText() ~= "Shieldbarbiethegreat" then error("a wide row's name was cut: " .. tostring(wide.name:GetText())) end
+  -- Cutting never splits a letter of a UTF-8 name.
+  local fs = UIParent:CreateFontString()
+  fs:SetText("Lunarâaaaaaaaaaaaa")
+  UI.FitName(fs, "Lunarâaaaaaaaaaaaa", 36)
+  local cut = fs:GetText()
+  local last = string.byte(cut, string.len(cut))
+  if last and last >= 192 then error("the cut ended half way through a letter") end
 end)
 
 step("threat: the title stays inside its bar, and the bar can go", function()

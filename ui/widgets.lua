@@ -1120,6 +1120,43 @@ function UI.SpecIconFor(name, class)
   return W.talents and W.talents:Icon(name, class) or nil
 end
 
+--[[ A name cut to the letters that fit -- "Shieldb" -- rather than the
+     client's "...", which on a narrow row was all there was room for.
+     Colour codes go from a cut name; a cut never splits a UTF-8 letter.
+     The longest prefix that fits is found by halving, a few measurements
+     a row. ]]
+local function fitName(fs, text, width)
+  if (fs:GetStringWidth() or 0) <= width then return end
+  local plain = string.gsub(text or "", "|c%x%x%x%x%x%x%x%x", "")
+  plain = string.gsub(plain, "|r", "")
+  local n = string.len(plain)
+  if n == 0 then return end
+  local ends = {}   -- where each letter ends, in bytes
+  for i = 2, n do
+    local b = string.byte(plain, i)
+    if b < 128 or b >= 192 then table.insert(ends, i - 1) end
+  end
+  table.insert(ends, n)
+  local lo, hi, best = 1, table.getn(ends), 1
+  while lo <= hi do
+    local mid = math.floor((lo + hi) / 2)
+    fs:SetText(string.sub(plain, 1, ends[mid]))
+    if (fs:GetStringWidth() or 0) <= width then
+      best, lo = mid, mid + 1
+    else
+      hi = mid - 1
+    end
+  end
+  fs:SetText(string.sub(plain, 1, ends[best]))
+end
+UI.FitName = fitName
+
+--- Is this row's list narrow enough to tighten (list._tightBelow)?
+function UI.RowTight(row)
+  local list = row and row._list
+  return list and list._tightBelow and UI.FrameWidth(list) < list._tightBelow and true or false
+end
+
 function UI.Row(parent, height)
   local r = CreateFrame("Button", nil, parent)
   r:SetHeight(height or 18)
@@ -1182,11 +1219,23 @@ function UI.Row(parent, height)
 
   --- Paint one data row. `frac` is 0..1 of the widest bar in the list.
   r.SetData = function(self, rank, name, value, sub, frac, color, subWidth)
+    --[[ Narrow (a list's _tightBelow, the threat window's): no rank number
+         and one icon, the spec's where known -- 40px given back to the
+         name, which a narrow row had none of. ]]
+    local tight = UI.RowTight(self)
+    local gutter = tight and 4 or 26
+    if self._gutter ~= gutter then
+      self._gutter = gutter
+      self.icon:ClearAllPoints()
+      self.icon:SetPoint("LEFT", self, "LEFT", gutter - 2, 0)
+      self._iconW = nil
+    end
     -- The class icon: shown, sized to the row, and the name moved over for
     -- it -- or gone, and the name back at the gutter.
     -- A spec's tree icon where the spec is known and spec icons are on;
     -- else the class's.
     local mode = UI.IconMode()
+    if tight and mode == "both" then mode = "spec" end
     local coords = mode ~= "off" and CLASS_COORDS[self._nextClass or ""]
     local spec = coords and (mode == "spec" or mode == "both") and self._nextSpec
     self._nextClass, self._nextSpec = nil, nil
@@ -1231,9 +1280,9 @@ function UI.Row(parent, height)
     if self._iconW ~= iconW then
       self._iconW = iconW
       self.name:ClearAllPoints()
-      self.name:SetPoint("LEFT", self, "LEFT", 26 + iconW, 0)
+      self.name:SetPoint("LEFT", self, "LEFT", gutter + iconW, 0)
     end
-    self.rank:SetText(rank and tostring(rank) .. "." or "")
+    self.rank:SetText((rank and not tight) and (tostring(rank) .. ".") or "")
     -- One line, cut short with an ellipsis: a name with a space in it -- a
     -- pet's "Wolf (Owner)" -- wrapped otherwise. A row's own height is
     -- set outright (EnsureRows), so it reads truly.
@@ -1285,9 +1334,13 @@ function UI.Row(parent, height)
     local valueW = self.value:GetStringWidth() or 0
     valueW = math.ceil(valueW / STEP) * STEP
     if valueW < STEP then valueW = STEP end
+    -- 14 covers the gaps either side of the value. Tight, no value takes
+    -- no room: a narrow threat row with its numbers off is a name and a %.
+    local gaps = 14
+    if tight and (self.value:GetText() or "") == "" then valueW, gaps = 0, 6 end
 
-    -- 26 is the rank gutter; 14 covers the gaps either side of the value.
-    local nameW = w - 26 - iconW - subW - valueW - 14
+    -- The rank gutter: 26, or 4 when tight.
+    local nameW = w - gutter - iconW - subW - valueW - gaps
     --[[ Too narrow for everything -- a meter split into columns, at a small
          text size. The secondary column (per second, a percentage) goes
          first, and the value moves up to the edge. If the name still does
@@ -1302,16 +1355,19 @@ function UI.Row(parent, height)
       self.value:SetText(self._shortValue or "")
       valueW = math.ceil((self.value:GetStringWidth() or 0) / STEP) * STEP
       if valueW < STEP then valueW = STEP end
-      nameW = w - 26 - iconW - subW - valueW - 14
+      if (self._shortValue or "") == "" then valueW, gaps = 0, 6 end
+      nameW = w - gutter - iconW - subW - valueW - gaps
     end
     if nameW < MIN_NAME_W and subW > 0 and not (self._list and self._list._keepSub) then
       self.sub:SetText("")
       subW = 1
       self.sub:SetWidth(subW)
-      nameW = w - 26 - iconW - subW - valueW - 14
+      nameW = w - gutter - iconW - subW - valueW - gaps
     end
     if nameW < 1 then nameW = 1 end
     self.name:SetWidth(nameW)
+    -- The letters that fit, not "..." (list._clipNames).
+    if list and list._clipNames then fitName(self.name, name, nameW) end
     self:Show()
   end
 

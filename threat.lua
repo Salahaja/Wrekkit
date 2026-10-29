@@ -292,7 +292,9 @@ function T:Sanitize(s)
   s.lastWindow = oneOf(s.lastWindow, { "window", "docked" }, "docked")
   if type(s.window) ~= "table" then s.window = {} end
   local w = s.window
-  w.w = clamp(w.w, 120, 2000, d.window.w)
+  -- 90 is for a window with no title bar (ui/threat.lua widens it to 120
+  -- when the bar comes back).
+  w.w = clamp(w.w, 90, 2000, d.window.w)
   w.h = clamp(w.h, 80, 2000, d.window.h)
   if type(w.point) ~= "string" then w.point = d.window.point end
   w.x = tonumber(w.x) or d.window.x
