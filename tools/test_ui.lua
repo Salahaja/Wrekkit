@@ -4073,6 +4073,32 @@ step("meter toolbar: Pets beside the filter, the toggles folding where there is 
   if fail then error(fail) end
 end)
 
+step("threat: narrow, a row is its name, its threat per second and its bar", function()
+  local T = Wrekkit.threat
+  local st = T:Settings()
+  local was = st.showTPS
+  st.showTPS = true
+  local list = UI.ScrollList(UIParent, 16)
+  list:SetWidth(110)
+  list._keepSub, list._tightBelow, list._clipNames = true, 200, true
+  local item = { row = { name = "Stabbs", class = "ROGUE", threat = 7600, tps = 450, perc = 76, pull = 69 },
+                 shown = 69, _frac = 0.69, _rank = 2 }
+  list:SetData({ item }, UI.threat.Paint)
+  local row = list.rows[1]
+  local fail
+  if (row.sub:GetText() or "") ~= "450/s" then fail = "the narrow row's number is " .. tostring(row.sub:GetText()) end
+  if not fail and string.find(row.value:GetText() or "", "7.6", 1, true) then fail = "the threat total stayed on a narrow row" end
+  if not fail and math.abs((row.bar:GetWidth() or 0) - 0.69 * 110) > 2 then
+    fail = "the bar is not how close they are: " .. tostring(row.bar:GetWidth())
+  end
+  -- With threat per second off, the % comes back.
+  st.showTPS = false
+  list:SetData({ item }, UI.threat.Paint)
+  if not fail and not string.find(row.sub:GetText() or "", "%", 1, true) then fail = "with the rate off, no % either" end
+  st.showTPS = was
+  if fail then error(fail) end
+end)
+
 step("threat: a narrow row drops its rank and keeps a name's first letters", function()
   local function paintAt(width)
     local list = UI.ScrollList(UIParent, 16)

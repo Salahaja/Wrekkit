@@ -313,10 +313,23 @@ function TW.Paint(row, item, index)
   local color = W.ClassColor(r.class)
   if r.isMe and not r.tank then color = T:Color(item.shown) end
 
+  --[[ Narrow: the name, how fast they are gaining (threat per second),
+       and the bar for how close they are to pulling -- a glance, not a
+       table. The bar is already each one's way to the line, so the % gives
+       its column to the rate; the value keeps only the time to pull. The
+       tank, whose "tank" went with it, is named in the tank's blue. With
+       threat per second off, the % stays. ]]
+  local sub = r.tank and "tank" or T.PctText(item.shown)
+  local subW = tight and 30 or 40
+  if tight and s.showTPS then
+    sub = W.Short(r.tps or 0) .. "/s"
+    subW = 36
+    value = row._shortValue or ""
+    if r.tank then name = "|cff5a9bff" .. name .. "|r" end
+  end
+
   row:SetClass(r.class, UI.SpecIconFor(r.name, r.class))
-  -- Narrow, the % column is as wide as "100%" and no wider.
-  row:SetData(item._rank, name, value, r.tank and "tank" or T.PctText(item.shown),
-    item._frac, color, tight and 30 or 40)
+  row:SetData(item._rank, name, value, sub, item._frac, color, subW)
 end
 
 --- Why there is nothing to show, in words.
