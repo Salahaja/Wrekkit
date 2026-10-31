@@ -492,7 +492,7 @@ function R:Create()
   exportBtn:SetPoint("RIGHT", announceBtn, "LEFT", -4, 0)
   exportBtn:SetScript("OnClick", function()
     W.Guard("export click", function()
-      UI.ExportMenu(R.frame, exportBtn, R:AnnounceContext())
+      if W.Loaded(UI.ExportMenu) then UI.ExportMenu(R.frame, exportBtn, R:AnnounceContext()) end
     end)
   end)
   self.exportBtn = exportBtn

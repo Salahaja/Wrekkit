@@ -1139,7 +1139,7 @@ function M:WindowMenu(anchor)
       end
       UI.AnnounceMenu(self.frame, anchor, M:AnnounceContext())
     elseif value == "export" then
-      UI.ExportMenu(self.frame, anchor, M:AnnounceContext())
+      if W.Loaded(UI.ExportMenu) then UI.ExportMenu(self.frame, anchor, M:AnnounceContext()) end
     elseif value == "threat" then
       if threatShown then
         UI.threat:SetDisplay("off")
