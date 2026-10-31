@@ -1440,6 +1440,16 @@ function S:BuildThreat()
   self.mobSlots.ctrl = spellSlot(self, "Ctrl-click mob",
     function() return ts().mobClickCtrl end,
     function(v) ts().mobClickCtrl = v or "" end)
+  check(self, "My debuffs on each mob",
+    function() return ts().mobDebuffs == true end,
+    function(v)
+      ts().mobDebuffs = v and true or false
+      if W.myDebuffs then W.myDebuffs:Apply() end
+      redraw()
+    end,
+    { "Your own -- Serpent Sting, curses, DoTs --", "beside each mob's row, with the seconds left",
+      "once Wrekkit has seen one of them wear off.", "Never another player's copy." })
+
   get, set = opt("mobCasts")
   check(self, "Enemy cast bars", get, set,
     { "A bar on each mob while it casts: the spell", "and the time left -- gold casting, green",

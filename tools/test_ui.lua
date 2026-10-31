@@ -396,6 +396,7 @@ dofile("talents.lua")
 dofile("prices.lua")
 dofile("ahscan.lua")
 dofile("raidvalue.lua")
+dofile("mydebuffs.lua")
 dofile("ui/widgets.lua")
 dofile("ui/chart.lua")
 dofile("ui/meter.lua")
@@ -1711,6 +1712,29 @@ step("timeline: clicking a death opens its recap", function()
   if not (shown and shown.kind == "sum") then error("the recap is not what the tab shows") end
   R.state.tab, R.state.deathDrill = "summary", nil
   R:Refresh()
+end)
+
+step("mob frames: your own debuffs beside each mob, counting down", function()
+  local MF = UI.mobs
+  if not MF.frame then MF:Create() end
+  local row = (MF.rows and MF.rows[1]) or MF.MakeRow(MF.frame, 1)
+  if not (row and row.debuffs) then error("a mob row has no debuff icons") end
+  local D = Wrekkit.myDebuffs
+  local realOn, realDur = D.on, Wrekkit.db.debuffDurations
+  D.on = { ["0xMobD"] = { [3] = { id = 13555, at = GetTime(), stacks = 2 } } }
+  Wrekkit.db.debuffDurations = { [13555] = 15 }
+  MF.PaintDebuffs(row, { guid = "0xMobD" }, { mobDebuffs = true })
+  local d = row.debuffs[1]
+  local fail
+  if not d:IsShown() then fail = "your debuff's icon is not shown" end
+  if not fail and d.left:GetText() ~= "15" then fail = "its seconds left read " .. tostring(d.left:GetText()) end
+  if not fail and d.stacks:GetText() ~= "2" then fail = "its stacks read " .. tostring(d.stacks:GetText()) end
+  if not fail and row.debuffs[2]:IsShown() then fail = "a second icon shows for one debuff" end
+  -- Off, or a summary row: none.
+  MF.PaintDebuffs(row, { guid = "0xMobD" }, { mobDebuffs = false })
+  if not fail and d:IsShown() then fail = "switched off, the icon stayed" end
+  D.on, Wrekkit.db.debuffDurations = realOn, realDur
+  if fail then error(fail) end
 end)
 
 step("mob frames: distance in yards, coloured by this character's bands", function()

@@ -151,6 +151,7 @@ T.defaults = {
   mobRightClick = "auto",  -- right-click a mob: "auto" (taunt tanking, else attack) | "attack" | "taunt"
   mobAttackWith = "melee", -- that attack: "melee" | "ranged" (Auto Shot, a wand) | "range" (whichever reaches)
   mobCasts = false,        -- enemy cast bars in the mob window (opt-in)
+  mobDebuffs = false,      -- your own debuffs on each mob's row (opt-in)
   mobCastStyle = "over",   -- "over" the row's right part | "beside" it
   mobCastWidth = 100,      -- beside: how wide, px
   mobCastCover = "who",    -- over: "who" the mob is on | "name": all but the name

@@ -248,6 +248,7 @@ dofile("talents.lua")
 dofile("prices.lua")
 dofile("ahscan.lua")
 dofile("raidvalue.lua")
+dofile("mydebuffs.lua")
 
 WrekkitDB = nil
 Wrekkit.InitDB()
@@ -4031,6 +4032,63 @@ print("\n-- mob watch: no AGGRO shouts when solo --")
   UnitAffectingCombat, UnitCanAttack, UnitExists, UnitIsUnit = real.UAC, real.UCA, real.UE, real.UIU
   GetNumPartyMembers, GetNumRaidMembers = real.party, real.raid
   T.watch = {}
+end)()
+
+----------------------------------------------------------------------
+print("\n-- my debuffs on mobs --")
+----------------------------------------------------------------------
+;(function()
+  local D = Wrekkit.myDebuffs
+  local s = Wrekkit.threat:Settings()
+  local was = s.mobDebuffs
+  s.mobDebuffs = true
+  D.on, D.pending = {}, {}
+  Wrekkit.db.debuffDurations = nil
+  local STING, CURSE = 13555, 11713
+  -- Your Serpent Sting: cast at the mob, then it lands in slot 3.
+  fire("SPELL_GO_SELF", 0, STING, "0xP1", "0xBoss")
+  fire("DEBUFF_ADDED_OTHER", "0xBoss", 1, STING, 1, 60, 3, 0)
+  -- Another hunter's Serpent Sting, slot 4, and a warlock's curse: not yours.
+  fire("DEBUFF_ADDED_OTHER", "0xBoss", 2, STING, 1, 60, 4, 0)
+  fire("SPELL_GO_OTHER", 0, CURSE, "0xP2", "0xBoss")
+  fire("DEBUFF_ADDED_OTHER", "0xBoss", 3, CURSE, 1, 60, 5, 0)
+  local mine = D:On("0xBoss")
+  check("only your debuff is listed", table.getn(mine), 1)
+  check("  your Serpent Sting", mine[1] and mine[1].id, STING)
+  check("  no countdown before one has worn off", mine[1] and mine[1].left, nil)
+  -- A cast long before does not claim a debuff that lands much later.
+  fire("SPELL_GO_SELF", 0, CURSE, "0xP1", "0xP3")
+  advance(3)
+  fire("DEBUFF_ADDED_OTHER", "0xP3", 1, CURSE, 1, 60, 1, 0)
+  check("a debuff landing long after your cast is not yours", table.getn(D:On("0xP3")), 0)
+  -- Yours wears off after 15s: its duration is learned.
+  advance(12)
+  fire("DEBUFF_REMOVED_OTHER", "0xBoss", 1, STING, 0, 60, 3, 1)
+  check("worn off, it is gone", table.getn(D:On("0xBoss")), 0)
+  check("  and how long it ran is learned", Wrekkit.db.debuffDurations and Wrekkit.db.debuffDurations[STING], 15, 0.11)
+  -- The next one counts down, and a recast restarts it.
+  fire("SPELL_GO_SELF", 0, STING, "0xP1", "0xBoss")
+  fire("DEBUFF_ADDED_OTHER", "0xBoss", 1, STING, 1, 60, 3, 0)
+  advance(5)
+  check("the second counts down", D:On("0xBoss")[1].left, 10, 0.11)
+  fire("SPELL_GO_SELF", 0, STING, "0xP1", "0xBoss")
+  check("  a recast restarts it", D:On("0xBoss")[1].left, 15, 0.11)
+  -- Dispelled early: the learned duration does not shrink.
+  advance(2)
+  fire("DEBUFF_REMOVED_OTHER", "0xBoss", 1, STING, 0, 60, 3, 1)
+  check("an early end does not shorten the duration", Wrekkit.db.debuffDurations[STING], 15, 0.11)
+  -- The mob dies: its debuffs go, and teach nothing.
+  fire("SPELL_GO_SELF", 0, STING, "0xP1", "0xBoss")
+  fire("DEBUFF_ADDED_OTHER", "0xBoss", 1, STING, 1, 60, 3, 0)
+  fire("UNIT_DIED", "0xBoss")
+  check("a dead mob's debuffs are gone", table.getn(D:On("0xBoss")), 0)
+  -- Off, nothing is tracked.
+  s.mobDebuffs = false
+  fire("SPELL_GO_SELF", 0, STING, "0xP1", "0xP3")
+  fire("DEBUFF_ADDED_OTHER", "0xP3", 1, STING, 1, 60, 2, 0)
+  check("switched off, nothing is tracked", table.getn(D:On("0xP3")), 0)
+  s.mobDebuffs = was
+  D.on, D.pending = {}, {}
 end)()
 
 ----------------------------------------------------------------------
