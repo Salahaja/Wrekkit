@@ -4082,6 +4082,40 @@ step("meter: compact drops the emblem, and its split goes narrow too", function(
   if fail then error(fail) end
 end)
 
+step("meter: compact, the title's right-click leads with the reset and the toggles", function()
+  local M = UI.meter
+  local s = M:Settings()
+  local was = s.compact
+  local items, pick
+  local realMenu = UI.Menu
+  UI.Menu = function(_, _, its, onPick) items, pick = its, onPick end
+  s.compact = true
+  M:WindowMenu(M.frame.bar)
+  local compactItems, compactPick = items, pick
+  s.compact = false
+  M:WindowMenu(M.frame.bar)
+  UI.Menu = realMenu
+  local fail
+  local function firstValue(its) for _, it in ipairs(its or {}) do if it.value then return it.value end end end
+  if firstValue(compactItems) ~= "new" then fail = "compact, the menu does not lead with Start a new log" end
+  local has = {}
+  for _, it in ipairs(compactItems or {}) do if it.value then has[it.value] = (has[it.value] or 0) + 1 end end
+  for _, v in ipairs({ "new", "wipe", "group", "picked", "world", "report", "settings" }) do
+    if not fail and not has[v] then fail = "compact, the menu has no " .. v end
+  end
+  if not fail and has.reset then fail = "compact, Start a new log is listed twice" end
+  if not fail and firstValue(items) == "new" then fail = "with a toolbar, the menu still leads with the reset" end
+  -- And the reset does reset.
+  local realReset, did = Wrekkit.ResetData, nil
+  Wrekkit.ResetData = function(how) did = how end
+  if not fail then compactPick("new") end
+  Wrekkit.ResetData = realReset
+  if not fail and did ~= "new" then fail = "Start a new log did not start one" end
+  s.compact = was
+  M:ApplyLayout()
+  if fail then error(fail) end
+end)
+
 step("meter toolbar: Pets beside the filter, the toggles folding where there is no room", function()
   local M = UI.meter
   local tb = M.toolbar
