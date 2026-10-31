@@ -219,6 +219,9 @@ local function addAbilities(dst, src, pet)
     d.direct = (d.direct or 0) + (row.direct or row.hits or 0)
     d.glances = (d.glances or 0) + (row.glances or 0)
     d.glanceAmount = (d.glanceAmount or 0) + (row.glanceAmount or 0)
+    d.glanceBase = (d.glanceBase or 0) + (row.glanceBase or 0)
+    d.glanceMatched = (d.glanceMatched or 0) + (row.glanceMatched or 0)
+    d.glanceMatchedN = (d.glanceMatchedN or 0) + (row.glanceMatchedN or 0)
     d.crushes = (d.crushes or 0) + (row.crushes or 0)
     d.crushAmount = (d.crushAmount or 0) + (row.crushAmount or 0)
     if row.missBy then
@@ -874,6 +877,8 @@ function R:Abilities(row, metricKey, ctx)
       r25 = a.r25 or 0, r50 = a.r50 or 0, r75 = a.r75 or 0,
       missBy = a.missBy,
       direct = a.direct or a.hits or 0, glances = a.glances or 0, glanceAmount = a.glanceAmount or 0,
+      glanceBase = a.glanceBase or 0, glanceMatched = a.glanceMatched or 0,
+      glanceMatchedN = a.glanceMatchedN or 0,
       crushes = a.crushes or 0, crushAmount = a.crushAmount or 0,
     })
   end)
@@ -1075,6 +1080,8 @@ end
      For healing, the spread is measured on raw output (effective plus
      overheal), which is what the spell actually did; effective healing is
      reported separately above it. ]]
+local GLANCES_TO_COMPARE = 10
+
 function R:AbilityStats(a, metricKey)
   if not a then return {} end
   local metric = W.metrics.Get(metricKey)
@@ -1130,20 +1137,26 @@ function R:AbilityStats(a, metricKey)
       hits > 0 and string.format("%.1f%%", crits / hits * 100) or nil)
   end
 
-  --[[ Glancing blows: white swings at a mob above you, landing for less --
-       how many, what they did, and what that is against an ordinary hit
-       (neither a crit nor a glance), which is the damage glancing took. ]]
+  --[[ Glancing blows: white swings at a mob your level or above, landing
+       for less -- how many, and what they did. Then what a glance did
+       against an ordinary swing of the same hand on the same mob, and so
+       what glancing cost (encounter.lua's noteGlanceBase) -- once there are
+       GLANCES_TO_COMPARE of them: a few glances against the spread of a
+       weapon's damage say nothing, and read over 100%. Never shown above
+       100%: a glance does not do more than a hit. A pull from before the
+       comparison was kept shows the glances alone. ]]
   local glances = a.glances or 0
   if glances > 0 and not isHeal then
     local glanceAmount = a.glanceAmount or 0
     add("Glancing", W.Comma(glances), hits > 0 and string.format("%.1f%% of what landed", glances / hits * 100) or nil)
     add("Glancing damage", W.Comma(glanceAmount), "average " .. W.Comma(glanceAmount / glances))
-    local plain = hits - crits - glances
-    local plainAmount = total - critAmount - glanceAmount
-    if plain > 0 and plainAmount > 0 then
-      local each = plainAmount / plain
-      add("A glance did", string.format("%.0f%%", glanceAmount / glances / each * 100), "of an ordinary hit")
-      local lost = glances * each - glanceAmount
+    local n, base = a.glanceMatchedN or 0, a.glanceBase or 0
+    if n >= GLANCES_TO_COMPARE and base > 0 then
+      local ratio = (a.glanceMatched or 0) / base
+      if ratio > 1 then ratio = 1 end
+      add("A glance did", string.format("%.0f%%", ratio * 100), "of an ordinary hit")
+      -- What the compared glances lost, for all of them.
+      local lost = (base - (a.glanceMatched or 0)) * glances / n
       if lost > 0 then add("Lost to glancing", W.Comma(lost)) end
     end
   end

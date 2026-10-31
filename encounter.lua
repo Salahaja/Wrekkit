@@ -783,6 +783,47 @@ end
 
 local startingWith = {}
 
+--[[ What a glance cost, measured fairly: each glancing swing against what
+     an ordinary swing of the same hand did to the same mob just before --
+     a running average of the last few. Against the pull's average of all
+     other hits, a glance on a boss under Sunder was set beside off-hand
+     hits on armoured trash, and read as doing 119% (Rohann: 222%) of an
+     ordinary hit. Ordinary: not a crit, glance, crushing blow, nor partly
+     blocked, absorbed or resisted. A glance counts once its hand has
+     GLANCE_BASE_MIN such hits on that mob; the base is per hand and mob,
+     kept on the row while it is recorded (row.base). ]]
+local GLANCE_BASE_MIN = 3
+local function noteGlanceBase(row, targetGuid, amount, info)
+  local hand = info.offhand and 2 or 1
+  local base = row.base
+  if not base then
+    base = {}
+    row.base = base
+  end
+  local b = base[hand]
+  if info.glancing then
+    if b and b.t == targetGuid and b.n >= GLANCE_BASE_MIN then
+      row.glanceBase = (row.glanceBase or 0) + b.v
+      row.glanceMatched = (row.glanceMatched or 0) + amount
+      row.glanceMatchedN = (row.glanceMatchedN or 0) + 1
+    end
+    return
+  end
+  if info.crit or info.crushing or (info.blocked or 0) > 0 or (info.absorbed or 0) > 0
+     or (info.resisted or 0) > 0 then
+    return
+  end
+  if not b then
+    b = {}
+    base[hand] = b
+  end
+  if b.t ~= targetGuid then
+    b.t, b.v, b.n = targetGuid, amount, 1
+  else
+    b.v, b.n = b.v + (amount - b.v) * 0.25, b.n + 1
+  end
+end
+
 --- A player or a pet: our side, as far as damage done is concerned.
 local function onOurSide(a) return a and (a.isPlayer or a.class == "PET") end
 
@@ -834,6 +875,7 @@ function E:Damage(sourceGuid, targetGuid, spellId, amount, info)
       row.glances = (row.glances or 0) + 1
       row.glanceAmount = (row.glanceAmount or 0) + amount
     end
+    if spellId == 0 then noteGlanceBase(row, targetGuid, amount, info) end
     --[[ First hit decides, because a spell has exactly one school. Melee
          carries none at all and arrives as spell id 0, which W.SchoolName
          reads as Physical rather than as unknown. ]]
@@ -1839,6 +1881,8 @@ local function topAbilities(tbl, limit)
                          r25 = r.r25, r50 = r.r50, r75 = r.r75,
                          missBy = r.missBy, school = r.school,
                          direct = r.direct, glances = r.glances, glanceAmount = r.glanceAmount,
+                         glanceBase = r.glanceBase, glanceMatched = r.glanceMatched,
+                         glanceMatchedN = r.glanceMatchedN,
                          crushes = r.crushes, crushAmount = r.crushAmount })
   end
   table.sort(rows, W.ByField("amount"))
