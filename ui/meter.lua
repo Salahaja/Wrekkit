@@ -599,30 +599,38 @@ function M:TogglesMenu(anchor)
     { text = "Start a new log", value = "new" },
     { text = "Delete all history...", value = "wipe" },
   }
-  UI.Menu(self.frame, anchor, items, function(value)
-    if value == "group" then
-      s.groupOnly = not s.groupOnly
-    elseif value == "picked" then
-      if not s.pickedOnly and not W.report:AnyPicked() then
-        W.Print("nobody is picked yet: shift-click a player to pick them.")
-        return
-      end
-      s.pickedOnly = not s.pickedOnly
-    elseif value == "pickmenu" then
-      UI.PickMenu(M.frame, anchor)
-      return
-    elseif value == "world" then
-      W.db.trackOpenWorld = not W.db.trackOpenWorld
-      W.Print("open-world combat " ..
-        (W.db.trackOpenWorld and "is now recorded." or "is ignored (instances only)."))
-    elseif value == "new" then
-      W.ResetData("new")
-    elseif value == "wipe" then
-      if StaticPopup_Show then StaticPopup_Show("WREKKIT_RESET_ALL") else W.ResetData("all") end
+  UI.Menu(self.frame, anchor, items, function(value) M:ToggleAction(value, anchor) end, 180)
+end
+
+--- What the toolbar's toggles do, from a menu: the folded "..." one, or the
+--- window menu when there is no toolbar (compact). True if it was one.
+function M:ToggleAction(value, anchor)
+  local s = self:Settings()
+  if value == "group" then
+    s.groupOnly = not s.groupOnly
+  elseif value == "picked" then
+    if not s.pickedOnly and not W.report:AnyPicked() then
+      W.Print("nobody is picked yet: shift-click a player to pick them.")
+      return true
     end
-    M:UpdateToggles()
-    M:Refresh()
-  end, 180)
+    s.pickedOnly = not s.pickedOnly
+  elseif value == "pickmenu" then
+    UI.PickMenu(M.frame, anchor)
+    return true
+  elseif value == "world" then
+    W.db.trackOpenWorld = not W.db.trackOpenWorld
+    W.Print("open-world combat " ..
+      (W.db.trackOpenWorld and "is now recorded." or "is ignored (instances only)."))
+  elseif value == "new" then
+    W.ResetData("new")
+  elseif value == "wipe" then
+    if StaticPopup_Show then StaticPopup_Show("WREKKIT_RESET_ALL") else W.ResetData("all") end
+  else
+    return false
+  end
+  M:UpdateToggles()
+  M:Refresh()
+  return true
 end
 
 --[[ Lay the meter out for the current density settings.
@@ -1074,7 +1082,24 @@ function M:WindowMenu(anchor)
   local s = self:Settings()
   local ts = W.threat:Settings()
   local threatShown = (ts.display == "window" or ts.display == "docked")
-  local items = {
+  local items = {}
+  --[[ No toolbar (compact, or switched off): its reset and its toggles
+       lead this menu, since the title's right-click is the way to them. ]]
+  local noToolbar = s.compact == true or s.showToolbar == false
+  if noToolbar then
+    local toolbarItems = {
+      { text = "Log", header = true },
+      { text = "Start a new log", value = "new" },
+      { text = "Delete all history...", value = "wipe" },
+      { text = "Who is counted", header = true },
+      { text = "Group only", value = "group", checked = s.groupOnly == true },
+      { text = "Only picked players", value = "picked", checked = s.pickedOnly == true },
+      { text = "Pick players...", value = "pickmenu" },
+      { text = "Open world too", value = "world", checked = W.db.trackOpenWorld == true },
+    }
+    for _, it in ipairs(toolbarItems) do table.insert(items, it) end
+  end
+  local rest = {
     { text = "Windows", header = true },
     { text = "Full report", value = "report" },
     { text = "Threat window", value = "threat", checked = threatShown },
@@ -1088,14 +1113,22 @@ function M:WindowMenu(anchor)
     { text = M.SPLIT_LABEL.off, value = "split:off", checked = M:SplitMode() == "off" },
     { text = M.SPLIT_LABEL.stacked, value = "split:stacked", checked = M:SplitMode() == "stacked" },
     { text = M.SPLIT_LABEL.side, value = "split:side", checked = M:SplitMode() == "side" },
-    { text = "Log", header = true },
-    { text = "Start a new log", value = "reset" },
+    { text = "Log", header = true, toolbarOnly = true },
+    { text = "Start a new log", value = "reset", toolbarOnly = true },
     { text = "", header = true },
     { text = "Settings...", value = "settings" },
     { text = "Hide meter", value = "hide" },
   }
+  for _, it in ipairs(rest) do
+    -- The log section is at the top already when there is no toolbar.
+    if not (noToolbar and it.toolbarOnly) then table.insert(items, it) end
+  end
 
   UI.Menu(self.frame, anchor, items, function(value)
+    if M:ToggleAction(value, anchor) then
+      if UI.settings and UI.settings.Refresh then UI.settings:Refresh() end
+      return
+    end
     if value == "settings" then
       UI.settings:Show()
     elseif value == "announce" then

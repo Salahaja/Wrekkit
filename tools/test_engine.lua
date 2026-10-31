@@ -3802,7 +3802,7 @@ print("\n-- the hit table: misses, dodges, glancing blows --")
   IN_COMBAT = true
   fire("PLAYER_REGEN_DISABLED")
   for _ = 1, 6 do fire("AUTO_ATTACK_SELF", "0xP1", "0xBoss", 300, 2, 1, 1, 0, 0, 0) end       -- hits
-  for _ = 1, 4 do fire("AUTO_ATTACK_SELF", "0xP1", "0xBoss", 210, 16386, 1, 1, 0, 0, 0) end   -- glancing
+  for _ = 1, 12 do fire("AUTO_ATTACK_SELF", "0xP1", "0xBoss", 210, 16386, 1, 1, 0, 0, 0) end  -- glancing
   fire("AUTO_ATTACK_SELF", "0xP1", "0xBoss", 0, 16, 0, 1, 0, 0, 0)          -- missed
   fire("AUTO_ATTACK_SELF", "0xP1", "0xBoss", 0, 2, 2, 1, 0, 0, 0)           -- dodged
   fire("AUTO_ATTACK_SELF", "0xP1", "0xBoss", 0, 2, 2, 1, 0, 0, 0)           -- dodged
@@ -3816,8 +3816,8 @@ print("\n-- the hit table: misses, dodges, glancing blows --")
   check("  and the ones dodged", melee and melee.missBy[3], 2)
   check("  and parried", melee and melee.missBy[4], 1)
   check("  an immune swing is not the hit table", melee and melee.missBy[7], nil)
-  check("glancing swings and their damage", melee and melee.glances, 4)
-  check("  what they did", melee and melee.glanceAmount, 840)
+  check("glancing swings and their damage", melee and melee.glances, 12)
+  check("  what they did", melee and melee.glanceAmount, 2520)
   local priest = E.live.actors["0xP2"]
   local taken = priest and priest.takenAbility[0]
   check("a crushing blow, on whoever took it", taken and taken.crushes, 1)
@@ -3829,28 +3829,70 @@ print("\n-- the hit table: misses, dodges, glancing blows --")
   local rows = Wrekkit.report:Rank(view, "missPct")
   local row
   for _, r in ipairs(rows) do if r.name == "Fuff" then row = r end end
-  -- 10 landed + 1 missed + 2 dodged + 1 parried = 14 that rolled.
-  check("Miss %: of everything that rolled on the table", row and row._v, 1 / 14 * 100, 0.01)
-  check("  dodged beside it", row and row._sub, "dodge 14.3%")
+  -- 18 landed + 1 missed + 2 dodged + 1 parried = 22 that rolled.
+  check("Miss %: of everything that rolled on the table", row and row._v, 1 / 22 * 100, 0.01)
+  check("  dodged beside it", row and row._sub, "dodge 9.1%")
   rows = Wrekkit.report:Rank(view, "glancing")
   for _, r in ipairs(rows) do if r.name == "Fuff" then row = r end end
-  check("Glancing: of the white swings that landed", row and row._v, 40, 0.01)
+  check("Glancing: of the white swings that landed", row and row._v, 12 / 18 * 100, 0.01)
   local byAttack = Wrekkit.report:Abilities(row, "missPct")
-  check("by attack: Melee, its miss and dodge", byAttack[1] and byAttack[1]._value, "miss 7.1%")
+  check("by attack: Melee, its miss and dodge", byAttack[1] and byAttack[1]._value, "miss 4.5%")
   local stats = Wrekkit.report:AbilityStats(byAttack[1], "missPct")
   local function stat(label)
     for _, st in ipairs(stats) do if st.label == label then return st end end
   end
-  check("the spread: how many glanced", stat("Glancing") and stat("Glancing").value, "4")
-  -- An ordinary hit did 300, a glance 210: 70%, and 4 x 90 lost.
+  check("the spread: how many glanced", stat("Glancing") and stat("Glancing").value, "12")
+  -- An ordinary hit did 300, a glance 210: 70%, and 12 x 90 lost.
   check("  what a glance did against an ordinary hit", stat("A glance did") and stat("A glance did").value, "70%")
-  check("  and what glancing cost", stat("Lost to glancing") and stat("Lost to glancing").value, "360")
+  check("  and what glancing cost", stat("Lost to glancing") and stat("Lost to glancing").value, "1,080")
   check("  dodges and parries", stat("Dodged") and stat("Parried") and stat("Dodged").value, "2")
   -- A dodge is not a miss: "Missed" is the one true miss, said once.
   local missedLines = 0
   for _, st in ipairs(stats) do if st.label == "Missed" then missedLines = missedLines + 1 end end
   check("  one Missed line", missedLines, 1)
   check("  counting only the true miss, not the dodges", stat("Missed") and stat("Missed").value, "1")
+  IN_COMBAT = false
+  fire("PLAYER_REGEN_ENABLED")
+  Wrekkit.ResetData("all")
+end)()
+
+-- A glance is measured against the same hand on the same mob: pooled, a
+-- main-hand glance beside off-hand hits on other mobs read over 100%.
+;(function()
+  local E = Wrekkit.encounter
+  Wrekkit.ResetData("all")
+  IN_COMBAT = true
+  fire("PLAYER_REGEN_DISABLED")
+  for _ = 1, 5 do fire("AUTO_ATTACK_SELF", "0xP1", "0xBoss", 300, 2, 1, 1, 0, 0, 0) end    -- main hand
+  for _ = 1, 8 do fire("AUTO_ATTACK_SELF", "0xP1", "0xBoss", 150, 6, 1, 1, 0, 0, 0) end    -- off hand
+  for _ = 1, 10 do fire("AUTO_ATTACK_SELF", "0xP1", "0xBoss", 210, 16386, 1, 1, 0, 0, 0) end  -- main-hand glances
+  -- A glance on a mob this hand has not hit yet has nothing to compare to.
+  fire("AUTO_ATTACK_SELF", "0xP1", "0xP3", 999, 16386, 1, 1, 0, 0, 0)
+  local melee = E.live.actors["0xP1"].dmgAbility[0]
+  check("glances compared to the same hand's hits on the same mob", melee and melee.glanceMatchedN, 10)
+  check("  the main hand's 300, not the pooled hits' 208", melee and melee.glanceBase, 3000, 0.01)
+  local function fuffMelee()
+    for _, r in ipairs(Wrekkit.report:View({ E.live }, {}).rows) do
+      if r.name == "Fuff" then
+        for _, ab in ipairs(Wrekkit.report:Abilities(r, "damage")) do
+          if ab.id == 0 then return ab end
+        end
+      end
+    end
+  end
+  local stats = Wrekkit.report:AbilityStats(fuffMelee(), "damage")
+  local did
+  for _, st in ipairs(stats) do if st.label == "A glance did" then did = st.value end end
+  check("  so a glance did 70%, not over 100%", did, "70%")
+  -- Fewer than ten compared: no verdict.
+  Wrekkit.ResetData("all")
+  fire("PLAYER_REGEN_DISABLED")
+  for _ = 1, 5 do fire("AUTO_ATTACK_SELF", "0xP1", "0xBoss", 300, 2, 1, 1, 0, 0, 0) end
+  for _ = 1, 3 do fire("AUTO_ATTACK_SELF", "0xP1", "0xBoss", 400, 16386, 1, 1, 0, 0, 0) end
+  local few = Wrekkit.report:AbilityStats(fuffMelee(), "damage")
+  local shown = false
+  for _, st in ipairs(few) do if st.label == "A glance did" then shown = true end end
+  check("three glances are too few to say what a glance did", shown, false)
   IN_COMBAT = false
   fire("PLAYER_REGEN_ENABLED")
   Wrekkit.ResetData("all")

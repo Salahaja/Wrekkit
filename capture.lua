@@ -61,6 +61,7 @@ local SPELL_HIT_CRIT = 2        -- normalised code, spell damage
 local HITINFO_MISS = 16         -- 0x10
 local HITINFO_GLANCING = 16384  -- 0x4000: a white swing at a higher-level mob
 local HITINFO_CRUSHING = 32768  -- 0x8000: a mob's swing at a lower-level player
+local HITINFO_OFFHAND = 4       -- 0x04: the off hand's swing
 
 --[[ A swing that did no damage still says what happened to it: the MISS
      flag, or the victim's state -- 2 dodged, 3 parried, 5 blocked all of
@@ -664,6 +665,7 @@ function C:AUTO_ATTACK(attacker, target, damage, hitInfo, victimState, _, blocke
   info.crit = hasBit(num(hitInfo), HITINFO_CRIT)
   info.glancing = hasBit(num(hitInfo), HITINFO_GLANCING)
   info.crushing = hasBit(num(hitInfo), HITINFO_CRUSHING)
+  info.offhand = hasBit(num(hitInfo), HITINFO_OFFHAND)
   info.canCrit = true
   info.absorbed = num(absorbed)
   info.blocked = num(blocked)
