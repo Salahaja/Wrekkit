@@ -177,6 +177,21 @@ function W.Duration(sec)
 end
 
 --- Axis labels on the timeline: compact, no leading zeros.
+--[[ A file an update added, missing: the client reads an addon's .toc only
+     when it starts, so after a /reload into a version with new files they
+     are not loaded (0.9.37's mydebuffs.lua: "attempt to index field
+     myDebuffs", and the rest of the start-up never ran). Callers ask
+     before using such a module; the first to find it missing says so. ]]
+function W.Loaded(module)
+  if module then return true end
+  if not W.restartSaid then
+    W.restartSaid = true
+    W.Print("|cffd44f53this update added files the client has not loaded:|r " ..
+      "exit the game fully and start it again (a /reload is not enough).")
+  end
+  return false
+end
+
 function W.Clock(sec)
   sec = math.floor(sec or 0)
   local m = math.floor(sec / 60)

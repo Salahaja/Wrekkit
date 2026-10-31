@@ -23,7 +23,8 @@ f:SetScript("OnEvent", function()
     W.talents:Start()
     W.ahscan:StartEvents()
     W.value:Apply()
-    W.myDebuffs:Apply()
+    -- Added in 0.9.37: missing until the client restarts after updating.
+    if W.Loaded(W.myDebuffs) then W.myDebuffs:Apply() end
     -- Your recent auction scans to the guild's Wrekkit, once things settle.
     W.After(30, function() W.Guard("price share", function() W.prices:Share() end) end, "priceShareLogin")
     W.ui.threatFrames:Start()

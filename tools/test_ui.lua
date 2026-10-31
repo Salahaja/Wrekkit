@@ -1714,6 +1714,21 @@ step("timeline: clicking a death opens its recap", function()
   R:Refresh()
 end)
 
+step("a module an update added, missing after a /reload, says restart once", function()
+  local W = Wrekkit
+  local said = 0
+  local realPrint = W.Print
+  W.Print = function(text) if string.find(text, "start it again", 1, true) then said = said + 1 end end
+  W.restartSaid = nil
+  local first = W.Loaded(nil)
+  local second = W.Loaded(nil)
+  local present = W.Loaded(W.myDebuffs)
+  W.Print, W.restartSaid = realPrint, nil
+  if first or second then error("a missing module was taken as loaded") end
+  if said ~= 1 then error("the restart was asked for " .. said .. " times, not once") end
+  if not present then error("a loaded module was taken as missing") end
+end)
+
 step("mob frames: your own debuffs beside each mob, counting down", function()
   local MF = UI.mobs
   if not MF.frame then MF:Create() end

@@ -315,7 +315,7 @@ local function handler(msg)
       W.Print("threat is live; switch the meter to a recorded metric to export it.")
       return
     end
-    W.export:Run(ctx, which, how)
+    if W.Loaded(W.export) then W.export:Run(ctx, which, how) end
 
   elseif cmd == "announce" or cmd == "post" then
     --[[ Announces whatever is on screen, and always through the
