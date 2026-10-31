@@ -38,6 +38,7 @@ local MF = UI.mobs
 local T = W.threat
 
 local ROW_H = 18
+local MAX_DEBUFF_ICONS = 5   -- your own debuffs shown on one mob's row
 local WIDTH = 220      -- default; the setting is mobFramesWidth
 local CAST_W = 100     -- an enemy cast bar beside its row; the setting is mobCastWidth
 local MIN_W, MAX_W = 160, 420
@@ -394,7 +395,51 @@ local function makeRow(parent, i)
   local split, nameW, whoW = MF:Columns()
   MF.LayoutRow(b, split, nameW, whoW)
   b:Hide()
+  --[[ Your own debuffs on the mob (W.myDebuffs): icons just past the
+       row's left edge, the first to run out nearest the row, each with its
+       seconds left and its stacks. ]]
+  b.debuffs = {}
+  for k = 1, MAX_DEBUFF_ICONS do
+    local d = CreateFrame("Frame", nil, b)
+    d:SetWidth(ROW_H) d:SetHeight(ROW_H)
+    if k == 1 then
+      d:SetPoint("RIGHT", b, "LEFT", -2, 0)
+    else
+      d:SetPoint("RIGHT", b.debuffs[k - 1], "LEFT", -1, 0)
+    end
+    d.icon = d:CreateTexture(nil, "ARTWORK")
+    d.icon:SetAllPoints(d)
+    d.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+    d.left = UI.Text(d, 9, W.color.text, "CENTER", UI.fontNum)
+    d.left:SetPoint("CENTER", d, "CENTER", 0, 0)
+    d.left:SetShadowOffset(1, -1)
+    d.stacks = UI.Text(d, 8, W.color.accent, "RIGHT", UI.fontNum)
+    d.stacks:SetPoint("BOTTOMRIGHT", d, "BOTTOMRIGHT", 0, 0)
+    d:Hide()
+    b.debuffs[k] = d
+  end
+
   return b
+end
+
+-- Rows are made as mobs need them; tests make one directly.
+MF.MakeRow = makeRow
+
+--- Your debuffs on a row's mob, or none (the setting off, a summary row).
+local debuffList = {}
+function MF.PaintDebuffs(b, m, s)
+  local list = (m and m.guid and s and s.mobDebuffs and W.myDebuffs) and W.myDebuffs:On(m.guid, debuffList) or nil
+  for k, d in ipairs(b.debuffs or {}) do
+    local e = list and list[k]
+    if e then
+      d.icon:SetTexture(e.icon or "Interface\\Icons\\INV_Misc_QuestionMark")
+      d.left:SetText(e.left and string.format("%.0f", math.ceil(e.left)) or "")
+      d.stacks:SetText((e.stacks or 1) > 1 and tostring(e.stacks) or "")
+      d:Show()
+    else
+      d:Hide()
+    end
+  end
 end
 
 function MF:Create()
@@ -1113,6 +1158,7 @@ end
 local function paintMob(b, m, tank, s, blink, targetGuid)
   b.mob, b.summary = m, nil
   MF.PaintCast(b, m, s)
+  MF.PaintDebuffs(b, m, s)
   --[[ The player side of the row -- clicking whoever the mob is on, to heal
        or target them -- only when switched on (mobWhoClicks). Off, the
        button takes no mouse at all, so the whole row is the mob's. ]]
@@ -1155,6 +1201,7 @@ end
 local function paintSummary(b, fine, elsewhere, hidden, tank, total)
   b.mob, b.summary, b.trouble = nil, true, false
   MF.PaintCast(b, nil, nil)
+  MF.PaintDebuffs(b, nil, nil)
   b.range:SetText("")
   b.rangeBox:Hide()
   b.hp:SetVertexColor(0.55, 0.16, 0.16, 0.7)

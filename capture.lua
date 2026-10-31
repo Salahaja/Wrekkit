@@ -1156,6 +1156,8 @@ dispatch.SPELL_GO_SELF = function(a1, a2, a3, a4)
   -- bound to it -- never from SPELL_GO_OTHER, someone else's cast.
   C:LearnSpellName(num(a2))
   spellGo(a1, a2, a3, a4)
+  -- At a mob: the debuff it lands is yours (mydebuffs.lua).
+  if W.myDebuffs then W.myDebuffs:Cast(num(a2), a4) end
 end
 dispatch.SPELL_GO_OTHER = spellGo
 
@@ -1213,16 +1215,21 @@ dispatch.SPELL_FAILED_OTHER = function(a1) C:CastEnd(a1) end
 -- stackCount, auraLevel, auraSlot, state). Only raid value reads them.
 dispatch.DEBUFF_ADDED_OTHER = function(a1, a2, a3, a4, a5, a6, a7)
   if W.value then W.value:DebuffOn(a1, num(a3), a6, a4) end
+  -- Your own debuffs, for the mob frames (mydebuffs.lua).
+  if W.myDebuffs then W.myDebuffs:Added(a1, num(a3), a6, a4) end
 end
 dispatch.DEBUFF_REMOVED_OTHER = function(a1, a2, a3, a4, a5, a6, a7)
   if W.value then W.value:DebuffOff(a1, num(a3), a6, a7) end
+  if W.myDebuffs then W.myDebuffs:Removed(a1, num(a3), a6) end
 end
 -- AURA_CAST_ON_OTHER(spellId, casterGuid, targetGuid, ...)
 dispatch.AURA_CAST_ON_OTHER = function(a1, a2, a3)
   if W.value then W.value:AuraCast(num(a1), a2, a3) end
+  if W.myDebuffs then W.myDebuffs:AuraCast(num(a1), a2, a3) end
 end
 
 dispatch.UNIT_DIED = function(a1)
+  if W.myDebuffs then W.myDebuffs:Died(a1) end
   W.encounter:Death(a1)
   C:ClearBuffs(a1)
   C.casts[a1] = nil

@@ -23,6 +23,7 @@ talents.lua
 prices.lua
 ahscan.lua
 raidvalue.lua
+mydebuffs.lua
 
 ui\widgets.lua
 ui\chart.lua
